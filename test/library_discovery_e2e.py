@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import time
+import os
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import expect
@@ -160,6 +162,9 @@ def main() -> None:
         incremental_count = similar.count()
         assert 24 < incremental_count <= 60, incremental_count
         expect(library.locator(".detail-discovery-grid img[src]").first).to_be_attached()
+        preview = library.locator('.detail-discovery-grid img[src]').first
+        expect(preview).to_have_attribute('data-preview-ready', 'true')
+        assert preview.evaluate('image => image.complete && image.naturalWidth > 0')
 
         while similar.count() < 60:
             previous_count = similar.count()
@@ -220,6 +225,25 @@ def main() -> None:
         expect(library.locator("#detail-drawer")).not_to_have_attribute("data-entry-id", mobile_entry_id)
         library.locator("#detail-prev").click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", mobile_entry_id)
+        similar.first.scroll_into_view_if_needed()
+        preview = library.locator('.detail-discovery-grid img').first
+        expect(preview).to_have_attribute('data-preview-ready', 'true')
+        old_preview = preview.element_handle()
+        candidate_id = entries[1]['id'] if entries[1]['id'] != mobile_entry_id else entries[2]['id']
+        changed = library.evaluate('''async id=>{
+          const state=await chrome.runtime.sendMessage({type:'GET_STATE'});
+          const entry=state.entries.find(item=>item.id===id);
+          return chrome.runtime.sendMessage({type:'UPDATE_ENTRY_TEXT',entryId:id,
+            text:entry.text+' Updated candidate reference.',textRevision:entry.textRevision??1});
+        }''', candidate_id)
+        assert changed['ok'], changed
+        library.wait_for_function('image=>!image.isConnected', arg=old_preview)
+        similar.first.scroll_into_view_if_needed()
+        refreshed = library.locator('.detail-discovery-grid img').first
+        expect(refreshed).to_have_attribute('data-preview-ready', 'true')
+        assert refreshed.evaluate('image=>image.complete&&image.naturalWidth>0')
+        if os.environ.get('PD_E2E_ARTIFACT_DIR'):
+            library.screenshot(path=str(Path(os.environ['PD_E2E_ARTIFACT_DIR']) / 'similar-refreshed-390.png'))
         library.locator("#ui-theme").evaluate(
             """select => {
               select.value = 'light';
@@ -235,6 +259,7 @@ def main() -> None:
             "incremental_discovery_count": incremental_count,
             "complete_discovery_count": 60,
             "media_lazy_loaded": True,
+            "refreshed_preview_replaces_placeholder": True,
             "similar_switch_resets_scroll": True,
             "single_reference_composer": True,
             "navigation_clicks": "desktop_and_mobile",

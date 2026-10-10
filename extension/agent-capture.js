@@ -18,6 +18,10 @@ export async function waitForAgentTab(tabs, tabId, timeoutMs = PAGE_CAPTURE_LIMI
 
 export async function captureAgentUrl(input, requestId, { chromeApi, loadState, collect, commit }) {
   const url = requireWebUrl(input.url);
+  const mode = input.mode ?? 'whole';
+  if (!['whole', 'loaded'].includes(mode)) throw agentError('invalid_input', '采集模式无效');
+  const maxCandidates = input.maxCandidates ?? PAGE_CAPTURE_LIMITS.maxCandidates;
+  if (!Number.isSafeInteger(maxCandidates) || maxCandidates < 1) throw agentError('invalid_input', '采集数量必须为正整数');
   const collectionId = resolveAgentProject(await loadState(), input.project);
   if (!await chromeApi.permissions.contains({ origins: [`${new URL(url).origin}/*`] })) {
     throw agentError("site_permission_required", "请先在插件设置中授权网页采集。Agent 不能代替首次浏览器授权。");
@@ -30,7 +34,7 @@ export async function captureAgentUrl(input, requestId, { chromeApi, loadState, 
   if (!await chromeApi.permissions.contains({ origins: [`${new URL(finalUrl).origin}/*`] })) {
     throw agentError("site_permission_required", "网页跳转到尚未授权的网站，请先检查页面与权限。");
   }
-  const snapshot = await collect(loaded, { sessionId: requestId, mode: "whole", maxCandidates: PAGE_CAPTURE_LIMITS.maxCandidates });
+  const snapshot = await collect(loaded, { sessionId: requestId, mode, maxCandidates });
   const batch = normalizePageCaptureBatch({ ...snapshot, tabId: tab.id, sourceUrl: finalUrl });
   if (!batch.candidates.length) throw agentError("capture_unsupported", "插件未取得可保存内容，请检查网页是否需登录，或由 Agent 在获准时提交材料。");
   batch.selections = batch.candidates.map(candidate => ({ candidateId: candidate.id, includeText: true,

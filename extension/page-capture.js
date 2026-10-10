@@ -740,6 +740,12 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   try {
+    // A full-page Cloudflare challenge exposes both markers. A normal page
+    // with an embedded Turnstile widget remains eligible for capture.
+    if (document.querySelector('script[src*="/cdn-cgi/challenge-platform/"]')
+      && [...document.scripts].some(script => script.textContent.includes('_cf_chl_opt'))) {
+      throw Object.assign(new Error('网页正在进行安全验证，请在原网页完成后重新采集；当前草稿已保留'), { code: 'CAPTURE_ACCESS_REQUIRED' });
+    }
     if (options.listMode && options.selectionTemplate) {
       const template = options.selectionTemplate;
       selectedTemplateNode = [...document.querySelectorAll('[data-promptdirector-capture-template]')]

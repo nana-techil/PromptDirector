@@ -700,7 +700,7 @@ void agentConnection.start();
 
 const workspaceActivityLabels = {
   search: '查询案例', read_case: '读取案例', read_case_details: '读取案例详情', read_media: '读取原件',
-  edit_case: '修改案例', organize_case: '整理案例', save_material: '回存成果', show_case: '打开案例',
+  edit_case: '修改案例', organize_case: '整理案例', save_material: '回存成果', show_case: '打开案例', open_workspace: '打开工作页面',
   control_workspace: '操作工作页面', read_workspace_context: '读取选择', read_workspace_content: '读取参考',
   capture: '采集资料', save_skill: '保存创作方法', create_project: '创建项目', update_project: '修改项目'
 };
@@ -730,7 +730,7 @@ globalThis.promptDirectorAgentProbe = async (operation, input = {}) => {
 async function executeAgentOperation(operation, input) {
   switch (operation) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
-      extensionVersion: chrome.runtime.getManifest().version, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
+      extensionVersion: chrome.runtime.getManifest().version, searchGuidance: { systemLanguage: chrome.i18n.getUILanguage(), languages: [...new Set([chrome.i18n.getUILanguage().split(/[-_]/u)[0], 'en'])], expansion: 'calling_agent', querySemantics: 'terms_and_alternatives_or', pluginApiCalls: false }, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
       caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
       workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [WORKSPACE_SCREENSHOT_SPEC.name, ...AGENT_CASE_ACTION_SPECS.map(spec => spec.name), ...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
     case "manage_analysis_batch":
@@ -750,6 +750,7 @@ async function executeAgentOperation(operation, input) {
     case "read_workspace_context":
     case "read_workspace_content": return agentWorkspace.read(input);
     case "show_case": return agentWorkspace.show(input);
+    case 'open_workspace': return agentWorkspace.open(input);
     case "capture_workspace": return workspaceScreenshot.capture(input);
     case 'read_review_media':
     case 'read_live_workspace':
@@ -1214,9 +1215,9 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => deleteEntryTimeNote(message.entryId, message.noteId));
     case "EXPORT_MARKDOWN":
     case "EXPORT_ARCHIVE":
-      return enqueue(async () => exportArchive(await readState(), message.entryIds));
+      return enqueue(async () => exportArchive(await readState(), message.entryIds, message.directory === true));
     case "EXPORT_PROJECT":
-      return enqueue(async () => exportProjectArchive(await readState(), message.collectionId));
+      return enqueue(async () => exportProjectArchive(await readState(), message.collectionId, message.directory === true));
     case "EXPORT_CURATED_SUBMISSION":
       return enqueue(async () => exportCuratedSubmission(await readState(), message));
     case "EXPORT_CREATIVE_EXPERIMENTS":
@@ -3446,9 +3447,10 @@ async function moveEntryBatchToTrash(entryIdsValue, stateValue) {
 }
 
 async function getTrashItems(message = {}) {
-  const state = await readState();
-  const items = listTrashItems(state.trashState, { kind: message.kind });
-  return { ok: true, items, count: items.length, trashState: normalizeTrashState(state.trashState) };
+  const stored = await libraryStorage.get(STORAGE_KEYS.trashState);
+  const trashState = normalizeTrashState(stored[STORAGE_KEYS.trashState]);
+  const items = listTrashItems(trashState, { kind: message.kind });
+  return { ok: true, items, count: items.length, trashState };
 }
 
 async function restoreSelectedTrashItems(message = {}) {
@@ -8311,19 +8313,28 @@ async function persistDomainState(state, undo, historyOptions) {
   return update;
 }
 
-async function exportArchive(state, requestedEntryIds) {
+async function saveShareArchive(url, filename) {
+  const response = await chrome.runtime.sendMessage({ target: 'offscreen', type: 'WRITE_SHARE_ARCHIVE', url, filename });
+  if (!response?.ok) throw new Error(response?.message || '无法导出分享包');
+  return response;
+}
+
+async function exportArchive(state, requestedEntryIds, directory = false) {
   if (!Array.isArray(requestedEntryIds) || !requestedEntryIds.length) throw new Error("请先选择要分享的案例");
   const exportState = selectLibraryPackage(state, requestedEntryIds);
   await migrateLegacyScreenshots(exportState.entries);
   const archive = await createArchiveUrl(exportState, true);
   try {
-    const downloadId = await chrome.downloads.download({
-      url: archive.url,
-      filename: sharedArchivePath(state.settings.outputPath, archiveLocale(state)),
-      conflictAction: "uniquify",
-      saveAs: true
-    });
-    await waitForDownload(downloadId);
+    if (directory) await saveShareArchive(archive.url, sharedArchivePath(state.settings.outputPath, archiveLocale(state)));
+    else {
+      const downloadId = await chrome.downloads.download({
+        url: archive.url,
+        filename: sharedArchivePath(state.settings.outputPath, archiveLocale(state)),
+        conflictAction: "uniquify",
+        saveAs: true
+      });
+      await waitForDownload(downloadId);
+    }
   } finally {
     await chrome.runtime.sendMessage({
       target: "offscreen",
@@ -8339,19 +8350,22 @@ async function exportArchive(state, requestedEntryIds) {
   };
 }
 
-async function exportProjectArchive(state, collectionId) {
+async function exportProjectArchive(state, collectionId, directory = false) {
   const exportState = selectProjectPackage(state, collectionId);
   const project = exportState.organizerState.collections[0];
   await migrateLegacyScreenshots(exportState.entries);
   const archive = await createArchiveUrl(exportState, true);
   try {
-    const downloadId = await chrome.downloads.download({
-      url: archive.url,
-      filename: projectArchivePath(state.settings.outputPath, project.name, archiveLocale(state)),
-      conflictAction: "uniquify",
-      saveAs: true
-    });
-    await waitForDownload(downloadId);
+    if (directory) await saveShareArchive(archive.url, projectArchivePath(state.settings.outputPath, project.name, archiveLocale(state)));
+    else {
+      const downloadId = await chrome.downloads.download({
+        url: archive.url,
+        filename: projectArchivePath(state.settings.outputPath, project.name, archiveLocale(state)),
+        conflictAction: "uniquify",
+        saveAs: true
+      });
+      await waitForDownload(downloadId);
+    }
   } finally {
     await chrome.runtime.sendMessage({
       target: "offscreen",

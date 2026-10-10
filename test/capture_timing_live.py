@@ -3,8 +3,7 @@
 Opens each public URL in its own window, runs the normal page capture and save task, and prints the
 built-in capture stage timing (perf-trace.js). Host access is granted only in a temporary manifest copy,
 the same way the user grants optional site access in the product. Saved media live in the temporary
-profile and are removed with it. Script errors raised by the visited sites themselves are reported by
-the shared session check after the timing JSON has been printed.
+profile and are removed with it. Site errors are retained separately from extension failures.
 """
 import argparse
 import json
@@ -17,6 +16,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("urls", nargs="+")
 parser.add_argument("--mode", default="loaded", choices=["loaded", "whole", "article", "media"])
 parser.add_argument("--sequential", action="store_true", help="download one item at a time, for before/after comparison")
+parser.add_argument('--preview-only', action='store_true', help='Only collect a preview; never save cases or download originals')
+parser.add_argument('--report', type=Path, help='Save structured observations, including unavailable pages')
 args = parser.parse_args()
 
 with tempfile.TemporaryDirectory(prefix="pd-live-capture-code-") as tmp:
@@ -40,14 +41,31 @@ with tempfile.TemporaryDirectory(prefix="pd-live-capture-code-") as tmp:
         worker = run.context.service_workers[0]
         results = []
         for url in args.urls:
+            print(json.dumps({"stage": "opening", "url": url}, ensure_ascii=False), flush=True)
             started = time.monotonic()
             window = page.evaluate("async url => (await chrome.windows.create({url, focused: true})).id", url)
             page.wait_for_timeout(8000)
             batch = page.evaluate("async mode => chrome.runtime.sendMessage({type: 'START_PAGE_CAPTURE', mode})", args.mode)
             if not batch.get("ok"):
                 results.append({"url": url, "error": batch.get("message")})
+                print(json.dumps(results[-1], ensure_ascii=False), flush=True)
+                page.evaluate("async id => chrome.windows.remove(id)", window)
                 continue
             candidates = batch["batch"].get("candidates", [])
+            source_pages = [tab for tab in run.context.pages if tab.url.startswith(url.split('#')[0])]
+            page_summary = source_pages[-1].evaluate("()=>({title:document.title,visibleTextSample:document.body?.innerText.slice(0,240),finalUrl:location.href,challengeOptions:[...document.scripts].some(s=>s.textContent.includes('_cf_chl_opt')),challengePlatform:!!document.querySelector('script[src*=\"/cdn-cgi/challenge-platform/\"]')})") if source_pages else {}
+
+            if args.preview_only:
+                results.append({"url": url, "state": "preview_collected", "installationAcceptance": False,
+                    "pageSummary": page_summary,
+                    "pageType": batch['batch'].get('pageType'), "candidates": len(candidates),
+                    "media": sum(len(candidate.get('media', [])) for candidate in candidates),
+                    "textCharacters": sum(len(candidate.get('contentText', '')) for candidate in candidates),
+                    "completeness": [candidate.get('completeness') for candidate in candidates],
+                    "elapsedMs": round((time.monotonic() - started) * 1000)})
+                print(json.dumps(results[-1], ensure_ascii=False), flush=True)
+                page.evaluate("async id => chrome.windows.remove(id)", window)
+                continue
             save = page.evaluate("""async batch => {
               // Same default choice as manual capture: every candidate with its text and default media.
               const {pageCaptureDefaultMediaIds} = await import('./page-capture.js');
@@ -80,5 +98,15 @@ with tempfile.TemporaryDirectory(prefix="pd-live-capture-code-") as tmp:
                 "libraryMedia": len(media), "libraryMediaBytes": sum(asset.get("byteSize") or 0 for asset in media),
                 "elapsedMs": round((time.monotonic() - started) * 1000)})
             page.evaluate("async id => chrome.windows.remove(id)", window)
-        print(json.dumps({"mode": args.mode, "results": results,
-            "timing": worker.evaluate("promptDirectorTiming.summary()")}, ensure_ascii=False, indent=1), flush=True)
+        site_errors = [error for error in run.page_errors if not error.startswith('chrome-extension://')]
+        extension_errors = [error for error in run.page_errors if error.startswith('chrome-extension://')]
+        report = {"mode": args.mode, "previewOnly": args.preview_only, "results": results,
+            "siteRuntimeErrors": site_errors, "extensionRuntimeErrors": extension_errors,
+            "timing": worker.evaluate("promptDirectorTiming.summary()")}
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2))
+        print(json.dumps(report, ensure_ascii=False, indent=1), flush=True)
+        # The shared assertion remains strict for product errors; foreign-page
+        # errors are explicit observations in the report, never discarded.
+        run.page_errors[:] = extension_errors

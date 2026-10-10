@@ -50,7 +50,9 @@ with extension_session('pd-trash-preview-window-') as run:
       };
     }''')
     library.locator('#open-trash').click()
-    expect(library.locator('.trash-item')).to_have_count(count)
+    expect(library.locator('#trash-count')).to_have_text(str(count))
+    expect(library.locator('.trash-item').first).to_be_visible()
+    assert 0 < library.locator('.trash-item').count() < 50, 'entry must mount the viewport, not thousands of rows'
     expect(library.locator('.trash-item img[src]').first).to_be_visible()
     # This must exercise decoded animation, not only metadata or tiny still placeholders.
     first_image = library.locator('.trash-item img[src]').first
@@ -70,7 +72,9 @@ with extension_session('pd-trash-preview-window-') as run:
       return {requested:[...trashReads],visible};
     }''')
     assert initial['requested'] and set(initial['requested']) <= set(initial['visible']), initial
+    last_title = library.evaluate("async()=> (await chrome.runtime.sendMessage({type:'GET_TRASH_ITEMS'})).items.at(-1).snapshot.title")
     library.locator('.trash-dialog-body').evaluate('(node)=>{node.scrollTop=node.scrollHeight}')
+    expect(library.locator('.trash-item strong').last).to_have_text(last_title)
     expect(library.locator('.trash-item img').last).to_have_attribute('src', re.compile(r'blob:.*'))
     assert library.locator('.trash-item img[src]').count() < count
     reads_before_close = library.evaluate('()=>trashReads.size')

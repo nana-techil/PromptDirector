@@ -139,6 +139,12 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
           setLoop(null); break;
         }
         case 'set_selection': await selectCases(requireValue('caseIds')); break;
+        case 'set_browse': await libraryActions.setBrowse(requireValue('browse')); break;
+        case 'open_settings': await libraryActions.openSettings(); break;
+        case 'close_detail': {
+          if (isDirty() || temporaryFeedback?.getState().dirty) throw agentError('unsaved_workspace', '请先保存当前备注或案例编辑');
+          await libraryActions.closeDetail(); break;
+        }
         case 'set_review': await setReview(requireValue('enabled')); break;
         case 'open_temporary': {
           if (isDirty() || temporaryFeedback?.getState().dirty || temporaryFeedback?.getState().saving) throw agentError('unsaved_workspace', '请先保存当前备注或案例编辑');

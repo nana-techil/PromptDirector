@@ -539,6 +539,8 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .detail-visual-gallery.is-document-detail .detail-visual-caption { position: static; flex-wrap: wrap; background: var(--card); }
 .detail-visual-rail {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
   gap: 7px;
   overflow-x: auto;
   padding: 8px 10px 10px;
@@ -858,6 +860,9 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .setting-row > label { font-size: 12px; color: var(--muted); }
 .setting-row input { width: 100%; min-height: 36px; }
 .setting-row .field-span { grid-column: 2 / -1; }
+.share-location-controls { display: flex; align-items: center; min-width: 0; gap: var(--ui-space-1); }
+.share-location-controls input { flex: 1; min-width: 0; }
+.share-location-controls button { flex: none; }
 .capture-permission-list { display: flex; flex-wrap: wrap; gap: 8px 32px; }
 .capture-permission-row { display: flex; align-items: center; gap: 12px; min-height: 36px; }
 .agent-connection-row { flex-wrap: wrap; }

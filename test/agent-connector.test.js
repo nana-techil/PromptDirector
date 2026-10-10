@@ -309,3 +309,15 @@ test('a save holding transfer ownership can read without renewing or nesting the
   const record=await transfers.lock(()=>transfers.get('sample',{touch:false}));
   assert.equal(record.state,'ready');assert.equal(writes,0);
 });
+
+test('Agent capture forwards the requested scope and task budget before saving, invalid modes never open a tab', async () => {
+  let opened=0, options;
+  const chromeApi={permissions:{contains:async()=>true},tabs:{onUpdated:{addListener(){},removeListener(){}},onRemoved:{addListener(){},removeListener(){}},
+    create:async()=>{opened++;return{id:1};},get:async()=>({id:1,status:'complete',url:'https://example.org/work'})}};
+  const deps={chromeApi,loadState:async()=>({entries:[]}),collect:async(_tab,input)=>{options=input;return{candidates:[{id:'work',title:'Work',canonicalUrl:'https://example.org/work',contentText:'Full source'}]};},
+    commit:async()=>({ok:true,results:[{status:'saved',entryId:'saved'}]})};
+  await captureAgentUrl({url:'https://example.org/work',mode:'loaded',maxCandidates:250},'requested-capture',deps);
+  assert.equal(options.mode,'loaded');assert.equal(options.maxCandidates,250);
+  await assert.rejects(captureAgentUrl({url:'https://example.org/work',mode:'invalid'},'bad-capture',deps),{code:'invalid_input'});
+  assert.equal(opened,1);
+});

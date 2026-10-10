@@ -248,3 +248,25 @@ test('an external event cannot lend its fresh revision to a click made against s
   await writer.save(['b','a']); // A fresh explicit click after synchronization.
   assert.deepEqual((await api.get()).caseIds,['b','a']);
 });
+
+test('an Agent cannot report selection saved after a disk failure that the UI already displayed', async () => {
+  const errors=[];
+  const writer=createSelectionWriter({read:async()=>({revision:0,caseIds:[]}),write:async()=>{throw Error('disk full');},onRefresh:()=>{},onError:e=>errors.push(e)});
+  await writer.initialize();
+  await assert.rejects(writer.commit(['a']), {code:'selection_not_saved'});
+  assert.equal(errors.length,1);
+});
+test('opening a composer waits for its actual reader and preserves an existing page', async () => {
+  let contexts=[], calls=0, created=0, focused=0;
+  const chromeApi={runtime:{getURL:p=>`chrome-extension://test/${p}`,getContexts:async()=>contexts,
+    sendMessage:async()=>{if(++calls===1)throw Error('loading');return {ok:true,result:{surface:'composer',instruction:'Human draft'}};}},
+    tabs:{create:async()=>{created++;contexts=[{tabId:8,documentUrl:'chrome-extension://test/composer.html'}];return{id:8,windowId:1};},update:async id=>({id,windowId:1}),get:async id=>({id})},
+    windows:{update:async()=>{focused++;}}};
+  const api=createAgentWorkspace({chromeApi});
+  const first=await api.open({surface:'composer'});
+  assert.equal(first.state,'ready');assert.equal(first.instruction,'Human draft');assert.equal(calls,2);
+  assert.equal((await api.open({surface:'composer'})).state,'ready');assert.equal(created,1);assert.equal(focused,2);
+  contexts.push({tabId:9,documentUrl:'chrome-extension://test/composer.html'});
+  assert.equal((await api.open({surface:'composer'})).state,'choose_workspace');
+  await assert.rejects(api.open({surface:'composer',tabId:99}),{code:'workspace_closed'});
+});

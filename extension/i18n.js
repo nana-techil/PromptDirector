@@ -1,6 +1,7 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  '网页正在进行安全验证，请在原网页完成后重新采集；当前草稿已保留': 'The website is checking access. Complete verification on the original page, then capture again. Your draft is preserved.',
   "Skill文件只能从插件工作空间传入": "Skill files can only be sent from the plugin workspace",
   "未知Skill文件操作": "Unknown Skill file operation",
   "这里只接收Skill文件": "This operation only accepts Skill files",
@@ -1773,6 +1774,15 @@ const EN = Object.freeze({
   "只配置看图分析与多模态输入所需连接。": "Configure only the connection used for visual analysis and multimodal input.",
   "生图能力": "Image generation capability",
   "仅当兼容服务同时支持生成或参考图编辑时再填写。": "Complete this section only when the compatible service supports generation or reference-image editing.",
+  "分享保存位置": "Share save location",
+  "选择分享文件夹": "Choose share folder",
+  "每次选择保存位置": "Choose location each time",
+  "分享文件夹尚未授权，请重新选择文件夹": "The share folder needs permission. Choose the folder again.",
+  "分享包写入不完整，请重试": "The share package was not fully written. Please retry.",
+  "分享包已过期，请重新导出": "The share package has expired. Export it again.",
+  "请先选择分享文件夹": "Choose a share folder first.",
+  "参考选择未保存，请按当前选择重新操作。": "The reference selection was not saved. Retry using the current selection.",
+  "正在读取": "Loading",
   "分享包下载路径": "Share package download path",
   "分享案例": "Share cases",
   "从图片墙选择几个案例": "Select cases from the visual wall",

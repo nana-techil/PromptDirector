@@ -26,6 +26,9 @@
 .modular-library .topbar .share-bar, .modular-library .topbar .project-selection-actions { position: static; inset: auto; display: flex; align-items: center; flex: 0 1 auto; flex-wrap: nowrap; justify-content: flex-end; gap: 8px; height: 34px; min-width: 0; margin: 0 0 0 auto; background: transparent; }
 .modular-library .topbar .share-bar[hidden], .modular-library .topbar .project-selection-actions[hidden] { display: none; }
 .modular-library .selection-simple-actions, .modular-library .selection-selected-actions { flex-wrap: nowrap; }
+.modular-library .topbar .selection-simple-actions { min-width: 0; }
+.modular-library .topbar .selection-selected-actions { min-width: 0; overflow-x: auto; }
+.modular-library .topbar #share-count, .modular-library .topbar #share-cancel { flex: 0 0 auto; }
 .modular-library .topbar:has(.selection-mode, .project-selection-mode, .manual-order-mode) > .top-actions { display: none; }
 .modular-library .topbar:has(.selection-mode, .project-selection-mode, .manual-order-mode) .toolbar-more { display: none; }
 .modular-library .topbar .manual-order-mode .gallery-view-controls { display: none; }
@@ -110,6 +113,7 @@
   .modular-library .topbar .selection-selected-actions { gap: 3px; }
   .modular-library .topbar #share-count { font-size: 10px; }
   .modular-library .topbar #share-cancel { padding-inline: 5px; }
+  .modular-library .topbar .selection-mode .gallery-heading-copy { display: none; }
   .modular-library .topbar .selection-menu-panel { position: fixed; top: var(--library-topbar-height); left: 8px; right: 8px; width: auto; }
 }
 

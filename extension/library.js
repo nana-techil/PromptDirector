@@ -1,4 +1,7 @@
+import { shareDirectory } from './share-directory.js';
+import { installHorizontalWheel } from './horizontal-wheel.js';
 import { mountCaseDedupePanel } from './library-dedupe-panel.js';
+import { createReferenceWindow } from './composer-reference-window.js';
 import { createGalleryPreviewQueue, cardPreviewPriority, indexGalleryMedia } from './gallery-preview-queue.js';
 import { MAX_PALETTE_COLORS } from './palette.js';
 import { splitMediaDialog, splitContentAssets } from './library-media-split.js';
@@ -187,7 +190,7 @@ import {
   setLibraryCaseSelection,
   toggleLibraryCaseSelection
 } from "./library-selection.js";
-import { bindTransientMenus } from "./transient-menu.js";
+import { bindTransientMenus, bindPopoverMenu } from "./transient-menu.js";
 import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { CONTENT_ROLES, CONTENT_TYPE_VISIBILITY, contentRoleForEntry } from "./taxonomy.js";
 import { createUiIcon } from "./ui-icons.js";
@@ -267,7 +270,11 @@ import {
 
 let uiPreferences = await initializeUi();
 bindUiPreferenceReload();
+installHorizontalWheel(document, '.detail-visual-rail, .detail-media-tools, .selection-selected-actions');
 bindTransientMenus(document, ".package-menu, .project-menu, .detail-project-menu, .selection-menu, .dedupe-options");
+for (const menu of document.querySelectorAll('.selection-menu')) {
+  bindPopoverMenu(menu, menu.querySelector('.selection-menu-panel'));
+}
 let replacementRecoveryAvailable = false;
 let dedupePanelController = null;
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
@@ -290,7 +297,7 @@ const elements = Object.fromEntries([
   "add-quick-note", "organize-detail-tags", "organize-detail-status", "organize-detail-progress", "data-safety-progress", "library-package-import-progress", "maintenance-progress-bar", "pause-analysis-batch", "pause-library-maintenance", "preview-analysis-batch", "preview-analysis-reanalyze", "preview-reanalyze", "reanalyze-preview", "result-count", "resume-analysis-batch", "resume-library-maintenance", "retry-analysis-failures", "retry-library-maintenance", "start-analysis-reanalyze",
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-public", "share-dialog-public-panel", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
-  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-label-mode", "selection-label-add-field", "selection-removable-tags", "selection-remove-labels", "selection-copy-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
+  "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "choose-share-directory", "reset-share-directory", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-label-mode", "selection-label-add-field", "selection-removable-tags", "selection-remove-labels", "selection-copy-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
   "facet-recovery-actions", "analysis-recovery-actions", "import-recovery-actions",
   "project-section", "project-root-drop", "collapse-projects", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
@@ -396,6 +403,23 @@ function releaseTrashCovers() {
   thumbnailUrls.trim();
 }
 elements.trashDialog.addEventListener('close', releaseTrashCovers);
+const trashWindow = createReferenceWindow(elements.trashList, {
+  scrollContainer: elements.trashList.parentElement,
+  createCard: createTrashRow,
+  releaseCard: row => {
+    for (const image of row.querySelectorAll('img')) {
+      trashCoverObserver.unobserve(image);
+      visibleTrashCovers.delete(image);
+      thumbnailLoader.release(image);
+      image.removeAttribute('src');
+    }
+  }
+});
+elements.trashDialog.addEventListener('close', () => {
+  trashListGeneration++;
+  trashWindow.suspend();
+  elements.trashList.removeAttribute('aria-busy');
+});
 const detailMediaUrls = new Set();
 const detailControllerCleanups = new Set();
 let activeDetailDiscovery = null;
@@ -551,6 +575,7 @@ const referenceSelectionWriter = createSelectionWriter({
   }
 });
 let trashItems = [];
+let trashListGeneration = 0;
 let trashRestorePending = false;
 let trashCleanupProgress = null;
 let trashCleanupRequestPending = false;
@@ -759,7 +784,15 @@ void installWorkspaceReader({ chromeApi: chrome, readContext: async () => {
 void installLibraryAgentWorkspace({ chromeApi: chrome, t,
   libraryActions: { previousCase: () => moveDetail(-1), nextCase: () => moveDetail(1), closeDetail,
     focusSearch: () => elements.searchInput.focus(), importReview: () => document.querySelector('#open-temporary-review').click(),
-    startCompose: () => elements.startCompose.click(), openSettings: () => elements.openSettings.click() },
+    startCompose: () => elements.startCompose.click(), openSettings: () => elements.openSettings.click(),
+    setBrowse: async patch => {
+      if (patch.projectId && !organizerState.collections.some(item => item.id === patch.projectId)) throw new Error('项目不存在');
+      if (patch.query !== undefined) elements.searchInput.value = patch.query;
+      if (patch.projectId !== undefined) { selectedCollectionId = patch.projectId; unassignedViewActive = false; }
+      if (patch.pendingOnly !== undefined) elements.pendingFilter.checked = patch.pendingOnly;
+      if (patch.projectId !== undefined) renderGallery();
+      else renderStructuredFilterResults();
+    } },
   confirmDiscard: () => confirmAppAction({ title: '放弃未保存的备注？', confirmLabel: '放弃修改', danger: true }),
   readContext: () => ({ surface: "library", ready: document.body.dataset.libraryState === "ready", libraryRevision: workspaceLibraryRevision,
     projectId: selectedCollectionId, selectionMode, selectedCaseIds: [...selectedCaseIds],
@@ -778,7 +811,7 @@ void installLibraryAgentWorkspace({ chromeApi: chrome, t,
     if (ids.some(id => !logicalCases.some(item => item.id === id))) throw new Error("选择包含已不存在的案例");
     if (selectionMode && selectionMode !== "select") throw new Error("请先完成当前批量操作");
     selectionMode = "select"; selectedCaseIds.clear(); for (const id of ids) selectedCaseIds.add(id);
-    renderGallery(); updateSelectionBar(); await referenceSelectionWriter.save(ids);
+    renderGallery(); updateSelectionBar(); await referenceSelectionWriter.commit(ids);
   }
 }).then(controller => { liveWorkspace = controller; });
 document.addEventListener("visibilitychange", () => {
@@ -1586,10 +1619,9 @@ async function refreshLibrary({ response: suppliedResponse, progressive = false 
   const displayedLibraryTitle = libraryTitleForLocale(settings.libraryTitle, currentLocale());
   elements.libraryTitle.textContent = displayedLibraryTitle;
   if (document.activeElement !== elements.libraryNameSetting) elements.libraryNameSetting.value = displayedLibraryTitle;
-  if (document.activeElement !== elements.exportPathSetting) elements.exportPathSetting.value = settings.outputPath || "";
+  void refreshShareDirectorySetting();
   elements.libraryNameSetting.dataset.savedValue = displayedLibraryTitle;
   elements.libraryNameSetting.dataset.storedValue = settings.libraryTitle || "";
-  elements.exportPathSetting.dataset.savedValue = settings.outputPath || "";
   updateLibrarySettingsSaveState();
   if (selectedCollectionId && !organizerState.collections.some((item) => item.id === selectedCollectionId)) selectedCollectionId = "";
   if (["project", "vision"].includes(selectionMode) && !organizerState.collections.some((item) => item.id === projectSelectionId)) {
@@ -1686,6 +1718,17 @@ async function applyLibraryEntriesChange(nextEntries, { changedEntryIds: knownId
   updateSelectionBar();
   renderGallery();
   await renderOpenLibraryPanels({ detailChanged: refreshDetail && affectedIds.has(currentDetailId) });
+  if (refreshDetail && currentDetailId && !affectedIds.has(currentDetailId)) {
+    // Candidate edits change recommendations even when the open case did not change.
+    // Keep its media and editors mounted, and allow the gallery to paint first.
+    const entryId = currentDetailId;
+    const generation = detailRenderGeneration;
+    requestAnimationFrame(() => setTimeout(() => {
+      if (currentDetailId !== entryId || detailRenderGeneration !== generation) return;
+      const entry = logicalCases.find(item => item.id === entryId);
+      if (entry) refreshLocalDiscovery(entry);
+    }, 0));
+  }
   done();
 }
 
@@ -3817,6 +3860,38 @@ async function authorizeShareLocalAssets() {
   return true;
 }
 
+async function refreshShareDirectorySetting() {
+  try {
+    const directory = await shareDirectory();
+    elements.exportPathSetting.value = directory?.name || t('每次选择保存位置');
+    elements.resetShareDirectory.hidden = !directory;
+  } catch (error) { transientFeedback.show(elements.librarySettingsFeedback, translateUiMessage(error.message), { error: true }); }
+}
+
+elements.chooseShareDirectory.addEventListener('click', async () => {
+  try {
+    const directory = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await shareDirectory(directory);
+    await refreshShareDirectorySetting();
+    transientFeedback.show(elements.librarySettingsFeedback, t('已保存'));
+  } catch (error) {
+    if (error.name !== 'AbortError') transientFeedback.show(elements.librarySettingsFeedback, translateUiMessage(error.message), { error: true });
+  }
+});
+elements.resetShareDirectory.addEventListener('click', async () => {
+  try { await shareDirectory(null); await refreshShareDirectorySetting(); }
+  catch (error) { transientFeedback.show(elements.librarySettingsFeedback, translateUiMessage(error.message), { error: true }); }
+});
+
+async function authorizeShareDirectory() {
+  const directory = await shareDirectory();
+  if (!directory) return false;
+  let permission = await directory.queryPermission({ mode: 'readwrite' });
+  if (permission !== 'granted') permission = await directory.requestPermission({ mode: 'readwrite' });
+  if (permission !== 'granted') throw new Error(t('分享文件夹尚未授权，请重新选择文件夹'));
+  return true;
+}
+
 async function exportFromShareDialog() {
   if (!shareDialogContext) return;
   const context = shareDialogContext;
@@ -3830,6 +3905,7 @@ async function exportFromShareDialog() {
     const message = context.collectionId
       ? { type: "EXPORT_PROJECT", collectionId: context.collectionId }
       : { type: "EXPORT_ARCHIVE", entryIds: context.entryIds };
+    if (await authorizeShareDirectory()) message.directory = true;
     const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || t("无法导出分享包"));
     showFeedback(response.message);
@@ -6547,6 +6623,7 @@ function createLocalDiscovery(entry) {
         setPdReferenceDragData(event.dataTransfer, { libraryId: dragLibraryId, caseId: item.entry.id, name: item.entry.title });
       });
       media.append(image);
+      preparePreviewPlaceholder(image);
     } else {
       const asset = primaryMediaAsset(item.entry);
       media.classList.add("local-discovery-fallback");
@@ -7013,7 +7090,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
   gallery.dataset.mediaEntryId = entry.id;
   gallery.classList.toggle("is-immersive", immersive);
   const stage = el("div", "detail-visual-stage ui-scrollbar");
-  const rail = el("div", "detail-visual-rail");
+  const rail = el("div", "detail-visual-rail ui-scrollbar");
   rail.dataset.arrowKeys = "true";
   const notes = el("section", "time-notes");
   rail.setAttribute("aria-label", t("案例内媒体"));
@@ -12071,8 +12148,7 @@ function renderReanalysisPreview() {
 function updateLibrarySettingsSaveState() {
   elements.librarySettingsFeedback.textContent = "";
   const titleChanged = elements.libraryNameSetting.value !== (elements.libraryNameSetting.dataset.savedValue ?? "");
-  const pathChanged = elements.exportPathSetting.value !== (elements.exportPathSetting.dataset.savedValue ?? "");
-  elements.saveLibrarySettings.disabled = !(titleChanged || pathChanged);
+  elements.saveLibrarySettings.disabled = !titleChanged;
 }
 
 async function saveLibrarySettings() {
@@ -12085,7 +12161,7 @@ async function saveLibrarySettings() {
   button.disabled = true;
   let response;
   try {
-    response = await chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", settings: { libraryTitle, outputPath: elements.exportPathSetting.value } });
+    response = await chrome.runtime.sendMessage({ type: "UPDATE_SETTINGS", settings: { libraryTitle } });
     if (!response?.ok) throw new Error(response?.message || "保存失败");
     transientFeedback.show(elements.librarySettingsFeedback, t("已保存"));
   } catch (error) {
@@ -12204,30 +12280,39 @@ async function openTrashDialog() {
   if (!trashCleanupProgress && !trashCleanupRequestPending) transientFeedback.clear(elements.trashFeedback);
   if (!elements.trashDialog.open) elements.trashDialog.showModal();
   try {
-    const status = await chrome.runtime.sendMessage({ type: "GET_TRASH_CLEANUP_STATUS" });
-    updateTrashCleanupProgress(status?.progress);
-    await loadTrashItems();
+    await Promise.all([
+      chrome.runtime.sendMessage({ type: "GET_TRASH_CLEANUP_STATUS" }).then(status => updateTrashCleanupProgress(status?.progress)),
+      loadTrashItems()
+    ]);
   } catch (error) {
     showTrashFeedback(error.message || "无法读取回收站", true);
   }
 }
 
 async function loadTrashItems() {
+  const generation = ++trashListGeneration;
   elements.trashRestoreAll.disabled = true;
+  elements.trashList.setAttribute('aria-busy', 'true');
+  if (!elements.trashList.childElementCount) elements.trashList.replaceChildren(textEl('strong', 'trash-empty-title', '正在读取'));
   try {
     const response = await chrome.runtime.sendMessage({ type: "GET_TRASH_ITEMS" });
+    if (generation !== trashListGeneration) return;
     if (!response?.ok) throw new Error(response?.message || "无法读取回收站");
     trashItems = Array.isArray(response.items) ? response.items : [];
-    renderTrashItems();
+    if (elements.trashDialog.open) renderTrashItems();
   } catch (error) {
-    showTrashFeedback(error.message || "无法读取回收站", true);
+    if (generation === trashListGeneration) showTrashFeedback(error.message || "无法读取回收站", true);
   } finally {
-    elements.trashRestoreAll.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending || trashItems.length === 0;
+    if (generation === trashListGeneration) {
+      elements.trashList.removeAttribute('aria-busy');
+      elements.trashRestoreAll.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending || trashItems.length === 0;
+    }
   }
 }
 
 function renderTrashItems() {
   releaseTrashCovers();
+  trashWindow.suspend();
   elements.trashCount.hidden = trashItems.length === 0;
   elements.trashCount.textContent = String(trashItems.length);
   elements.trashEmpty.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending || trashItems.length === 0;
@@ -12236,59 +12321,61 @@ function renderTrashItems() {
     elements.trashList.replaceChildren(textEl("strong", "trash-empty-title", "回收站为空"));
     return;
   }
+  trashWindow.set(trashItems);
+}
+
+function createTrashRow(item) {
   const kindLabels = {
     entry: { cover: "案例封面", fallback: "案例 {id}", meta: "案例 · {date}" },
     collection: { cover: "项目封面", fallback: "项目 {id}", meta: "项目 · {date}" },
     media: { cover: "媒体封面", fallback: "媒体 {id}", meta: "媒体 · {date}" }
   };
   const defaultKindLabels = { cover: "内容封面", fallback: "内容 {id}", meta: "内容 · {date}" };
-  elements.trashList.replaceChildren(...trashItems.map((item) => {
-    const row = el("article", "trash-item");
-    const preview = trashItemPreview(item);
-    const kindLabel = kindLabels[item.kind] || defaultKindLabels;
-    const cover = el("div", "trash-item-cover");
-    if (preview.imageAsset) {
-      const image = document.createElement("img");
-      image.alt = t("{title} 封面", { title: preview.title });
-      image.decoding = "async";
-      image.dataset.visualId = preview.imageAsset.id;
-      cover.append(image);
-      trashCoverObserver.observe(image);
-    } else {
-      cover.append(createUiIcon(preview.icon));
-      cover.setAttribute("aria-label", t(kindLabel.cover));
-    }
-    const copy = el("div", "trash-item-copy");
-    const title = rawTextEl("strong", "", preview.title || t(kindLabel.fallback, { id: item.targetId }));
-    title.title = title.textContent;
-    copy.append(
-      title,
-      rawTextEl("small", "", t(kindLabel.meta, { date: formatDate(item.deletedAt) }))
-    );
-    if (preview.labels.length) {
-      const labels = el("div", "trash-item-labels");
-      labels.append(...preview.labels.map((value) => rawTextEl("span", "", value)));
-      copy.append(labels);
-    }
-    const actions = el("div", "trash-item-actions");
-    const restore = el("button", "icon-button button-secondary");
-    restore.type = "button";
-    restore.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending;
-    restore.setAttribute("aria-label", t("恢复：{title}", { title: preview.title }));
-    restore.title = t("恢复");
-    restore.append(createUiIcon("refresh-cw"));
-    const remove = el("button", "icon-button button-secondary quiet-danger");
-    remove.type = "button";
-    remove.disabled = Boolean(trashCleanupProgress) || trashCleanupRequestPending;
-    remove.setAttribute("aria-label", t("永久删除：{title}", { title: preview.title }));
-    remove.title = t("永久删除");
-    remove.append(createUiIcon("trash-2"));
-    restore.addEventListener("click", () => restoreTrashItem(item, restore));
-    remove.addEventListener("click", () => permanentlyDeleteTrashItem(item, remove));
-    actions.append(restore, remove);
-    row.append(cover, copy, actions);
-    return row;
-  }));
+  const row = el("article", "trash-item");
+  const preview = trashItemPreview(item);
+  const kindLabel = kindLabels[item.kind] || defaultKindLabels;
+  const cover = el("div", "trash-item-cover");
+  if (preview.imageAsset) {
+    const image = document.createElement("img");
+    image.alt = t("{title} 封面", { title: preview.title });
+    image.decoding = "async";
+    image.dataset.visualId = preview.imageAsset.id;
+    cover.append(image);
+    trashCoverObserver.observe(image);
+  } else {
+    cover.append(createUiIcon(preview.icon));
+    cover.setAttribute("aria-label", t(kindLabel.cover));
+  }
+  const copy = el("div", "trash-item-copy");
+  const title = rawTextEl("strong", "", preview.title || t(kindLabel.fallback, { id: item.targetId }));
+  title.title = title.textContent;
+  copy.append(
+    title,
+    rawTextEl("small", "", t(kindLabel.meta, { date: formatDate(item.deletedAt) }))
+  );
+  if (preview.labels.length) {
+    const labels = el("div", "trash-item-labels");
+    labels.append(...preview.labels.map((value) => rawTextEl("span", "", value)));
+    copy.append(labels);
+  }
+  const actions = el("div", "trash-item-actions");
+  const restore = el("button", "icon-button button-secondary");
+  restore.type = "button";
+  restore.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending;
+  restore.setAttribute("aria-label", t("恢复：{title}", { title: preview.title }));
+  restore.title = t("恢复");
+  restore.append(createUiIcon("refresh-cw"));
+  const remove = el("button", "icon-button button-secondary quiet-danger");
+  remove.type = "button";
+  remove.disabled = Boolean(trashCleanupProgress) || trashCleanupRequestPending;
+  remove.setAttribute("aria-label", t("永久删除：{title}", { title: preview.title }));
+  remove.title = t("永久删除");
+  remove.append(createUiIcon("trash-2"));
+  restore.addEventListener("click", () => restoreTrashItem(item, restore));
+  remove.addEventListener("click", () => permanentlyDeleteTrashItem(item, remove));
+  actions.append(restore, remove);
+  row.append(cover, copy, actions);
+  return row;
 }
 
 function trashItemPreview(item) {

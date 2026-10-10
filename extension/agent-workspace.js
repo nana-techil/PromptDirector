@@ -10,7 +10,18 @@ export function createAgentWorkspace({ chromeApi, readCase, readSelection, readT
     return values.filter(item => [libraryUrl, composerUrl].includes(item.documentUrl?.split(/[?#]/u)[0]))
       .map(item => ({ tabId: item.tabId, surface: item.documentUrl.split(/[?#]/u)[0] === libraryUrl ? "library" : "composer" }));
   }
-  return {
+  const api = {
+    async open(input) {
+      validate(WORKSPACE_OPERATION_SPECS.find(spec => spec.name === 'open_workspace').parameters, input, 'open_workspace');
+      const available = (await contexts()).filter(item => item.surface === input.surface);
+      if (input.tabId === undefined && available.length > 1) return { state: 'choose_workspace', contexts: available };
+      const existing = input.tabId === undefined ? available[0] : available.find(item => item.tabId === input.tabId);
+      if (input.tabId !== undefined && !existing) throw agentError('workspace_closed', '该工作页面已关闭，请重新发现现场。');
+      const tab = existing ? await chromeApi.tabs.update(existing.tabId, { active: true })
+        : await chromeApi.tabs.create({ url: input.surface === 'library' ? libraryUrl : composerUrl, active: true });
+      await chromeApi.windows.update(tab.windowId, { focused: true });
+      return waitForReady(tab.id, { surface: input.surface });
+    },
     async live(operation, input = {}) {
       validate(WORKSPACE_OPERATION_SPECS.find(spec => spec.name === operation).parameters, input, operation);
       if (input.tabId !== undefined) requireInteger(input.tabId);
@@ -50,8 +61,24 @@ export function createAgentWorkspace({ chromeApi, readCase, readSelection, readT
       const openUrl = `${libraryUrl}?case=${encodeURIComponent(caseId)}`;
       const tab = await chromeApi.tabs.create({ url: openUrl, active: true });
       await chromeApi.windows.update(tab.windowId, { focused: true });
-      return { state: "opening", caseId, tabId: tab.id, openUrl,
-        next: "用 read_workspace_context 读取此 tabId，viewedCaseId 相符才表示详情已显示。新页面不改变原页面的选择或未保存编辑。" };
+      return waitForReady(tab.id, { caseId, openUrl });
     }
   };
+  async function waitForReady(tabId, details) {
+    // Match the existing 15s foreground task wait budget; loading can continue
+    // after timeout without pretending that an opening page is usable.
+    const deadline = Date.now() + 15000;
+    do {
+      try {
+        const snapshot = await api.read({ tabId, source: 'page' });
+        if (!details.caseId || snapshot.viewedCaseId === details.caseId) return { ...details, ...snapshot };
+      } catch (error) {
+        if (!['workspace_unavailable', 'workspace_closed'].includes(error.code)) throw error;
+        if (error.code === 'workspace_closed' && !(await chromeApi.tabs.get(tabId))) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    return { state: 'opening', tabId, ...details, next: '用 read_workspace_context(tabId) 继续读取；ready 才表示现场就绪。' };
+  }
+  return api;
 }
