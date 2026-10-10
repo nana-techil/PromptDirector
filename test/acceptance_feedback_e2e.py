@@ -17,7 +17,7 @@ def main():
             if path.name != 'background.js':
                 (ext / path.name).symlink_to(path, target_is_directory=path.is_dir())
         (ext / 'background.js').write_text((EXTENSION_DIR / 'background.js').read_text() + '\nglobalThis.agentTestDispatch = dispatchAgentOperation;\n')
-        with extension_session('pd-feedback-', extension_dir=ext) as run:
+        with extension_session('pd-feedback-', extension_dir=ext, show_scrollbars=True) as run:
             setup = run.open_page('collector.html')
             entries = []
             for index in range(2):
@@ -82,33 +82,35 @@ def main():
                 assert opened['state'] == 'executed', opened
                 expect(page.locator('#settings-dialog')).to_be_visible()
                 page.locator('#settings-close').click()
-            if mode in ('all', 'layout'):
+            if mode in ('all', 'layout', 'toolbar'):
                 if page.locator('#share-cancel').is_visible():
                     page.locator('#share-cancel').click()
                 artifact = Path(os.environ.get('PD_E2E_ARTIFACT_DIR', tempfile.gettempdir()))
                 artifact.mkdir(parents=True, exist_ok=True)
                 for locale in ['en', 'zh-CN']:
                     page.close()
-                    setup.evaluate("async locale => { const {uiPreferences}=await chrome.storage.local.get('uiPreferences');await chrome.storage.local.set({uiPreferences:{...uiPreferences,locale}}); }", locale)
+                    setup.evaluate("async ({locale,theme}) => { const {uiPreferences}=await chrome.storage.local.get('uiPreferences');await chrome.storage.local.set({uiPreferences:{...uiPreferences,locale,theme}}); }", {'locale': locale, 'theme': 'dark' if mode == 'toolbar' and locale == 'zh-CN' else 'light'})
                     page = run.open_page('library.html')
                     expect(page.locator('.case-card')).to_have_count(2)
-                    for width in [390, 640, 900, 1440]:
+                    sizes = [(960, 0.6), (1440, 0.6)] if mode == 'toolbar' else [(390, None), (640, None), (900, None), (1440, None), (960, 0.6)]
+                    for width, ratio in sizes:
                         page.set_viewport_size({'width': width, 'height': 850})
                         if page.locator('#detail-drawer').is_visible():
                             page.locator('#detail-close').click()
-                        page.locator('#select-cases').click()
-                        page.locator('.case-card').first.click()
-                        value = page.locator('#share-cancel').evaluate('''button => {
-                          const rect=button.getBoundingClientRect();
-                          const center=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
-                          const clip=document.querySelector('#selection-selected-actions').getBoundingClientRect();
-                          const collisions=[...document.querySelectorAll('#selection-selected-actions button,#selection-selected-actions summary')].filter(n=>n.checkVisibility()).map(n=>n.getBoundingClientRect()).filter(r=>Math.min(r.right,clip.right)>rect.left && Math.max(r.left,clip.left)<rect.right && r.top<rect.bottom && r.bottom>rect.top);
-                          return {hit:(button===center || button.contains(center)) && !collisions.length,rect:rect.toJSON(),collisions};
-                        }''')
-                        page.screenshot(path=str(artifact / f'management-{locale}-{width}.png'))
-                        if not value['hit']:
-                            failures.append({'test': 'Management cancel remains clickable', 'locale': locale, 'width': width, 'actual': value})
-                        page.locator('#share-cancel').click(force=True)
+                        if mode != 'toolbar':
+                            page.locator('#select-cases').click()
+                            page.locator('.case-card').first.click()
+                            value = page.locator('#share-cancel').evaluate('''button => {
+                              const rect=button.getBoundingClientRect();
+                              const center=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+                              const clip=document.querySelector('#selection-selected-actions').getBoundingClientRect();
+                              const collisions=[...document.querySelectorAll('#selection-selected-actions button,#selection-selected-actions summary')].filter(n=>n.checkVisibility()).map(n=>n.getBoundingClientRect()).filter(r=>Math.min(r.right,clip.right)>rect.left && Math.max(r.left,clip.left)<rect.right && r.top<rect.bottom && r.bottom>rect.top);
+                              return {hit:(button===center || button.contains(center)) && !collisions.length,rect:rect.toJSON(),collisions};
+                            }''')
+                            page.screenshot(path=str(artifact / f'management-{locale}-{width}.png'))
+                            if not value['hit']:
+                                failures.append({'test': 'Management cancel remains clickable', 'locale': locale, 'width': width, 'actual': value})
+                            page.locator('#share-cancel').click(force=True)
                         page.locator('.case-card[data-entry-id=feedback-0]').click()
                         expect(page.locator('#detail-drawer')).to_be_visible()
                         page.wait_for_function("() => { const gallery=document.querySelector('.detail-visual-gallery');return gallery?.checkVisibility({visibilityProperty:true}) && (gallery.querySelector('img')?.naturalWidth>0 || gallery.dataset.displayedAssetId==='feedback-0-1'); }")
@@ -119,19 +121,33 @@ def main():
                             page.locator('.detail-video-play').click()
                         page.wait_for_function("()=>document.querySelector('.detail-video')?.readyState>=2")
                         page.locator('.detail-video').evaluate('video=>video.pause()')
-                        for selector in ['.detail-media-tools', '.detail-visual-rail']:
+                        if ratio is not None:
+                            primary = page.locator('.detail-primary').bounding_box()
+                            divider = page.locator('.detail-split-resizer').bounding_box()
+                            page.mouse.move(divider['x']+divider['width']/2, divider['y']+divider['height']/2)
+                            page.mouse.down()
+                            page.mouse.move(primary['x']+primary['width']*(1-ratio), divider['y']+divider['height']/2, steps=5)
+                            page.mouse.up()
+                        page.screenshot(path=str(artifact / f'detail-start-{locale}-{width}.png'))
+                        for selector in ['#detail-drawer .detail-media-tools', '#detail-drawer .detail-visual-rail']:
                             target=page.locator(selector).first
                             if not target.count():
                                 continue
+                            overflow=target.evaluate('node=>{node.scrollLeft=0;return node.scrollWidth-node.clientWidth;}')
+                            if overflow > 0:
+                                bounds=target.bounding_box()
+                                page.mouse.move(bounds['x']+bounds['width']/2, bounds['y']+bounds['height']/2)
+                                page.mouse.wheel(0, overflow+bounds['width'])
+                                page.wait_for_function('(selector)=>{const n=document.querySelector(selector);return n.scrollLeft>=n.scrollWidth-n.clientWidth-1;}', arg=selector)
                             value=target.evaluate('''node => {
-                              node.scrollLeft=0;
-                              const consumed=!node.dispatchEvent(new WheelEvent('wheel',{deltaY:node.scrollWidth,bubbles:true,cancelable:true}));
-                              if(node.scrollWidth>node.clientWidth && (!consumed || node.scrollLeft===0))return {hit:false,wheelFailed:true};
+                              if(node.scrollWidth>node.clientWidth && getComputedStyle(node).scrollbarWidth==='none')return {hit:false,scrollbarHidden:true};
+                              const navigation=node.closest('.detail-visual-gallery').querySelector('.detail-media-navigation');
+                              if(node.classList.contains('detail-media-tools') && navigation && Math.abs(navigation.getBoundingClientRect().top-node.querySelector('button').getBoundingClientRect().top)>1)return {hit:false,buttonsMisaligned:true};
                               const children=[...node.querySelectorAll('button')].filter(n=>n.checkVisibility());
                               const last=children.at(-1); if(!last)return {hit:true};
                               const r=last.getBoundingClientRect(), bounds=node.getBoundingClientRect();
                               const center=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-                              return {hit:last===center||last.contains(center),cover:center?.className,last:r.toJSON(),bounds:bounds.toJSON(),scrollWidth:node.scrollWidth,clientWidth:node.clientWidth};
+                              return {hit:(last===center||last.contains(center)) && r.left>=bounds.left-1 && r.right<=bounds.right+1,cover:center?.className,last:r.toJSON(),bounds:bounds.toJSON(),scrollWidth:node.scrollWidth,clientWidth:node.clientWidth};
                             }''')
                             if not value['hit']:
                                 failures.append({'test': 'Last detail control reachable', 'selector': selector, 'locale': locale, 'width': width, 'actual': value})

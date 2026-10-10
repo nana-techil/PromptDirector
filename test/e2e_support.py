@@ -95,6 +95,7 @@ def extension_session(
     accept_downloads: bool = True,
     extension_dir: Path = EXTENSION_DIR,
     preserve_http_cache: bool = False,
+    show_scrollbars: bool = False,
 ) -> Iterator[ExtensionTestSession]:
     with tempfile.TemporaryDirectory(prefix=profile_prefix) as profile:
         with sync_playwright() as playwright:
@@ -105,6 +106,7 @@ def extension_session(
                 accept_downloads=accept_downloads,
                 extension_dir=extension_dir,
                 preserve_http_cache=preserve_http_cache,
+                show_scrollbars=show_scrollbars,
             )
             page_errors: list[str] = []
             context.on("page", lambda page: record_page_errors(page, page_errors))
@@ -124,12 +126,15 @@ def launch_context(
     accept_downloads: bool,
     extension_dir: Path = EXTENSION_DIR,
     preserve_http_cache: bool = False,
+    show_scrollbars: bool = False,
 ) -> BrowserContext:
     network_blocked = os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1"
     cache_safe_args = ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"] if network_blocked and preserve_http_cache else []
     context = playwright.chromium.launch_persistent_context(
         profile_dir,
         headless=True,
+        # Headless Chromium hides tracks by default, masking scroll affordance bugs.
+        ignore_default_args=["--hide-scrollbars"] if show_scrollbars else None,
         channel=os.environ.get("PROMPTDIRECTOR_E2E_CHANNEL", "chromium"),
         accept_downloads=accept_downloads,
         viewport=viewport,
