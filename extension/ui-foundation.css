@@ -674,3 +674,23 @@ input, textarea, [contenteditable]:not([contenteditable="false"]) {
 .ui-dialog-body { display: grid; gap: 14px; padding: 18px 16px; }
 .ui-dialog-body > p { margin: 0; }
 .ui-dialog-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--ui-border); padding: 12px 16px; background: var(--ui-surface); }
+
+.tag-editor-chip > .tag-color-button, .tag-editor-chip > .tag-color-button:hover:not(:disabled) { flex: none; width: 16px; height: 16px; min-width: 16px; min-height: 16px; padding: 0; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--tag-color); }
+.tag-color-palette { position: fixed; margin: 0; inset: auto; z-index: 1001; width: 220px; max-width: calc(100vw - 16px); padding: 14px; display: grid; gap: 12px; }
+.tag-color-palette > strong { font-size: var(--ui-meta-size); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-color-options { display: flex; gap: 8px; }
+.tag-color-palette .tag-color-choice { flex: none; width: 24px; height: 24px; min-height: 24px; padding: 0; border: 1px solid var(--ui-border); border-radius: 50%; background: var(--tag-color); }
+.tag-color-choice[aria-pressed="true"] { outline: 2px solid var(--ui-text); outline-offset: 2px; }
+.tag-color-palette .tag-color-default { position: relative; background: var(--ui-surface); }
+.tag-color-default::after { content: ''; position: absolute; inset: 10px 3px; background: var(--ui-muted); transform: rotate(-45deg); }
+.tag-color-status:empty { display: none; }
+.tag-color-status { color: var(--ui-danger); font-size: var(--ui-meta-size); }
+
+/* Anchored disclosure menus share the action-menu surface without resizing toolbars. */
+.ui-popover-menu { position: fixed; inset: auto; margin: 0; width: max-content; max-width: calc(100vw - 2 * var(--ui-popover-viewport-inset)); max-height: calc(100dvh - 2 * var(--ui-popover-viewport-inset)); overflow: auto; font-size: var(--ui-meta-size); }
+.ui-popover-menu:not(:popover-open) { display: none; }
+.ui-popover-menu:popover-open { display: grid; gap: var(--ui-space-1); }
+.ui-popover-menu label { display: flex; align-items: flex-start; gap: 8px; padding: 8px; margin: 0; color: var(--ui-text); font-weight: normal; }
+.ui-popover-menu label input { flex: none; width: 16px; min-height: 16px; margin: 2px 0 0; }
+.ui-popover-menu label span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.ui-popover-menu > small { padding: 0 8px; color: var(--ui-muted); }

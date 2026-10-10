@@ -161,7 +161,6 @@ function setupCompactToolbar() {
   const panel = document.createElement("div");
   panel.className = "toolbar-more-panel";
   const copy = heading.querySelector(".gallery-heading-copy");
-  const breadcrumb = heading.querySelector(".browse-location");
   const count = document.getElementById("result-count");
   menu.append(summary, panel); heading.append(menu);
   const compact = matchMedia("(max-width: 640px)");
@@ -170,7 +169,7 @@ function setupCompactToolbar() {
       panel.append(add, compose);
     }
     else {
-      copy.prepend(breadcrumb); copy.append(count);
+      copy.append(count);
       heading.querySelector(".global-search").after(controls);
       actions.prepend(add, compose); menu.open = false;
     }

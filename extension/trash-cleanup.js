@@ -77,6 +77,13 @@ export function planTrashCleanup(state, itemIds, extraRetainedIds = []) {
     const value = state[key];
     if (!value || typeof value !== 'object') continue;
     const before = snapshotState(value);
+    // Unaffected history is already persisted. Do not serialize and rewrite whole backups.
+    if (!(before.entries ?? []).some(entry => affectedEntries.has(entry.id)) &&
+        !(before.trashState?.items ?? []).some(item => affectedEntries.has(item.targetId) || affectedEntries.has(item.relationships?.entryId) ||
+          deletedCollections.has(item.targetId) || mentions(item.relationships, deletedEntries) ||
+          item.relationships?.collections?.some(collection => deletedCollections.has(collection.id)) || item.kind === 'collection' && item.snapshot?.entryIds?.some(id => deletedEntries.has(id))) &&
+        !(before.organizerState?.collections ?? []).some(item => deletedCollections.has(item.id) || deletedCollections.has(item.parentId) || item.entryIds?.some(id => deletedEntries.has(id))) &&
+        !(before.compoundCases ?? []).some(item => mentions(item, deletedEntries))) continue;
     const after = pruneSnapshot(before);
     const kept = libraryStoredAssetIds(after);
     for (const asset of libraryStoredAssets(before)) if (!kept.has(asset.id)) {
@@ -85,8 +92,10 @@ export function planTrashCleanup(state, itemIds, extraRetainedIds = []) {
     }
     changes[key] = Array.isArray(value) ? after.entries : value.state ? { ...value, state: after } : after;
   }
-  const recovery = changes.libraryReplacementRecoveryPoint;
-  if (recovery) recovery.retainedAssetIds = (recovery.retainedAssetIds ?? []).filter(id => !candidates.has(id));
+  const recovery = changes.libraryReplacementRecoveryPoint ?? state.libraryReplacementRecoveryPoint;
+  if (recovery?.retainedAssetIds?.some(id => candidates.has(id))) changes.libraryReplacementRecoveryPoint = {
+    ...recovery, retainedAssetIds: recovery.retainedAssetIds.filter(id => !candidates.has(id))
+  };
 
   const deletedReferences = new Set([...deletedEntries, ...candidates]);
   if (state.facetUndo?.steps) changes.facetUndo = { ...state.facetUndo, steps: state.facetUndo.steps.map(step => ({ ...step,
@@ -105,9 +114,10 @@ export function planTrashCleanup(state, itemIds, extraRetainedIds = []) {
 
   const after = { ...state, ...changes };
   const retained = retainedTrashCleanupAssets(after, extraRetainedIds);
+  const activeEntries = new Set((state.entries ?? []).map(entry => entry.id));
   const cleanup = { mediaIds: [...candidates].filter(id => id && !retained.has(id)),
     localReferenceIds: [...localReferences].filter(id => !retained.has(id)),
-    screenshotEntryIds: taken.cleanup.screenshotEntryIds.filter(id => !(state.entries ?? []).some(entry => entry.id === id)) };
+    screenshotEntryIds: taken.cleanup.screenshotEntryIds.filter(id => !activeEntries.has(id)) };
   return { ...taken, changes, cleanup };
 }
 

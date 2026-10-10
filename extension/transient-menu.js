@@ -44,3 +44,35 @@ export function bindTransientMenus(root = document, selector = "") {
     root.removeEventListener("keydown", onKeyDown, true);
   };
 }
+
+// Keep disclosure menus out of toolbar layout and above scrolling dialog bodies.
+// Uses the same top-layer pattern as the tag palette and shared popover spacing.
+export function bindPopoverMenu(details, panel) {
+  const anchor = details.querySelector(':scope > summary');
+  panel.popover = 'manual';
+  panel.classList.add('ui-floating-panel', 'ui-action-menu', 'ui-popover-menu');
+  panel.id ||= `menu-${crypto.randomUUID()}`;
+  anchor.setAttribute('aria-controls', panel.id);
+  let events;
+  const close = () => { details.open = false; };
+  const sync = () => {
+    events?.abort();
+    anchor.setAttribute('aria-expanded', String(details.open));
+    if (!details.open) { if (panel.matches(':popover-open')) panel.hidePopover(); return; }
+    panel.showPopover();
+    const style = getComputedStyle(panel);
+    const inset = parseFloat(style.getPropertyValue('--ui-popover-viewport-inset'));
+    const gap = parseFloat(style.getPropertyValue('--ui-popover-gap'));
+    const bounds = anchor.getBoundingClientRect();
+    panel.style.left = `${Math.max(inset, Math.min(bounds.left, innerWidth - panel.offsetWidth - inset))}px`;
+    panel.style.top = `${Math.max(inset, Math.min(bounds.bottom + gap, innerHeight - panel.offsetHeight - inset))}px`;
+    events = new AbortController();
+    window.addEventListener('resize', close, { signal: events.signal });
+    document.addEventListener('scroll', event => { if (!panel.contains(event.target)) close(); }, { signal: events.signal, capture: true });
+  };
+  details.addEventListener('toggle', sync);
+  return () => {
+    events?.abort(); details.removeEventListener('toggle', sync);
+    if (panel.matches(':popover-open')) panel.hidePopover();
+  };
+}

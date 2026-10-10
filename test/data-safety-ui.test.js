@@ -75,7 +75,7 @@ test("share-package import is separate from the two backup actions while sync st
     panel.indexOf("</div>", panel.indexOf('class="data-safety-primary-actions"'))
   );
   assert.equal((primaryActions.match(/<button\b/g) ?? []).length, 2, "资料库备份与恢复只能保留两个常驻动作");
-  assert.match(panel, /id="restore-library-replacement-point"[^>]*hidden/);
+  assert.doesNotMatch(panel, /id="restore-library-replacement-point"/);
 });
 
 test("share-package batch import preserves local configuration and accepts historical package versions", async () => {
@@ -174,7 +174,8 @@ test("folder restore exposes safe merge and exact replace with aggregate capacit
   assert.match(restore, /assertStorageCapacity\(/);
   assert.match(restore, /conflictResolutions/);
   assert.match(restore, /showAppDialog\(/);
-  assert.match(html, /id="restore-library-replacement-point"/);
+  assert.doesNotMatch(html, /id="library-recovery-actions"|id="restore-library-replacement-point"/);
+  assert.match(library, /button.id = "restore-library-replacement-point"/);
   assert.match(library, /RESTORE_LIBRARY_REPLACEMENT_POINT/);
   assert.match(library, /canRestoreReplacementPoint/);
 });

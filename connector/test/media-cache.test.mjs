@@ -43,6 +43,7 @@ test('reusing an original checks current library ownership and local bytes witho
   await writeFile(first.path,Buffer.alloc(bytes.length));
   calls = 0;
   assert.deepEqual(await readFile((await receiveMedia(input,call,root)).path),bytes);
+  assert.deepEqual(await readFile(first.path), Buffer.alloc(bytes.length), 'edited download is preserved');
   assert(calls > 1,'same-size corrupted local files must be downloaded and verified again');
   bytes = Buffer.from('changed-content'.repeat(20));
   const changed = await receiveMedia(input,call,root);
@@ -50,4 +51,25 @@ test('reusing an original checks current library ownership and local bytes witho
   assert.deepEqual(await readFile(changed.path),bytes);
   deleted = true;
   await assert.rejects(receiveMedia(input,call,root),{code:'case_not_found'});
+});
+
+test('an in-flight upload protects an expired connector copy from concurrent cleanup', async t => {
+  const { mkdir } = await import('node:fs/promises');
+  const { recordCacheFile, sweepTransferCache, CACHE_IDLE_MS } = await import('../transfer-cache.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'pd-cache-upload-'));
+  const previous = process.env.PROMPTDIRECTOR_CONNECTOR_HOME;
+  process.env.PROMPTDIRECTOR_CONNECTOR_HOME = root;
+  t.after(async () => { if (previous === undefined) delete process.env.PROMPTDIRECTOR_CONNECTOR_HOME; else process.env.PROMPTDIRECTOR_CONNECTOR_HOME = previous; await rm(root,{recursive:true,force:true}); });
+  const directory = join(root,'files'); await mkdir(directory);
+  const path = join(directory,'original.png'); await writeFile(path,'original');
+  await recordCacheFile(path,{owned:true,now:Date.now()-CACHE_IDLE_MS*2});
+  const calls=[];
+  await stageFiles([{path}],undefined,'upload',async operation=>{
+    calls.push(operation);
+    assert.equal((await sweepTransferCache(directory,{now:Date.now()+CACHE_IDLE_MS*2})).removed,0);
+    assert.equal(await readFile(path,'utf8'),'original');
+    return operation==='begin_transfer'?{state:'complete'}:{};
+  });
+  assert.deepEqual(calls,['begin_transfer','finish_transfer']);
+  assert.equal((await sweepTransferCache(directory)).removed,0,'successful reuse refreshes idle age');
 });

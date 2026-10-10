@@ -1,7 +1,8 @@
 import { normalizeFacetCatalog } from "./facets.js";
 import { entrySearchText } from "./library-model.js";
 import { entryMediaAssets } from "./media.js";
-import { matchesSearchDocument, parseSearchQuery, searchFieldsForEntry } from "./search-query.js";
+import { matchesSearchDocument, parseSearchQuery, searchFieldsForEntry, searchText } from "./search-query.js";
+import { caseOriginalPromptText } from './prompt-sources.js';
 import { sha256 } from "./vendor/noble-hashes/sha2.js";
 import { bytesToHex } from "./vendor/noble-hashes/utils.js";
 
@@ -43,6 +44,8 @@ class DeferredSearchDocument {
     return this.#value;
   }
   get fullText() { return this.#document().fullText; }
+  get title() { return this.#document().title; }
+  get prompts() { return this.#document().prompts; }
   get sources() { return this.#document().sources; }
   get notes() { return this.#document().notes; }
   get tags() { return this.#document().tags; }
@@ -58,6 +61,8 @@ function indexEntry(entry, catalog, nodeById, documentTextByAsset, derivedMetada
     const mediaAssets = entryMediaAssets(entry);
     return {
       id: entry.id,
+      title: searchText(entry.title),
+      prompts: searchText(caseOriginalPromptText(entry)),
       fullText: clean([entrySearchText(entry, catalog, nodeById), ...mediaAssets.map((asset) => documentTextByAsset.get(asset.id))].filter(Boolean).join("\n")),
       ...searchFieldsForEntry(entry, nodeById, derivedMetadataByAsset)
     };
@@ -122,12 +127,24 @@ export function createSearchIndexCache() {
   };
 }
 
-export function searchIndexedEntries(index = [], queryValue = "") {
+export function searchIndexedEntries(index = [], queryValue = "", { relevance = false } = {}) {
   const query = parseSearchQuery(queryValue);
   if (!query.terms.length && !query.filters.length) return new Set(index.map((item) => item.id));
-  return new Set(index.filter(document => matchesSearchDocument(document, query)).map(item => item.id));
+  const matches = index.filter(document => matchesSearchDocument(document, query));
+  if (relevance && query.terms.length) {
+    // Lexicographic priority, without invented numeric weights: title, tags,
+    // original prompts, then the existing order for full-text-only matches.
+    const counts = new Map(matches.map(row => [row, ['title', 'tags', 'prompts'].map(field =>
+      query.terms.filter(term => row[field]?.includes(term)).length)]));
+    matches.sort((a, b) => {
+      const left = counts.get(a), right = counts.get(b);
+      for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) return right[i] - left[i];
+      return 0;
+    });
+  }
+  return new Set(matches.map(item => item.id));
 }
 
 function clean(value) {
-  return String(value ?? "").toLocaleLowerCase("zh-CN");
+  return searchText(value);
 }

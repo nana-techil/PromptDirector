@@ -40,6 +40,8 @@ def main():
         # Add after the historical snapshot, then use the actual undo button.
         setup.evaluate("async entry => {const s=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...s.entries,entry]}));}", later)
         page.locator('#undo-facet').click()
+        expect(page.locator('#promptdirector-app-dialog')).to_contain_text('后来新增的案例保留')
+        page.locator('#promptdirector-app-dialog button[type=submit]').click()
         expect(page.locator('#manager-feedback')).to_contain_text('已撤回')
         current = state(setup)
         assert {entry['id'] for entry in current['entries']} == {'first', 'later'}, current
@@ -65,22 +67,19 @@ def main():
         page.screenshot(path=str(screenshot))
         screenshots.append(str(screenshot))
         page.locator('#manager-close').click()
-        # A previous exact recovery point remains reachable, initially folded.
+        # Recovery is offered only inside the restore workflow, never beside ZIP import.
         setup.evaluate("""async () => {
           const {createLibraryReplacementRecoveryPoint}=await import('./library-recovery-point.js');
           const saved=await chrome.runtime.sendMessage({type:'GET_FOLDER_BACKUP_STATE'});
           await chrome.storage.local.set({libraryReplacementRecoveryPoint:createLibraryReplacementRecoveryPoint(saved)});
         }""")
         page.locator('#open-settings').click()
-        expect(page.locator('#library-recovery-actions')).to_be_visible()
-        expect(page.locator('#restore-library-replacement-point')).to_be_hidden()
-        page.locator('#library-recovery-actions summary').click()
+        expect(page.locator('#library-recovery-actions')).to_have_count(0)
+        expect(page.locator('#restore-library-replacement-point')).to_have_count(0)
+        page.locator('#restore-folder-backup').click()
         expect(page.locator('#restore-library-replacement-point')).to_be_visible()
-        page.locator('#sync-settings summary').click()
-        page.locator('#sync-now').is_visible()  # Inspect without connecting anything.
-        page.locator('#settings-close').click()
-        page.locator('#open-settings').click()
-        expect(page.locator('#restore-library-replacement-point')).to_be_hidden()
+        page.keyboard.press('Escape')
+        expect(page.locator('#restore-library-replacement-point')).to_have_count(0)
         screenshot = Path(tempfile.gettempdir())/'pd-undo-settings.png'
         page.screenshot(path=str(screenshot))
         screenshots.append(str(screenshot))
@@ -151,6 +150,8 @@ def main():
         expect(task_page.locator('#undo-analysis-batch')).to_be_hidden()
         task_page.locator('#analysis-recovery-actions summary').click()
         task_page.locator('#undo-analysis-batch').click()
+        expect(task_page.locator('#promptdirector-app-dialog')).to_contain_text('涉及 1 个案例')
+        task_page.locator('#promptdirector-app-dialog button[type=submit]').click()
         expect(task_page.locator('#feedback')).to_contain_text('已撤回本次批量分析')
         after_batch=state(setup)
         assert [entry['id'] for entry in after_batch['entries']]==batch['before']

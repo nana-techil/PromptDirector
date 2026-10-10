@@ -19,10 +19,11 @@
       </div>
         <div id="gallery-heading" class="gallery-heading">
             <span id="workspace-agent-activity" class="workspace-agent-activity" role="status" hidden></span>
-          <div class="gallery-heading-copy"><div class="browse-location"><nav id="browse-breadcrumb" aria-label="项目路径" data-i18n-aria-label="项目路径"></nav></div><h1 id="library-title"></h1><strong id="result-count"></strong></div>
+          <div class="gallery-heading-copy"><h1 id="library-title"></h1><strong id="result-count"></strong></div>
       <label class="global-search">
         <span class="sr-only" data-i18n="搜索提示词、来源或 AI 标签">搜索提示词、来源或 AI 标签</span>
-        <input id="search-input" type="search" placeholder="搜索画面、提示词，或输入 type:video…" data-i18n-placeholder="搜索画面、提示词，或输入 type:video…" />
+        <svg class="ui-icon search-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-search"></use></svg>
+        <input id="search-input" type="search" placeholder="搜索" data-i18n-placeholder="搜索" />
       </label>
           <div id="gallery-view-controls" class="gallery-view-controls">
             <label id="browse-scope" title="包含子项目" data-i18n-title="包含子项目" hidden><input id="include-subprojects" class="include-subprojects" type="checkbox" aria-label="包含子项目" data-i18n-aria-label="包含子项目"></label>
@@ -209,7 +210,11 @@
       </header>
       <div class="data-safety-body trash-dialog-body ui-scrollbar">
         <div id="trash-list" class="trash-list" aria-live="polite"></div>
+
+      </div>
+      <div class="trash-status">
         <p id="trash-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
+        <progress id="trash-progress" class="ui-task-progress" aria-label="回收站清理进度" data-i18n-aria-label="回收站清理进度" hidden></progress>
       </div>
       <footer class="data-safety-actions trash-actions ui-dialog-footer">
         <button id="trash-restore-all" class="button-primary" type="button" data-i18n="全部恢复">全部恢复</button>
@@ -261,7 +266,7 @@
       <footer id="import-actions" class="data-safety-actions import-actions ui-dialog-footer" hidden>
         <button id="import-cancel" class="button-secondary" type="button" data-i18n="取消">取消</button>
         <button id="import-retry" class="button-secondary" type="button" hidden data-i18n="重试失败项">重试失败项</button>
-        <details id="import-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="import-undo" class="button-secondary" type="button" hidden data-i18n="撤销本次导入">撤销本次导入</button></details>
+        <details id="import-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤销本次导入">撤销本次导入</summary><button id="import-undo" class="button-secondary" type="button" hidden data-i18n="撤销本次导入">撤销本次导入</button></details>
         <button id="import-view-project" class="button-secondary" type="button" hidden data-i18n="查看导入项目">查看导入项目</button>
         <button id="import-start" type="button" data-i18n="开始导入">开始导入</button>
       </footer>
@@ -379,7 +384,7 @@
             <p id="data-safety-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
             <progress id="data-safety-progress" class="ui-task-progress" aria-label="备份与同步进度" data-i18n-aria-label="备份与同步进度" hidden></progress>
             <div class="share-package-import"><span data-i18n="导入分享包">导入分享包</span><button id="import-library-package" class="button-secondary" type="button" data-i18n="选择 ZIP">选择 ZIP</button><input id="library-package-file" type="file" accept=".zip,.eaglepack,application/zip" multiple hidden />
-              <details id="library-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="restore-library-replacement-point" class="button-secondary" type="button" hidden data-i18n="回退上次精确恢复">回退上次精确恢复</button></details></div>
+            </div>
             <details id="sync-settings" class="sync-settings">
               <summary><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg><span data-i18n="跨设备同步">跨设备同步</span><small id="data-safety-status"></small></summary>
               <div class="sync-settings-body">
@@ -402,6 +407,10 @@
             <p id="update-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
           </footer>
         </section>
+        <section id="settings-dedupe-panel" class="settings-panel settings-dedupe-panel" data-settings-panel="dedupe" aria-label="案例排重" data-i18n-aria-label="案例排重" hidden>
+          <div class="settings-subview-heading"><button id="dedupe-back" class="icon-button" type="button" aria-label="返回任务与维护" title="返回任务与维护" data-i18n-aria-label="返回任务与维护" data-i18n-title="返回任务与维护"><svg class="ui-icon" aria-hidden="true"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg></button><h3 data-i18n="案例排重">案例排重</h3></div>
+          <div class="case-dedupe-panel"></div>
+        </section>
         <section id="settings-tasks-panel" class="settings-panel settings-tasks-panel" data-settings-panel="tasks" hidden>
 
           <div class="batch-card batch-primary" id="text-batch-card">
@@ -417,7 +426,7 @@
 
             <div id="analysis-progress" class="maintenance-progress" hidden><progress class="ui-task-progress" aria-label="文字分析进度" data-i18n-aria-label="文字分析进度" id="analysis-progress-bar" max="1" value="0"></progress></div>
 
-            <div class="task-tools"><details id="analysis-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="undo-analysis-batch" class="button-secondary" type="button" hidden data-i18n="撤回本次分析">撤回本次分析</button></details><details class="task-diagnostics"><summary data-i18n="故障诊断">故障诊断</summary><p id="analysis-batch-details"></p><label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label><details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
+            <div class="task-tools"><details id="analysis-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤销分析结果">撤销分析结果</summary><button id="undo-analysis-batch" class="button-secondary" type="button" hidden data-i18n="撤回本次分析">撤回本次分析</button></details><details class="task-diagnostics"><summary data-i18n="故障诊断">故障诊断</summary><p id="analysis-batch-details"></p><label class="ai-consent"><input id="show-analysis-diagnostics" type="checkbox" /><span data-i18n="显示故障诊断（仅排查问题时开启）">显示故障诊断（仅排查问题时开启）</span></label><details id="analysis-diagnostics" class="analysis-diagnostics" hidden>
               <summary><span data-i18n="分析诊断">分析诊断</span><span id="analysis-runtime-version"></span></summary>
               <div class="analysis-diagnostics-heading"><p data-i18n="仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。">仅记录运行版本、阶段、标签数量、耗时和错误类别；不记录案例原文、API Key 或模型完整输出。</p><button id="copy-analysis-diagnostics" class="button-secondary" type="button" data-i18n="复制诊断日志">复制诊断日志</button></div>
               <ol id="analysis-diagnostic-events"></ol>
@@ -432,6 +441,7 @@
               <button id="cancel-library-maintenance" class="quiet-danger" type="button" hidden data-i18n="取消">取消</button>
             </div></div>
           </div>
+          <div class="batch-card"><div class="task-heading"><div class="task-copy"><h3 data-i18n="案例排重">案例排重</h3><p data-i18n="查找图片或视频原件完全相同的案例。">查找图片或视频原件完全相同的案例。</p></div><button id="inspect-duplicates" class="button-secondary" type="button" data-i18n="查看重复案例">查看重复案例</button></div></div>
           <div id="legacy-candidates" class="batch-card"></div>
         </section>
         <section id="settings-ai-panel" class="settings-panel settings-ai-panel" data-settings-panel="ai" hidden>
@@ -588,7 +598,7 @@
         <div class="vocabulary-toolbar">
           <label class="dimension-picker"><span data-i18n="当前维度">当前维度</span><select id="vocabulary-facet"></select></label>
           <button id="organize-detail-tags" class="button-secondary" type="button" data-i18n="一键整理三级标签">一键整理三级标签</button>
-          <details id="facet-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤回与恢复">撤回与恢复</summary><button id="undo-facet" class="button-secondary" type="button" hidden data-i18n="撤回刚才修改">撤回刚才修改</button></details>
+          <details id="facet-recovery-actions" class="recovery-actions" hidden><summary data-i18n="撤销标签修改">撤销标签修改</summary><button id="undo-facet" class="button-secondary" type="button" hidden data-i18n="撤回刚才修改">撤回刚才修改</button></details>
         </div>
         <div class="ui-task-status">
           <p id="organize-detail-status" class="ui-task-feedback" role="status" aria-live="polite"></p>

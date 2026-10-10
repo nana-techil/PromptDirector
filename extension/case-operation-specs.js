@@ -56,7 +56,7 @@ export const CASE_OPERATION_SPECS = [
       title: id, coverVisualId: id, customLabels: list(id), nodeIds: list(id),
       additionalCases: { ...list(object(identity, ['caseId', 'expectedRevision'])), minItems: 1 },
       projectId: id, targetCaseId: id, targetRevision: id, assetIds: { ...list(id), minItems: 1, uniqueItems: true },
-      groups: { ...list(object({ assetIds: { ...list(id), minItems: 1, uniqueItems: true }, title: id, text,
+      groups: { ...list(object({ assetIds: { ...list(id), minItems: 1, uniqueItems: true }, title: id, text, customLabels: list(text),
         ...source, textBlockIds: { ...list(id), uniqueItems: true } }, ['assetIds', 'title', 'text', 'sourceUrl'])), minItems: 1 }
     }, ['requestId', 'caseId', 'expectedRevision', 'action']) }
 ];

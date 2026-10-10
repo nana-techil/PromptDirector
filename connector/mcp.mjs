@@ -10,7 +10,8 @@ import { isMain } from "./is-main.mjs";
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
-import { callExtension, CONNECTOR_TIMEOUT_MS } from './bridge-client.mjs';
+import { callExtension } from './bridge-client.mjs';
+import { TASK_WAIT_MS } from './request-policy.mjs';
 import { receiveMedia, receiveWorkspaceScreenshot, stageFiles } from './transfers.mjs';
 import { CASE_OPERATION_SPECS, CASE_SEARCH_PROPERTIES } from '../extension/case-operation-specs.js';
 import { CASE_QUERY_PROPERTIES, CASE_QUERY_DESCRIPTION } from '../extension/case-query-specs.js';
@@ -211,9 +212,9 @@ export function createServer(callBridge = callExtension) {
     const staged = await stageFiles(files, bodyFile, input.requestId, call);
     const task = await call('save_material', { ...material, ...staged });
     if (!['queued', 'running'].includes(task.state)) return task;
-    // Half the existing bridge timeout leaves room for submission and transport.
+    // Wait within the extension's declared long-poll budget plus transport time.
     // Wait on the original persisted task; never resubmit after a lost receipt.
-    try { return await call('get_task', { requestId: input.requestId, waitMs: CONNECTOR_TIMEOUT_MS / 2 }); }
+    try { return await call('get_task', { requestId: input.requestId, waitMs: TASK_WAIT_MS }); }
     catch (error) { return { ...task, waitError: { code: error.code || 'operation_failed', message: error.message },
       next: '完成状态尚未确认；用原 requestId 查询 get_task，不要新建保存请求。' }; }
   });

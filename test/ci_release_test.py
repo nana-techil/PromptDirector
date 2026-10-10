@@ -25,6 +25,19 @@ class ReleasePlanning(unittest.TestCase):
         self.assertNotIn('x_large_media_save_e2e.py', plan['scripts'])
         self.assertFalse(plan['upgrade'])
 
+    def test_recovery_ui_and_shared_storage_always_include_p0_confirmation_flow(self):
+        for path in ['extension/library.html', 'extension/library-storage.js']:
+            self.assertIn('library_recovery_confirmation_e2e.py', ci.make_plan([path])['scripts'])
+
+    def test_dedupe_settings_surface_keeps_no_flash_regression_in_the_gate(self):
+        for path in ['extension/library.html', 'extension/library-dedupe-panel.js']:
+            self.assertIn('library_dedupe_settings_e2e.py', ci.make_plan([path])['scripts'])
+
+    def test_library_presentation_keeps_p0_trash_regressions_in_the_release_gate(self):
+        plan = ci.make_plan(['extension/library.css'])
+        for script in ['trash_cleanup_e2e.py', 'trash_preview_window_e2e.py', 'trash_cleanup_feedback_e2e.py']:
+            self.assertIn(script, plan['scripts'])
+
     def test_shared_data_media_dependencies_versions_and_unknown_paths_run_every_scenario(self):
         for path in ['extension/background.js', 'extension/page-session-media.js', 'extension/zip.js',
                      'extension/library-storage.js', 'extension/manifest.json', 'package-lock.json',

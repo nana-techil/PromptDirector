@@ -413,3 +413,37 @@ test('multi-part pagination preserves the whole original and rejects an interven
   const saved = await combined.api.execute('organize_case', await combineInput(combined));
   await assert.rejects(combined.api.read({ caseId: saved.cases[0].caseId, parts: ['overview', 'document'] }), { code: 'compound_member' });
 });
+
+
+test('visible media split keeps shared prose, labels, source and projects while moving notes with their video', async () => {
+  const { mediaSplitGroups } = await import('../extension/library-media-split.js');
+  const run = service(library());
+  const source = run.data.entries[0];
+  source.mediaAssets[2].originalWorkUrl = source.url;
+  source.sourceFacts.itemId = '101';
+  const groups = mediaSplitGroups(source);
+  assert.equal(groups.length, 1, 'a note screenshot is attached to its video, not offered as another split');
+  assert.equal(groups[0].text, '独立原词');
+  assert.equal(groups[0].sourceUrl, source.url);
+  assert.deepEqual(groups[0].customLabels, source.customLabels);
+  const before = structuredClone(source);
+  const input = { requestId:'visible-split', caseId:source.id, expectedRevision:(await run.api.read({caseId:source.id})).revision, action:'split_media', groups };
+  await run.api.execute('organize_case', input);
+  const child = run.data.entries.at(-1);
+  assert.equal(run.data.entries[0].text, before.text);
+  assert.deepEqual(child.customLabels, before.customLabels);
+  assert.equal(child.url, 'https://x.com/first/status/101');
+  assert.deepEqual(child.mediaPrompts, before.mediaPrompts);
+  assert.deepEqual(child.timeNotes, before.timeNotes);
+  assert(run.data.organizerState.collections[0].entryIds.includes(child.id));
+  assert.deepEqual(child.mediaAssets, before.mediaAssets.filter(a => ['b','pb','frame'].includes(a.id)));
+});
+
+
+test('splitting retains a genuine shared prompt but does not assign article prose as a media prompt', async () => {
+  const {mediaSplitGroups} = await import('../extension/library-media-split.js');
+  const entry = {title:'shared',text:'Shared original prompt',mediaAssets:[{id:'a',kind:'image'},{id:'b',kind:'image'}]};
+  assert.equal(mediaSplitGroups(entry)[0].text,entry.text);
+  entry.sourceFacts={originalPromptAvailable:false};
+  assert.equal(mediaSplitGroups(entry)[0].text,'');
+});

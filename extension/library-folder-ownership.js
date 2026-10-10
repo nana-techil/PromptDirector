@@ -87,6 +87,7 @@ function copyGroup(state, group, entries, mapping, usedIds, compoundId) {
     original.caseInstanceId ||= `case-instance:${original.id}`;
     const copy = structuredClone(original);
     copy.id = mapping.get(id);
+    copy.copyOrigin = { caseId: id, title: original.title, copiedAt: new Date().toISOString() };
     copy.caseInstanceId = `case-instance:${copy.id}`;
     state.entries.push(copy);
   }

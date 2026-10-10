@@ -1,5 +1,7 @@
+import { mountCaseDedupePanel } from './library-dedupe-panel.js';
 import { createGalleryPreviewQueue, cardPreviewPriority, indexGalleryMedia } from './gallery-preview-queue.js';
 import { MAX_PALETTE_COLORS } from './palette.js';
+import { splitMediaDialog, splitContentAssets } from './library-media-split.js';
 import { startPhase } from "./perf-trace.js";
 import { eagleDirectorySource, readEagleDirectory, readEaglePackage } from './eagle-import.js';
 import { createMediaStage } from './staged-media.js';
@@ -30,7 +32,7 @@ import { installWorkspaceReader, libraryWorkspaceReferences } from "./workspace-
 import { createSelectionWriter, REFERENCE_SELECTION_KEY } from "./reference-selection.js";
 import { setPdReferenceDragData as writePdReferenceDragData } from './pd-reference.js';
 import { createLibraryLayout } from "./library-layout.js";
-import { renderBrowseNavigation, appendCaseRowDetails } from "./library-browse-view.js";
+import { appendCaseRowDetails } from "./library-browse-view.js";
 import { attachDetailSplit } from "./detail-split.js";
 import { sendWithGenerationPromptConfirmation } from "./image-generation-confirmation.js";
 import { createGenerationInfoViewReader } from "./image-generation-view.js";
@@ -265,7 +267,9 @@ import {
 
 let uiPreferences = await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".package-menu, .project-menu, .detail-project-menu, .selection-menu");
+bindTransientMenus(document, ".package-menu, .project-menu, .detail-project-menu, .selection-menu, .dedupe-options");
+let replacementRecoveryAvailable = false;
+let dedupePanelController = null;
 const libraryWindowId = (await chrome.windows.getCurrent()).id;
 
 const elements = Object.fromEntries([
@@ -287,12 +291,12 @@ const elements = Object.fromEntries([
   "project-selection-actions", "project-selection-cancel", "project-selection-clear", "project-selection-count", "project-selection-save", "project-selection-select-all", "project-selection-select-filtered", "project-selection-title", "project-order-status", "restore-analysis-default", "search-input", "share-bar", "share-cancel", "share-count", "share-export", "start-analysis-batch", "start-compose", "toggle-filters", "undo-analysis-batch", "undo-facet", "vocabulary-facet", "workspace-library", "workspace-unassigned",
   "share-dialog", "share-dialog-public", "share-dialog-public-panel", "share-dialog-close", "share-dialog-title", "share-dialog-meta", "share-dialog-options", "share-dialog-export", "share-dialog-submit", "share-dialog-disclosure", "share-dialog-result", "share-dialog-result-text", "share-dialog-show-files", "share-dialog-open-form",
   "text-batch-dialog", "text-batch-close", "text-batch-content", "text-batch-card", "analysis-batch-details", "selection-content-type", "selection-classification-impact", "selection-set-classification", "selection-text-analyze", "add-menu", "export-path-setting", "media-file", "media-folder", "library-name-setting", "save-library-settings", "select-cases", "selection-select-filtered", "selection-clear", "selection-label-input", "selection-add-labels", "selection-label-mode", "selection-label-add-field", "selection-removable-tags", "selection-remove-labels", "selection-copy-project", "selection-move-project", "selection-remove-project", "selection-new-project", "selection-combine", "selection-analyze", "selection-video-analyze", "selection-project-impact", "selection-project-target", "selection-trash", "open-settings", "settings-dialog", "settings-close", "settings-update-badge", "open-about", "local-extension-package", "library-settings-feedback", "update-status", "check-extension-update", "apply-extension-update", "update-feedback",
-  "facet-recovery-actions", "analysis-recovery-actions", "library-recovery-actions", "import-recovery-actions",
+  "facet-recovery-actions", "analysis-recovery-actions", "import-recovery-actions",
   "project-section", "project-root-drop", "collapse-projects", "project-move-feedback", "project-move-undo", "selection-simple-actions", "selection-selected-actions", "show-analysis-diagnostics", "ui-locale", "ui-theme", "ui-motion", "vocabulary-tree",
   "vision-instructions-en", "vision-instructions-zh", "vision-protocol", "vision-settings-form", "vision-settings-status", "restore-vision-default",
   "video-instructions-en", "video-instructions-zh", "video-settings-form", "video-settings-status", "restore-video-default", "video-protocol",
-  "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
-  "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "restore-library-replacement-point", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
+  "open-curated", "open-skills", "open-trash", "trash-count", "trash-dialog", "trash-close", "trash-list", "trash-feedback", "trash-progress", "trash-restore-all", "trash-empty", "data-safety-dialog", "data-safety-count", "data-safety-status", "data-safety-feedback",
+  "sync-settings", "data-safety-password", "sync-password", "connect-sync-folder", "unlock-sync-vault", "sync-now", "cancel-sync", "create-folder-backup", "restore-folder-backup", "import-library-package", "library-package-file", "disconnect-sync-folder", "capture-web-permission-status", "capture-clipboard-permission-status", "revoke-capture-web-permission", "revoke-capture-clipboard-permission", "capture-permission-settings-feedback",
   "library-package-import-dialog", "library-package-import-title", "library-package-import-close", "library-package-import-package-count", "library-package-import-case-count", "library-package-import-project-count", "library-package-import-media-count", "library-package-import-byte-size", "library-package-import-list", "library-package-import-feedback", "library-package-import-cancel", "library-package-import-confirm",
   "vision-batch-dialog", "vision-batch-close", "vision-batch-title", "vision-batch-summary", "vision-batch-service", "vision-batch-all-images", "vision-batch-reanalyze", "vision-batch-tags-option", "vision-batch-tags", "vision-batch-instruction-field", "vision-batch-instruction",
   "vision-batch-progress", "vision-batch-progress-bar", "vision-batch-start", "vision-batch-pause", "vision-batch-resume", "vision-batch-retry", "vision-batch-cancel", "vision-batch-feedback",
@@ -366,6 +370,32 @@ const thumbnailLoader = createGalleryPreviewQueue({
   cached: visualId => thumbnailUrls.get(visualId),
   priority: image => cardPreviewPriority(image, window.innerHeight, 500)
 });
+// Trash can contain thousands of animated originals. Prepare only covers that
+// are visible inside its scroll container, using the gallery's bounded queue.
+const visibleTrashCovers = new Set();
+const trashCoverObserver = new IntersectionObserver(records => {
+  for (const { target: image, isIntersecting } of records) {
+    if (isIntersecting && elements.trashDialog.open) {
+      visibleTrashCovers.add(image);
+      void hydrateTrashCover(image, image.dataset.visualId);
+    } else {
+      visibleTrashCovers.delete(image);
+      thumbnailLoader.release(image);
+      image.removeAttribute('src');
+    }
+  }
+  thumbnailUrls.trim();
+}, { root: elements.trashList.parentElement });
+function releaseTrashCovers() {
+  trashCoverObserver.disconnect();
+  for (const image of visibleTrashCovers) {
+    thumbnailLoader.release(image);
+    image.removeAttribute('src');
+  }
+  visibleTrashCovers.clear();
+  thumbnailUrls.trim();
+}
+elements.trashDialog.addEventListener('close', releaseTrashCovers);
 const detailMediaUrls = new Set();
 const detailControllerCleanups = new Set();
 let activeDetailDiscovery = null;
@@ -522,6 +552,8 @@ const referenceSelectionWriter = createSelectionWriter({
 });
 let trashItems = [];
 let trashRestorePending = false;
+let trashCleanupProgress = null;
+let trashCleanupRequestPending = false;
 let shareDialogContext = null;
 let shareLocalAssetRecords = [];
 let submissionDownloadIds = [];
@@ -1021,6 +1053,12 @@ function bindEvents() {
   elements.applyExtensionUpdate.addEventListener("click", applyExtensionUpdate);
   elements.revokeCaptureWebPermission.addEventListener("click", () => void revokeCapturePermission("web"));
   elements.revokeCaptureClipboardPermission.addEventListener("click", () => void revokeCapturePermission("clipboard"));
+  elements.settingsDialog.addEventListener("close", closeCaseDedupeSettings);
+  document.querySelector("#dedupe-back").addEventListener("click", () => {
+    activeSettingsTab = "tasks";
+    renderSettingsPanels({ resetActiveScroll: true });
+    document.querySelector("#inspect-duplicates").focus();
+  });
   elements.settingsDialog.addEventListener("cancel", (event) => {
     if (dataSafetyOperationActive) event.preventDefault();
   });
@@ -1076,6 +1114,9 @@ function bindEvents() {
     navigateWithinPromptDirector(url);
   });
   chrome.runtime.onMessage.addListener(handleDataSafetyProgress);
+  chrome.runtime.onMessage.addListener(message => {
+    if (message?.type === "TRASH_CLEANUP_PROGRESS") updateTrashCleanupProgress(message.progress);
+  });
   chrome.runtime.onMessage.addListener(handleLibraryMaintenanceMessage);
   chrome.runtime.onMessage.addListener(handleVideoAnalysisProgress);
   elements.connectSyncFolder.addEventListener("click", chooseSyncFolder);
@@ -1085,8 +1126,7 @@ function bindEvents() {
   elements.syncNow.addEventListener("click", startManualSync);
   elements.cancelSync.addEventListener("click", cancelManualSync);
   elements.createFolderBackup.addEventListener("click", createCompleteFolderBackup);
-  elements.restoreFolderBackup.addEventListener("click", restoreCompleteFolderBackup);
-  elements.restoreLibraryReplacementPoint.addEventListener("click", restoreLastLibraryReplacementPoint);
+  elements.restoreFolderBackup.addEventListener("click", openLibraryRestore);
   elements.importLibraryPackage.addEventListener("click", () => elements.libraryPackageFile.click());
   elements.libraryPackageFile.addEventListener("change", importSharedLibraryPackage);
   elements.libraryPackageImportClose.addEventListener("click", cancelLibraryPackageBatch);
@@ -1273,8 +1313,18 @@ function bindEvents() {
     elements.newNodeName.value = "";
     elements.newNodeAliases.value = "";
   });
-  elements.undoFacet.addEventListener("click", () => perform(elements.undoFacet, { type: "UNDO_FACET_UPDATE" }));
+  elements.undoFacet.addEventListener("click", async () => {
+    const preview = await confirmLibraryUndo("UNDO_FACET_UPDATE");
+    if (preview) await perform(elements.undoFacet, { type: "UNDO_FACET_UPDATE", confirmationToken: preview.confirmationToken });
+  });
   elements.previewReanalyze.addEventListener("click", previewReanalysis);
+  document.querySelector('#inspect-duplicates').addEventListener('click', () => {
+    if (!libraryFullyLoaded) return showFeedback(t('案例尚未加载完成，请稍候'));
+    settingsPanelScroll.set('tasks', document.querySelector('#settings-tasks-panel').scrollTop);
+    activeSettingsTab = 'dedupe';
+    renderSettingsPanels();
+    document.querySelector('#dedupe-back').focus();
+  });
   elements.applyReanalyze.addEventListener("click", async () => {
     await startLibraryMaintenance();
   });
@@ -1925,7 +1975,7 @@ function renderGalleryResults({ refreshNavigation, preserveViewport = false, pre
   elements.libraryTitle.textContent = unassignedViewActive
     ? t("未归项目")
     : project?.name || libraryTitleForLocale(settings.libraryTitle, currentLocale());
-  elements.libraryTitle.title = elements.libraryTitle.textContent;
+  elements.libraryTitle.title = collectionPath(organizerState, selectedCollectionId).map(item => item.name).join(' / ') || elements.libraryTitle.textContent;
   elements.resultCount.textContent = !libraryFullyLoaded ? "" : project
     ? `${translateUiMessage(`${visibleEntries.length} 个案例`)} · ${childProjects.length} ${t("子项目")}`
     : translateUiMessage(`${visibleEntries.length} 个案例`);
@@ -1965,14 +2015,7 @@ function syncBrowseView(project) {
   for (const button of document.querySelectorAll("[data-gallery-view]")) {
     button.setAttribute("aria-pressed", String(button.dataset.galleryView === view));
   }
-  document.querySelector(".browse-location").hidden = !project;
   galleryControls.sync(caseSortMode, visibleEntries.length > 0);
-  renderBrowseNavigation({
-    breadcrumb: document.querySelector("#browse-breadcrumb"),
-    path: collectionPath(organizerState, selectedCollectionId),
-    disabled: ["project", "vision", "combine"].includes(selectionMode), selectedId: selectedCollectionId,
-    rootLabel: t("案例库"), navigate: navigateBrowseProject
-  });
 
 }
 
@@ -4186,13 +4229,29 @@ function openSettingsDialog(tab = "general", analysisKind = activeAnalysisKind) 
   if (!elements.settingsDialog.open) elements.settingsDialog.showModal();
 }
 
+function closeCaseDedupeSettings() {
+  dedupePanelController?.dispose();
+  dedupePanelController = null;
+}
+
 function renderSettingsPanels({ resetActiveScroll = false } = {}) {
-  settingsTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.settingsTab === activeSettingsTab)));
+  if (activeSettingsTab !== 'dedupe') closeCaseDedupeSettings();
+  settingsTabs.forEach((button) => button.setAttribute("aria-selected", String(button.dataset.settingsTab === (activeSettingsTab === 'dedupe' ? 'tasks' : activeSettingsTab))));
   settingsPanels.forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== activeSettingsTab; });
   if (resetActiveScroll) {
     resetActiveSettingsPanelScroll();
     const panel = document.querySelector(`[data-settings-panel="${activeSettingsTab}"]`);
     if (panel) panel.scrollTop = settingsPanelScroll.get(activeSettingsTab) || 0;
+  }
+  if (activeSettingsTab === 'dedupe' && !dedupePanelController) {
+    dedupePanelController = mountCaseDedupePanel(document.querySelector('#settings-dedupe-panel .case-dedupe-panel'), {
+      state: { entries, organizerState, compoundCases }, facetCatalog, contentLabel, projectId: selectedCollectionId,
+      selectedIds: [...selectedCaseIds], pageSize: PAGE_SIZE,
+      currentState: () => ({ entries, organizerState, compoundCases }),
+      send: async message => { const response = await chrome.runtime.sendMessage(message);
+        if (response?.ok === false || response?.error) throw new Error(response.message || response.error?.message || response.error);
+        return response; }, thumbnailUrl: createThumbnailUrl, mediaUrl: mediaObjectUrl
+    });
   }
   if (activeSettingsTab === "shortcuts" && !shortcutSettingsMounted) {
     mountShortcutSettings(document.querySelector("#settings-shortcuts-panel"), uiPreferences); shortcutSettingsMounted = true;
@@ -4788,13 +4847,13 @@ async function createCompleteFolderBackup() {
   }
 }
 
-async function restoreCompleteFolderBackup() {
+async function restoreCompleteFolderBackup(directoryPromise) {
   if (dataSafetyOperationActive) return showDataSafetyFeedback("当前操作仍在进行，请等待完成", true);
   if (typeof window.showDirectoryPicker !== "function") return showDataSafetyFeedback("当前浏览器不支持资料夹恢复，请使用最新版 Chrome", true);
   const stage = createMediaStage();
   setDataSafetyBusy(true);
   try {
-    const directory = await window.showDirectoryPicker({ mode: "read" });
+    const directory = await (directoryPromise ?? window.showDirectoryPicker({ mode: "read" }));
     showDataSafetyFeedback(t("正在读取备份文件…"));
     const files = await readDirectoryFiles(directory, "", dataSafetyProgress("正在读取备份文件"));
     const digest = createBlobDigestCache();
@@ -4976,7 +5035,6 @@ async function restoreCompleteFolderBackup() {
     if (!response?.ok) throw new Error(response?.message || "资料夹恢复失败");
     await refreshLibrary();
     showDataSafetyFeedback(`${translateUiMessage(response.message)} · ${t("{label}已按预检方案完成", { label: recoveryLabel })}`);
-    if (exactReplace) transientFeedback.revealRecovery(elements.libraryRecoveryActions);
     await renderDataSafetyStatus();
   } catch (error) {
 
@@ -4987,20 +5045,114 @@ async function restoreCompleteFolderBackup() {
   }
 }
 
-async function restoreLastLibraryReplacementPoint() {
-  if (dataSafetyOperationActive) return showDataSafetyFeedback(t("当前操作仍在进行，请等待完成"), true);
-  const expectedPointId = elements.restoreLibraryReplacementPoint.dataset.pointId;
-  const approved = await confirmAppAction({
-    title: t("回退上次精确恢复？"),
-    description: t("资料库会回到上次精确恢复前的状态；当前状态也会保存成新的回退点，因此仍可再次切换回来。"),
-    confirmLabel: t("确认回退"),
-    danger: true
+async function openLibraryRestore() {
+  if (dataSafetyOperationActive) return;
+  if (!replacementRecoveryAvailable) return restoreCompleteFolderBackup();
+  let rollback = false;
+  const choice = await showAppDialog({
+    title: t("恢复资料库"),
+    description: t("从备份文件夹恢复，默认合并并保留本机内容。"),
+    confirmLabel: t("选择备份文件夹"),
+    renderBody: ({ body, form }) => {
+      const button = document.createElement("button");
+      button.id = "restore-library-replacement-point";
+      button.className = "button-secondary";
+      button.type = "button";
+      button.textContent = t("撤销上次整库替换…");
+      button.addEventListener("click", () => { rollback = true; form.requestSubmit(); });
+      body.append(button);
+    },
+    // Open the picker during this explicit click, before awaiting another dialog.
+    onSubmit: () => rollback ? { rollback: true } : { directory: window.showDirectoryPicker({ mode: "read" }) }
   });
-  if (!approved) return;
-  await runDataSafetyAction(
-    elements.restoreLibraryReplacementPoint,
-    { type: "RESTORE_LIBRARY_REPLACEMENT_POINT", expectedPointId, operationId: crypto.randomUUID() }
-  );
+  if (choice?.rollback) return restoreLastLibraryReplacementPoint();
+  if (choice?.directory) return restoreCompleteFolderBackup(choice.directory);
+}
+
+async function restoreLastLibraryReplacementPoint() {
+  if (dataSafetyOperationActive) return;
+  const preview = await confirmLibraryUndo("RESTORE_LIBRARY_REPLACEMENT_POINT");
+  if (!preview) return;
+  await runDataSafetyAction(elements.restoreFolderBackup, {
+    type: "RESTORE_LIBRARY_REPLACEMENT_POINT", expectedPointId: preview.expectedPointId,
+    confirmationToken: preview.confirmationToken, operationId: crypto.randomUUID()
+  });
+}
+
+async function confirmLibraryUndo(action, jobId) {
+  const titles = {
+    RESTORE_LIBRARY_REPLACEMENT_POINT: "撤销上次整库替换？",
+    UNDO_FACET_UPDATE: "撤销上一步标签修改？",
+    UNDO_IMPORT_JOB: "撤销这次导入？",
+    UNDO_ANALYSIS_BATCH: "撤销这次批量分析？"
+  };
+  let preview;
+  return showAppDialog({
+    title: t(titles[action]), description: t("正在检查撤销影响…"), danger: true,
+    confirmLabel: t({ RESTORE_LIBRARY_REPLACEMENT_POINT: "切换整库状态", UNDO_IMPORT_JOB: "移入回收站", UNDO_FACET_UPDATE: "撤销标签修改", UNDO_ANALYSIS_BATCH: "撤销分析结果" }[action]),
+    onSubmit: () => { if (!preview) return false; return preview; },
+    onReady: async ({ dialog, body, form, status }) => {
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      const progress = document.createElement("progress");
+      progress.className = "ui-task-progress";
+      progress.setAttribute("aria-label", t("正在检查撤销影响…"));
+      const content = document.createElement("div");
+      content.className = "undo-impact";
+      status().before(content);
+      content.append(progress);
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "PREVIEW_LIBRARY_UNDO", action, jobId });
+        if (!dialog.isConnected) return;
+        if (!response?.ok) throw new Error(response?.message || t("无法检查撤销影响"));
+        preview = response;
+        content.replaceChildren();
+        const description = dialog.querySelector('.ui-dialog-heading p');
+        const addCases = (label, cases) => {
+          const details = document.createElement("details");
+          const summary = document.createElement("summary");
+          summary.textContent = t(label, { count: cases.length });
+          details.append(summary);
+          let rendered = false;
+          details.addEventListener("toggle", () => {
+            if (!details.open || rendered) return;
+            rendered = true;
+            const list = document.createElement("ul");
+            list.className = "ui-scrollbar";
+            for (const item of cases) { const row = document.createElement("li"); row.textContent = item.title; list.append(row); }
+            details.append(list);
+          });
+          if (cases.length) content.append(details);
+        };
+        if (action === "RESTORE_LIBRARY_REPLACEMENT_POINT") {
+          description.textContent = t("整库切换到 {date} 保存的状态：{current} → {target} 个案例。", {
+            date: new Date(preview.createdAt).toLocaleString(), current: preview.currentCount, target: preview.targetCount
+          });
+          addCases("将从当前库移出 {count} 个案例", preview.removed);
+          addCases("将覆盖 {count} 个案例的现有内容", preview.changed);
+          addCases("将恢复 {count} 个案例", preview.restored);
+          const note = document.createElement("p");
+          note.textContent = t("项目、标签、回收站、创作记录和设置也会切换。当前状态仅保留为一个可切回的恢复点；下一次整库替换会更新它。建议先备份当前资料库。这个操作不会合并后来新增或编辑的内容。");
+          content.append(note);
+        } else {
+          description.textContent = t({
+            UNDO_FACET_UPDATE: "还原上一步的标签修改，涉及 {count} 个案例。后来新增的案例保留；有冲突的后续修改会阻止撤销。",
+            UNDO_IMPORT_JOB: "这次导入的 {count} 个案例及其后续编辑将一起移入回收站，可在那里恢复。其他案例保留。",
+            UNDO_ANALYSIS_BATCH: "还原这次分析写入的结果与词库，涉及 {count} 个案例。案例原文和人工标签保留；有冲突的后续修改会阻止撤销。"
+          }[action], { count: preview.cases.length });
+          addCases("查看受影响的 {count} 个案例", preview.cases);
+        }
+        submit.disabled = false;
+        form.querySelector('.ui-dialog-footer .button-secondary').focus();
+      } catch (error) {
+        progress.remove();
+        dialog.querySelector('.ui-dialog-heading p').textContent = t("本次尚未撤销任何内容");
+        const feedback = status();
+        feedback.textContent = translateUiMessage(error.message);
+        feedback.classList.add("error");
+      }
+    }
+  });
 }
 
 async function importSharedLibraryPackage() {
@@ -8490,12 +8642,31 @@ async function performPendingReview(button, message, entryId) {
 function createMediaActions(entryValue) {
   const entry = normalizeEntryMedia(entryValue);
   const wrap = el("div", "screenshot-actions");
-  const contentCount = entry.mediaAssets.filter((asset) => asset.usage !== "poster").length;
-  wrap.append(rawTextEl("strong", "", contentCount ? t("{count} 项媒体", { count: contentCount }) : t("还没有媒体")));
+  const contentCount = splitContentAssets(entry).length;
   const uploadControl = createLocalMediaUploadControl(entry, { label: "从本机添加图片、视频或文档" });
-  const addLink = textEl("button", "button-secondary", "添加视频链接");
-  addLink.addEventListener("click", () => addVideoReference(entry.id));
-  wrap.append(uploadControl, addLink);
+  uploadControl.hidden = true;
+  const menu = textEl('button', 'button-secondary', '媒体');
+  menu.type = 'button'; menu.setAttribute('aria-haspopup', 'menu');
+  menu.addEventListener('click', () => {
+    const actions = [
+      { label: '从本机添加图片、视频或文档', run: () => uploadControl.querySelector('button').click() },
+      { label: '添加视频链接', run: () => addVideoReference(entry.id) }
+    ];
+    if (contentCount > 1 && !entry.compoundCase) actions.push({ label: '拆分为独立案例', run: async () => {
+      if (!await confirmPromptEditDiscard()) return;
+      const result = await splitMediaDialog(entry.id, {
+        thumbnailUrl: createThumbnailUrl,
+        invoke: async (operation, input) => {
+          const response = await chrome.runtime.sendMessage({ type: 'CASE_OPERATION', operation, input });
+          if (!response?.ok) throw new Error(response?.message || t('操作失败'));
+          return response;
+        }
+      });
+      if (result?.ok) { await refreshLibrary(); await openDetail(entry.id); }
+    } });
+    showQuickMenu(menu, actions, undefined, message => showFeedback(message, true));
+  });
+  wrap.append(menu, uploadControl);
   return wrap;
 }
 
@@ -9129,9 +9300,12 @@ async function retryLocalImportJob() {
 
 async function undoLocalImportJob() {
   if (!activeImportJob) return;
+  const jobId = activeImportJob.id;
   elements.importUndo.disabled = true;
   try {
-    const response = await chrome.runtime.sendMessage({ type: "UNDO_IMPORT_JOB", jobId: activeImportJob.id });
+    const preview = await confirmLibraryUndo("UNDO_IMPORT_JOB", jobId);
+    if (!preview) return;
+    const response = await chrome.runtime.sendMessage({ type: "UNDO_IMPORT_JOB", jobId, confirmationToken: preview.confirmationToken });
     if (!response?.ok) throw new Error(response?.message || "无法撤销本次导入");
     activeImportJob = response.job;
     renderImportJob();
@@ -10147,7 +10321,8 @@ function createEntryEditor(entry, options = {}) {
   body.append(textEl("h4", "", "案例标题"), titleRow);
   const cover = textEl("button", "button-secondary", "更换封面");
   cover.addEventListener("click", () => chooseCaseCover(entry));
-  body.append(cover);
+  const mediaRow = el('div', 'entry-edit-row');
+  mediaRow.append(cover, createMediaActions(entry)); body.append(mediaRow);
   const currentAsset = entryMediaAssets(entry).find(asset => asset.id === (activeDetailMediaIdByEntry.get(entry.id) || entry.primaryMediaId));
   section.dataset.assetId = currentAsset?.id || "";
   if (entry.classification?.status !== "needs_review") {
@@ -10188,7 +10363,8 @@ function createEntryEditor(entry, options = {}) {
     }
     for (const button of [...selected.children]) if (!buttons.includes(button)) button.remove();
     for (const button of buttons) if (button.parentElement !== selected) selected.append(button);
-    selected.hidden = selectedHeading.hidden = buttons.length === 0;
+    selected.hidden = buttons.length === 0;
+    selectedHeading.hidden = buttons.length === 0 && !facetCatalog.facets.some(item => item.status === 'active');
   };
   section.updateEntry = updated => {
     entry = updated;
@@ -10218,9 +10394,8 @@ function createEntryEditor(entry, options = {}) {
     tagSelect.addEventListener("change", () => { add.disabled = !tagSelect.value; });
     add.addEventListener("click", () => updateTag(add, { type: "SET_ENTRY_FACET", entryId: entry.id, facetId: facetSelect.value, nodeId: tagSelect.value, selected: true }));
     addRow.append(facetSelect, tagSelect, add);
-    body.append(textEl("h4", "", "添加标签"), addRow);
+    body.append(addRow);
   }
-  body.append(textEl("h4", "", "媒体与来源"), createMediaActions(entry));
   const analysisCandidates = reusableAnalysisItems(entry.analysisCandidates);
   if (analysisCandidates.length && !isEntryPending(entry)) {
     const suggestions = el("details", "detail-suggestions");
@@ -11640,7 +11815,10 @@ async function controlAnalysisBatch(type) {
       beginAnalysisDiagnostics();
       renderAnalysisBatch();
     }
-    const response = await chrome.runtime.sendMessage({ type, jobId: analysisBatchJob.id });
+    const jobId = analysisBatchJob.id;
+    const preview = type === "UNDO_ANALYSIS_BATCH" ? await confirmLibraryUndo(type, jobId) : null;
+    if (type === "UNDO_ANALYSIS_BATCH" && !preview) return;
+    const response = await chrome.runtime.sendMessage({ type, jobId, ...(preview ? { confirmationToken: preview.confirmationToken } : {}) });
     if (!response?.ok) throw new Error(response?.message || "无法更新批量任务");
     showFeedback(response.message);
     await refreshLibrary();
@@ -12021,9 +12199,15 @@ function updateGalleryCounts() {
 }
 
 async function openTrashDialog() {
-  elements.trashFeedback.textContent = "";
+  if (!trashCleanupProgress && !trashCleanupRequestPending) transientFeedback.clear(elements.trashFeedback);
   if (!elements.trashDialog.open) elements.trashDialog.showModal();
-  await loadTrashItems();
+  try {
+    const status = await chrome.runtime.sendMessage({ type: "GET_TRASH_CLEANUP_STATUS" });
+    updateTrashCleanupProgress(status?.progress);
+    await loadTrashItems();
+  } catch (error) {
+    showTrashFeedback(error.message || "无法读取回收站", true);
+  }
 }
 
 async function loadTrashItems() {
@@ -12036,15 +12220,16 @@ async function loadTrashItems() {
   } catch (error) {
     showTrashFeedback(error.message || "无法读取回收站", true);
   } finally {
-    elements.trashRestoreAll.disabled = trashRestorePending || trashItems.length === 0;
+    elements.trashRestoreAll.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending || trashItems.length === 0;
   }
 }
 
 function renderTrashItems() {
+  releaseTrashCovers();
   elements.trashCount.hidden = trashItems.length === 0;
   elements.trashCount.textContent = String(trashItems.length);
-  elements.trashEmpty.disabled = trashRestorePending || trashItems.length === 0;
-  elements.trashRestoreAll.disabled = trashRestorePending || trashItems.length === 0;
+  elements.trashEmpty.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending || trashItems.length === 0;
+  elements.trashRestoreAll.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending || trashItems.length === 0;
   if (!trashItems.length) {
     elements.trashList.replaceChildren(textEl("strong", "trash-empty-title", "回收站为空"));
     return;
@@ -12064,8 +12249,9 @@ function renderTrashItems() {
       const image = document.createElement("img");
       image.alt = t("{title} 封面", { title: preview.title });
       image.decoding = "async";
+      image.dataset.visualId = preview.imageAsset.id;
       cover.append(image);
-      void hydrateTrashCover(image, preview.imageAsset.id);
+      trashCoverObserver.observe(image);
     } else {
       cover.append(createUiIcon(preview.icon));
       cover.setAttribute("aria-label", t(kindLabel.cover));
@@ -12085,12 +12271,13 @@ function renderTrashItems() {
     const actions = el("div", "trash-item-actions");
     const restore = el("button", "icon-button button-secondary");
     restore.type = "button";
-    restore.disabled = trashRestorePending;
+    restore.disabled = trashRestorePending || Boolean(trashCleanupProgress) || trashCleanupRequestPending;
     restore.setAttribute("aria-label", t("恢复：{title}", { title: preview.title }));
     restore.title = t("恢复");
     restore.append(createUiIcon("refresh-cw"));
     const remove = el("button", "icon-button button-secondary quiet-danger");
     remove.type = "button";
+    remove.disabled = Boolean(trashCleanupProgress) || trashCleanupRequestPending;
     remove.setAttribute("aria-label", t("永久删除：{title}", { title: preview.title }));
     remove.title = t("永久删除");
     remove.append(createUiIcon("trash-2"));
@@ -12146,8 +12333,10 @@ function trashPreviewEntry(item) {
 }
 
 async function hydrateTrashCover(image, assetId) {
+  const current = () => image.isConnected && elements.trashDialog.open && visibleTrashCovers.has(image);
   try {
-    let url = await createThumbnailUrl(assetId).catch(() => "");
+    let url = await thumbnailLoader.request(assetId, image).catch(() => "");
+    if (!current()) return;
     if (!url) {
       const blob = await getMediaBlob(assetId);
       if (blob) {
@@ -12155,10 +12344,11 @@ async function hydrateTrashCover(image, assetId) {
         thumbnailUrls.set(assetId, url);
       }
     }
-    if (url && image.isConnected) image.src = url;
-    else if (image.isConnected) image.replaceWith(createUiIcon("image"));
+    if (!current()) return;
+    if (url) image.src = url;
+    else image.replaceWith(createUiIcon("image"));
   } catch {
-    if (image.isConnected) image.replaceWith(createUiIcon("image"));
+    if (current()) image.replaceWith(createUiIcon("image"));
   }
 }
 
@@ -12256,7 +12446,7 @@ async function permanentlyDeleteTrashItem(item, button) {
 }
 
 async function emptyTrashFromDialog() {
-  if (!trashItems.length) return;
+  if (!trashItems.length || trashCleanupProgress || trashCleanupRequestPending) return;
   if (!await confirmAppAction({
     title: t("清空回收站中的 {count} 项内容？", { count: trashItems.length }),
     description: "相关本机文件会被永久移除，且无法恢复。",
@@ -12279,7 +12469,35 @@ function showTrashFeedback(message, isError = false) {
   transientFeedback.show(elements.trashFeedback, translateUiMessage(message), { error: isError });
 }
 
+function updateTrashCleanupProgress(progress) {
+  trashCleanupProgress = progress ?? null;
+  const pending = Boolean(progress) || trashCleanupRequestPending;
+  const wasPending = elements.trashDialog.getAttribute("aria-busy") === "true";
+  elements.trashDialog.setAttribute("aria-busy", String(pending));
+  setTaskProgress(elements.trashProgress, { pending, visible: pending });
+  elements.trashEmpty.disabled = pending || trashRestorePending || !trashItems.length;
+  elements.trashRestoreAll.disabled = pending || trashRestorePending || !trashItems.length;
+  if (wasPending !== pending) for (const button of elements.trashList.querySelectorAll("button")) button.disabled = pending || trashRestorePending;
+  if (!pending) {
+    if (elements.trashFeedback.getAttribute("aria-busy") === "true") transientFeedback.clear(elements.trashFeedback);
+    return;
+  }
+  if (!wasPending) releaseTrashCovers();
+  const labels = {
+    waiting: t("正在准备清空…"), checking: t("正在核对保留文件…"),
+    committing: t("正在清理案例与历史记录…"), deleting: t("正在释放文件空间…"),
+    finishing: t("正在完成清理…")
+  };
+  transientFeedback.show(elements.trashFeedback, labels[progress?.phase] || labels.waiting, { pending: true, progress: elements.trashProgress });
+}
+
 async function performTrashAction(button, message) {
+  const cleanup = ["EMPTY_TRASH", "PERMANENT_DELETE_TRASH_ITEMS"].includes(message.type);
+  if (cleanup) {
+    if (trashCleanupProgress || trashCleanupRequestPending) return null;
+    trashCleanupRequestPending = true;
+    updateTrashCleanupProgress({ phase: "waiting" });
+  }
   button.disabled = true;
   try {
     const response = await chrome.runtime.sendMessage(message);
@@ -12287,8 +12505,13 @@ async function performTrashAction(button, message) {
     return response;
   } catch (error) {
     showTrashFeedback(error.message || "回收站操作失败", true);
+    if (cleanup) void loadTrashItems();
     return null;
   } finally {
+    if (cleanup) {
+      trashCleanupRequestPending = false;
+      updateTrashCleanupProgress(null);
+    }
     button.disabled = false;
   }
 }
@@ -12324,13 +12547,7 @@ async function renderDataSafetyStatus() {
   elements.cancelSync.disabled = syncStatus.cancelRequested === true;
   elements.dataSafetyPassword.hidden = !(needsFolder || needsUnlock);
   elements.disconnectSyncFolder.hidden = !syncStatus.connected;
-  elements.restoreLibraryReplacementPoint.dataset.pointId = response.replacementPointId || "";
-  elements.restoreLibraryReplacementPoint.hidden = !response.canRestoreReplacementPoint;
-  elements.libraryRecoveryActions.hidden = !response.canRestoreReplacementPoint;
-  elements.restoreLibraryReplacementPoint.disabled = dataSafetyOperationActive || !response.canRestoreReplacementPoint;
-  elements.restoreLibraryReplacementPoint.title = response.replacementPointCreatedAt
-    ? t("回退点建立于 {date}", { date: new Date(response.replacementPointCreatedAt).toLocaleString() })
-    : "";
+  replacementRecoveryAvailable = response.canRestoreReplacementPoint === true;
   if (missingLocation) elements.syncSettings.open = true;
 }
 
@@ -12499,7 +12716,6 @@ function setDataSafetyBusy(active, operationType = "") {
     elements.importLibraryPackage,
     elements.createFolderBackup,
     elements.restoreFolderBackup,
-    elements.restoreLibraryReplacementPoint,
     elements.connectSyncFolder,
     elements.unlockSyncVault,
     elements.syncNow,

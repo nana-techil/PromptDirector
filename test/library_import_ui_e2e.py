@@ -252,6 +252,8 @@ def main() -> None:
             library.locator("#import-last-job").click()
             library.locator("#import-recovery-actions > summary").click()
             library.locator("#import-undo").click()
+            expect(library.locator("#promptdirector-app-dialog")).to_contain_text("后续编辑将一起移入回收站")
+            library.locator("#promptdirector-app-dialog button[type=submit]").click()
             expect(library.locator("#import-undo")).to_be_hidden()
             remaining_ids = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => (value.entries || []).map(item => item.id))")
             assert remaining_ids == ["entry:duplicate"], remaining_ids

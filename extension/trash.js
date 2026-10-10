@@ -300,8 +300,9 @@ export function takeTrashItems(stateValue = {}, itemIds = [], options = {}) {
     .filter((id) => !retainedMediaIds.has(id));
   const entryIds = uniqueIds(takenItems.filter((item) => item.kind === "entry").map((item) => item.targetId));
   return {
-    trashState: normalizeTrashState({ items: remainingItems }),
-    takenItems: structuredClone(takenItems),
+    // Normalization above already copied both partitions away from caller-owned data.
+    trashState: { version: TRASH_VERSION, items: remainingItems },
+    takenItems,
     cleanup: {
       entryIds,
       collectionIds: uniqueIds(takenItems.filter((item) => item.kind === "collection").map((item) => item.targetId)),

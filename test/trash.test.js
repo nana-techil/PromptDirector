@@ -659,3 +659,14 @@ test("removing and restoring a selected case cover preserves its selection witho
   assert.equal(restored.entries[0].coverVisualId, "cover");
   assert.equal(restored.entries[0].primaryMediaId, "video");
 });
+
+
+test("permanent cleanup partitions remain independent from the user's recovery snapshots", () => {
+  const source = { items: ["gone", "kept"].map(id => ({ id: `trash:entry:${id}`, kind: "entry", targetId: id,
+    deletedAt: "2026-10-09T00:00:00Z", snapshot: { id, text: "original", mediaAssets: [{ id: `${id}-original`, kind: "image" }] } })) };
+  const result = takeTrashItems(source, ["trash:entry:gone"]);
+  result.takenItems[0].snapshot.mediaAssets[0].id = "changed";
+  result.trashState.items[0].snapshot.text = "changed";
+  assert.equal(source.items[0].snapshot.mediaAssets[0].id, "gone-original");
+  assert.equal(source.items[1].snapshot.text, "original");
+});

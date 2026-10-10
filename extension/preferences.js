@@ -1,5 +1,6 @@
 import { normalizeCaseSortMode } from "./library-view.js";
 import { normalizeShortcutOverrides } from './keyboard-shortcuts.js';
+import { normalizeTagColors } from './tag-color-values.js';
 
 export const DEFAULT_UI_PREFERENCES = Object.freeze({
   locale: "system",
@@ -7,6 +8,7 @@ export const DEFAULT_UI_PREFERENCES = Object.freeze({
   motion: "system",
   analysisDiagnostics: false,
   shortcuts: {},
+  customTagColors: {},
   floatingPanelPositions: {},
   layoutPresets: [],
   activeLayoutId: "default",
@@ -78,6 +80,7 @@ function normalizePreferenceValues(value = {}) {
     motion: value.motion === "none" ? "reduced" : (["system", "reduced"].includes(value.motion) ? value.motion : "system"),
     analysisDiagnostics: value.analysisDiagnostics === true,
     shortcuts: normalizeShortcutOverrides(value.shortcuts),
+    customTagColors: normalizeTagColors(value.customTagColors),
     floatingPanelPositions: normalizePanelPositions(value.floatingPanelPositions),
     sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
     sidebarLayout: normalizeSidebarLayout(value.sidebarLayout),

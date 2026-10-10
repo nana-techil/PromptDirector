@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from e2e_support import extension_session
+from e2e_support import extension_session, wait_for_async_condition
 
 
 def wait_for_job(page, job_id: str, statuses: set[str], timeout_seconds: float = 8) -> dict:
@@ -129,6 +129,83 @@ def main() -> None:
         assert canceled["job"]["status"] == "canceled", canceled
         assert all(item["status"] == "skipped" and item["skipReason"] == "canceled" for item in canceled["job"]["items"]), canceled
 
+        # Cancel must retire unused handles, preserve other pending references,
+        # and leave the user's original files intact.
+        linked_cleanup = observer.evaluate(
+            """async () => {
+              const local = await import(chrome.runtime.getURL('local-asset-store.js'));
+              const jobs = await import(chrome.runtime.getURL('import-jobs.js'));
+              const stagingApi = await import(chrome.runtime.getURL('import-staging.js'));
+              const root = await navigator.storage.getDirectory();
+              const originals = [];
+              const stored = await chrome.storage.local.get(['importJobs', 'importStaging']);
+              let staging = stored.importStaging;
+              const assets = [];
+              for (const name of ['unused', 'shared']) {
+                const handle = await root.getFileHandle(name + '.zzz', {create: true});
+                const writable = await handle.createWritable();
+                await writable.write('original-' + name); await writable.close();
+                const file = await handle.getFile();
+                const assetId = 'asset:linked-' + name;
+                await local.saveLocalAssetHandle(assetId, handle, file);
+                originals.push(handle);
+                const asset = {id: 'staged:linked-' + name, assetId, name: file.name,
+                  relativePath: file.name, kind: 'attachment', mimeType: 'application/octet-stream',
+                  byteSize: file.size, sourceLastModified: file.lastModified,
+                  recordType: 'local-asset-reference', storageMode: 'reference', linkStatus: 'linked',
+                  importFailure: {code: 'unsupported_format', message: 'Unsupported fixture', forceAllowed: false}};
+                assets.push(asset); staging = stagingApi.addStagedAsset(staging, asset).state;
+              }
+              const retainedStageId = 'staged:linked-other-owner';
+              staging = stagingApi.addStagedAsset(staging, {...assets[1], id: retainedStageId}).state;
+              const created = jobs.createImportJob(stored.importJobs, {
+                items: assets.map(asset => ({stagedAssetId: asset.id})), options: {autoAnalyze: false}
+              }, {id: 'import-job:linked-cancel'});
+              await chrome.storage.local.set({importJobs: created.state, importStaging: staging});
+              const response = await chrome.runtime.sendMessage({type: 'CANCEL_IMPORT_JOB', jobId: created.job.id});
+              const after = await chrome.storage.local.get('importStaging');
+              return {response, remaining: after.importStaging.assets.map(asset => asset.id), retainedStageId,
+                unusedRetained: !!await local.getLocalAssetHandleRecord(assets[0].assetId),
+                sharedRetained: !!await local.getLocalAssetHandleRecord(assets[1].assetId),
+                originals: await Promise.all(originals.map(async handle => (await handle.getFile()).text()))};
+            }"""
+        )
+        assert linked_cleanup["response"]["ok"], linked_cleanup
+        assert linked_cleanup["response"]["job"]["status"] == "canceled", linked_cleanup
+        assert linked_cleanup["remaining"] == [linked_cleanup["retainedStageId"]], linked_cleanup
+        assert not linked_cleanup["unusedRetained"] and linked_cleanup["sharedRetained"], linked_cleanup
+        assert linked_cleanup["originals"] == ["original-unused", "original-shared"], linked_cleanup
+
+        # Releasing preparation retires only the unused handle, never the source
+        # file or the handle still owned by another import.
+        released = observer.evaluate(
+            """async () => {
+              const {createMediaStage} = await import(chrome.runtime.getURL('staged-media.js'));
+              const {saveLocalAssetHandle, getLocalAssetHandleRecord} = await import(chrome.runtime.getURL('local-asset-store.js'));
+              const root = await navigator.storage.getDirectory();
+              const handle = await root.getFileHandle('preview-only.zzz', {create: true});
+              const writable = await handle.createWritable();
+              await writable.write('preview-original'); await writable.close();
+              await saveLocalAssetHandle('asset:linked-preview', handle, await handle.getFile());
+              const stage = createMediaStage();
+              await stage.register(['asset:linked-shared', 'asset:linked-preview'], ['asset:linked-shared', 'asset:linked-preview']);
+              stage.release();
+              return !!await getLocalAssetHandleRecord('asset:linked-shared');
+            }"""
+        )
+        assert released, "releasing a preview must preserve a handle still owned by another import"
+        wait_for_async_condition(observer,
+            "async () => !Object.keys((await chrome.storage.local.get('stagedMediaWrites')).stagedMediaWrites || {}).length"
+        )
+        retired = observer.evaluate("""async () => {
+          const local = await import('./local-asset-store.js');
+          const root = await navigator.storage.getDirectory();
+          return {shared: !!await local.getLocalAssetHandleRecord('asset:linked-shared'),
+            unused: !!await local.getLocalAssetHandleRecord('asset:linked-preview'),
+            original: await (await (await root.getFileHandle('preview-only.zzz')).getFile()).text()};
+        }""")
+        assert retired == {"shared": True, "unused": False, "original": "preview-original"}, retired
+
         failed_job_id = observer.evaluate(
             """async () => {
               const jobs = await import(chrome.runtime.getURL('import-jobs.js'));
@@ -177,6 +254,8 @@ def main() -> None:
             "automaticLocalPalette": palette["palette"]["colors"][0],
             "automaticAiJob": automatic_ai_job,
             "canceledRemaining": len(canceled["job"]["items"]),
+            "linkedCancelRetiresUnusedProtectsSharedAndOriginals": True,
+            "releasedLinkedPreviewProtectsSharedHandle": True,
             "retriedFailedOnly": len(retry["job"]["items"]),
             "undoScopedToJob": True,
         })

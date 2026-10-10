@@ -6,7 +6,7 @@ const OPERATORS = new Set(["type", "source", "tag", "color", "date", "note", "ha
 export function parseSearchQuery(value = "") {
   const filters = [];
   const terms = [];
-  for (const token of tokenize(String(value))) {
+  for (const token of tokenize(String(value).normalize('NFKC'))) {
     const separator = token.indexOf(":");
     const name = separator > 0 ? token.slice(0, separator).toLocaleLowerCase("en-US") : "";
     const operand = separator > 0 ? clean(token.slice(separator + 1)) : "";
@@ -87,8 +87,8 @@ function normalizeSearchColor(value) {
   return searchText(value).replace(/^#/, "");
 }
 
-function searchText(value) {
-  return String(value ?? "").toLocaleLowerCase("zh-CN");
+export function searchText(value) {
+  return String(value ?? "").normalize('NFKC').toLocaleLowerCase("zh-CN");
 }
 
 function normalizeKind(value) {

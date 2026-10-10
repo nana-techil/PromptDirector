@@ -19,6 +19,25 @@ export function pickPageContent(options = {}) {
     if (!node || node === cancel || node === overlay) return null;
     const comments = event.composedPath().find(value => value instanceof Element && value.matches("ytd-comments,bili-comments"));
     if (comments) return comments;
+    // Controls and posters are siblings of the video in many web components.
+    // Select that component's single player, never its surrounding page region.
+    const path = event.composedPath().filter(value => value instanceof Element);
+    for (const owner of path) {
+      if (owner.matches('video,iframe')) return owner;
+      if (owner === document.body || owner === document.documentElement) break;
+      const firstPlayer = owner.shadowRoot ? null : owner.querySelector('video');
+      if (!owner.shadowRoot) {
+        if (!firstPlayer) continue;
+        const bounds = firstPlayer.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right
+          || event.clientY < bounds.top || event.clientY > bounds.bottom) continue;
+      }
+      const players = owner.shadowRoot ? deepAll(owner, 'video') : [...owner.querySelectorAll('video')];
+      if (players.length !== 1) continue;
+      const rect = players[0].getBoundingClientRect();
+      if (event.clientX >= rect.left && event.clientX <= rect.right
+        && event.clientY >= rect.top && event.clientY <= rect.bottom) return players[0];
+    }
     return node.closest("p,li,blockquote,pre,table,figure,img,video,iframe,section,article,div") || node;
   };
   const serialize = node => {
@@ -38,9 +57,13 @@ export function pickPageContent(options = {}) {
   };
   const deepAll = (root, selector) => {
     const result = [];
+    const seen = new Set();
     const visit = node => {
+      if (seen.has(node)) return;
+      seen.add(node);
       if (node instanceof Element && node.matches(selector)) result.push(node);
-      for (const child of (node.shadowRoot || node).children || []) visit(child);
+      const children = node.localName === 'slot' ? node.assignedElements({ flatten: true }) : (node.shadowRoot || node).children;
+      for (const child of children || []) visit(child);
     };
     visit(root);
     return result;
@@ -136,7 +159,8 @@ export function pickPageContent(options = {}) {
       // exact container. Preserve media identity without widening the selection.
       const mediaSources = selected.matches('img,video')
         ? [...new Set([selected, ...selected.querySelectorAll('source')].flatMap(node => [node.currentSrc, node.src, node.poster]).filter(Boolean))] : [];
-      const anchor = mediaSources.length ? selected.parentElement : selected;
+      let anchor = mediaSources.length ? selected.parentElement || selected.getRootNode().host : selected;
+      while (anchor.getRootNode().host) anchor = anchor.getRootNode().host;
       anchor.setAttribute('data-promptdirector-capture-template', marker);
       finish({ html: wrapper.innerHTML, selectionTemplate: { sourceUrl: location.href, marker,
         ...(mediaSources.length ? { mediaSources } : {}) } });

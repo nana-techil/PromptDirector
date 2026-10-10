@@ -2,6 +2,7 @@ import { t } from "./i18n.js";
 import { createUiIcon } from "./ui-icons.js";
 import { installPanelDrag, placePanelInViewport, createPanelDragHandle } from './panel-drag.js';
 import { savedPanelPosition, savePanelPosition } from './panel-position.js';
+import { decorateCustomTag } from './tag-colors.js';
 
 export function normalizeTagValue(value) {
   return String(value ?? "").normalize("NFKC")
@@ -102,6 +103,7 @@ export function createTagEditor(options = {}) {
       remove.setAttribute("aria-label", t("删除标签：{value}", { value }));
       remove.addEventListener("click", () => void applyValues(values.filter((item) => item !== value), remove));
       chip.append(text, remove);
+      decorateCustomTag(chip, value, { editable: true });
       return chip;
     }));
   };
@@ -186,7 +188,7 @@ export function createTagEditor(options = {}) {
       input.disabled = Boolean(disabled);
       add.disabled = Boolean(disabled);
       if (toggle) toggle.disabled = Boolean(disabled);
-      chips.querySelectorAll("button").forEach((button) => { button.disabled = Boolean(disabled); });
+      chips.querySelectorAll("button, input").forEach((button) => { button.disabled = Boolean(disabled); });
     },
     commit,
     async flush() {

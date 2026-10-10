@@ -40,3 +40,26 @@ test('missing pairing record keeps ENOENT for discovery but gives pairing guidan
     return true;
   });
 });
+
+test('a timed-out write sends once and reports unknown completion without silently retrying', async t => {
+  const { encodeFrame, frameDecoder } = await import('../framing.mjs');
+  const { instancePaths } = await import('../paths.mjs');
+  const root = await mkdtemp(join(tmpdir(), 'pd-'));
+  t.after(() => rm(root, { recursive:true,force:true }));
+  const instanceId = randomUUID(), paths = instancePaths(root,instanceId);
+  await writeFile(paths.record,JSON.stringify({secret:'fixture'}));
+  let requests=0;
+  const server=net.createServer(socket=>{
+    const decode=frameDecoder(message=>{
+      if(message.type==='authenticate')socket.write(encodeFrame({type:'ready',instanceId,protocolVersion:1,hostSessionId:'fixture'}));
+      else if(message.type==='request')requests++;
+    });
+    socket.on('data',decode);
+  });
+  await new Promise(resolve=>server.listen(paths.socket,resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  await assert.rejects(callExtension('edit_case',{requestId:'original-request'},{root,instanceId,timeoutMs:40}),error=>{
+    assert.equal(error.code,'connector_timeout');assert.match(error.message,/原请求编号/);return true;
+  });
+  assert.equal(requests,1);
+});

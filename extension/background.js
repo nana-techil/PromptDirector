@@ -1,3 +1,5 @@
+import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
+import { createCaseDedupeOperations } from './case-dedupe-operations.js';
 import { createCaptureSaveTasks, CAPTURE_SAVE_TASK_KEY, rebaseCaptureEntries } from './capture-save-tasks.js';
 import { jsonBytes, startPhase, timingEnabled } from "./perf-trace.js";
 import { editedLabels } from "./label-edits.js";
@@ -13,7 +15,7 @@ import { skillPackageLimits } from './creative-skill-package.js';
 import { createSkillWriter } from './skill-writer.js';
 import { createSkillOperations } from './skill-operations.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
-import { getLibraryStorage, createLibraryCommitter } from "./library-storage.js";
+import { getLibraryStorage, createLibraryCommitter, CASE_LIBRARY_REVISION_KEY } from "./library-storage.js";
 import { operationBudget, stagingByteBudget, RESOURCE_POLICY } from './resource-policy.js';
 import { createProjectOperations } from "./project-operations.js";
 import { createBrowserLibraryIdentity } from "./library-identity.js";
@@ -194,7 +196,7 @@ import {
   saveDerivedMetadata,
   saveMediaBlob
 } from "./media-store.js";
-import { deleteLocalAssetHandle } from "./local-asset-store.js";
+import { deleteLocalAssetHandles } from "./local-asset-store.js";
 import {
   LOCAL_ASSET_REFERENCE_RECORD_TYPE,
   chunkedBlobFingerprint,
@@ -284,6 +286,7 @@ import {
   obsoleteRecoveryAssetIds,
   swapLibraryReplacementRecoveryPoint
 } from "./library-recovery-point.js";
+import { createUndoConfirmations, replacementImpact } from "./library-undo-preview.js";
 import { mergeCuratedLibraryPackage } from "./curated-import.js";
 import { prepareCuratedSubmissionState } from "./curated-submission.js";
 import {
@@ -535,6 +538,7 @@ const SYNCED_STORAGE_KEYS = new Set([
 const libraryStorage = getLibraryStorage();
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 let writeQueue = Promise.resolve();
+let trashCleanupProgress = null;
 let captureWriteQueue = Promise.resolve();
 let stateMigration = null;
 let creatingOffscreenDocument = null;
@@ -554,6 +558,7 @@ let activePageCapture = null;
 let syncApplyInProgress = false;
 const commitLocalChanges = createLibraryCommitter({ storage: libraryStorage, syncedKeys: SYNCED_STORAGE_KEYS,
   syncMetaKey: STORAGE_KEYS.syncMeta, markDirty: markSyncMetaDirty, isSyncApplying: () => syncApplyInProgress });
+const undoConfirmations = createUndoConfirmations(libraryStorage);
 const caseEditor = createCaseEditor({ commitCase: (entryId, transform) => commitLocalChanges.updateCase(entryId, transform) });
 const stagedMedia = createStagedMediaRegistry({
   storage: libraryStorage,
@@ -562,7 +567,7 @@ const stagedMedia = createStagedMediaRegistry({
     const retained = retainedTrashCleanupAssets(await readTrashCleanupState(),
       [...protectedIds, ...activeCaptureAssetIds, ...await agentTransfers.retainedIds()]);
     await deleteMediaBlobs(assetIds.filter(id => !retained.has(id)));
-    await Promise.all(localReferenceIds.filter(id => !retained.has(id)).map(deleteLocalAssetHandle));
+    await deleteLocalAssetHandles(localReferenceIds.filter(id => !retained.has(id)));
   }
 });
 const manualSyncController = createManualSyncController({
@@ -623,6 +628,8 @@ const projectOperations = createProjectOperations({ loadState: readState, loadRe
 const caseOperations = createCaseOperations({ loadState: readState, loadReadState: readCaseLibraryState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
 const workspaceScreenshot = createWorkspaceScreenshot({ chromeApi: chrome });
 const caseTrashOperations = createCaseTrashOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const caseDedupeOperations = createCaseDedupeOperations({ loadState: readState, storage: libraryStorage, commit: commitLocalChanges, enqueue });
+const verifyDedupeMedia = createDedupeMediaVerifier({ storage: libraryStorage, readBlob: getMediaBlob, commit: commitLocalChanges, enqueue });
 const libraryIdentity = createBrowserLibraryIdentity({ storage: libraryStorage,
   getLegacyId: async () => (await agentConnection.prepare()).instanceId });
 const externalAnalysisBatches = createExternalAnalysisBatches({storage:libraryStorage,loadState:readState,
@@ -804,7 +811,7 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((erro
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'agent-temporary-maintenance') {
     enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
-    enqueue(resumeTrashCleanup).catch(error => console.warn('永久删除文件清理未完成', error));
+    enqueue(() => withTrashCleanupProgress(resumeTrashCleanup)).catch(error => console.warn('永久删除文件清理未完成', error));
     enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error));
   }
   if (alarm.name === LIBRARY_MAINTENANCE_ALARM) scheduleLibraryMaintenanceRunner();
@@ -818,7 +825,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 scheduleLibraryMaintenanceRunner();
 chrome.alarms.create('agent-temporary-maintenance', { periodInMinutes: RESOURCE_POLICY.temporaryIdleMs / (24 * 60_000) }).catch(error => console.warn('临时传输维护未安排', error));
 enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
-enqueue(resumeTrashCleanup).catch(error => console.warn('永久删除文件清理未完成', error));
+enqueue(() => withTrashCleanupProgress(resumeTrashCleanup)).catch(error => console.warn('永久删除文件清理未完成', error));
 enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error));
 chrome.tabs.onRemoved.addListener(() => { enqueue(() => stagedMedia.sweep()).catch(error => console.warn('临时文件清理未完成', error)); });
 chrome.tabs.onUpdated.addListener((_tabId, change) => {
@@ -1037,6 +1044,8 @@ async function handleMessage(message, interaction = {}) {
       });
     case "GET_DATA_SAFETY_STATUS":
       return enqueue(async () => dataSafetyStatus(await readState()));
+    case "PREVIEW_LIBRARY_UNDO":
+      return enqueue(() => previewLibraryUndo(message));
     case "RESTORE_LIBRARY_REPLACEMENT_POINT":
       return enqueue(async () => restoreLibraryReplacementPoint(await readState(), message));
     case "GET_SYNC_RUN_STATUS":
@@ -1248,6 +1257,7 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => {
         const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
         const uiPreferences = normalizeUiPreferences({ ...stored[STORAGE_KEYS.uiPreferences], ...message.preferences,
+          customTagColors: { ...stored[STORAGE_KEYS.uiPreferences]?.customTagColors, ...message.preferences?.customTagColors },
           sidebarLayout: { ...stored[STORAGE_KEYS.uiPreferences]?.sidebarLayout, ...message.preferences?.sidebarLayout },
           layoutPresets: stored[STORAGE_KEYS.uiPreferences]?.layoutPresets,
           activeLayoutId: stored[STORAGE_KEYS.uiPreferences]?.activeLayoutId,
@@ -1318,7 +1328,7 @@ async function handleMessage(message, interaction = {}) {
     case "RETRY_IMPORT_JOB":
       return enqueue(async () => retryImportJobAction(message.jobId));
     case "UNDO_IMPORT_JOB":
-      return enqueue(async () => undoImportJobAction(message.jobId));
+      return enqueue(async () => undoImportJobAction(message.jobId, message.confirmationToken));
     case "ADD_TEMP_REFERENCES":
       return enqueue(async () => addTempReferencesAction(message));
     case "REMOVE_TEMP_REFERENCE":
@@ -1449,18 +1459,26 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => undoLastSave());
     case "DELETE_ENTRY":
       return enqueue(async () => deleteEntry(message.entryId));
+    case "PREVIEW_CASE_DEDUPE":
+      return caseDedupeOperations.preview(message.groups);
+    case "APPLY_CASE_DEDUPE":
+      return caseDedupeOperations.execute(message.input);
+    case "VERIFY_DEDUPE_MEDIA":
+      return verifyDedupeMedia(message);
     case "BATCH_MOVE_TO_TRASH":
       return enqueue(async () => moveEntryBatchToTrash(message.entryIds));
     case "DELETE_COLLECTION_WITH_ENTRIES":
       return enqueue(async () => deleteCollectionWithEntries(message));
+    case "GET_TRASH_CLEANUP_STATUS":
+      return { ok: true, progress: trashCleanupProgress };
     case "GET_TRASH_ITEMS":
       return enqueue(async () => getTrashItems(message));
     case "RESTORE_TRASH_ITEMS":
       return enqueue(async () => restoreSelectedTrashItems(message));
     case "PERMANENT_DELETE_TRASH_ITEMS":
-      return enqueue(async () => permanentlyDeleteTrashItems(message));
+      return enqueue(() => withTrashCleanupProgress(() => permanentlyDeleteTrashItems(message)));
     case "EMPTY_TRASH":
-      return enqueue(async () => emptyTrashAction());
+      return enqueue(() => withTrashCleanupProgress(emptyTrashAction));
     case "CONFIRM_CLASSIFICATION":
       return enqueue(async () => updateClassification(message));
     case "RENAME_CONTENT_TYPE":
@@ -1510,7 +1528,7 @@ async function handleMessage(message, interaction = {}) {
     case "APPLY_STAGED_ANALYSIS_REBUILD":
       return enqueue(async () => applyStagedAnalysisRebuild(message.jobId));
     case "UNDO_ANALYSIS_BATCH":
-      return enqueue(async () => undoDeepSeekBatch(message.jobId));
+      return enqueue(async () => undoDeepSeekBatch(message.jobId, message.confirmationToken));
     case "PREVIEW_VISION_BATCH":
       return enqueue(async () => previewVisionBatchTask(message));
     case "CREATE_VISION_BATCH":
@@ -1557,7 +1575,7 @@ async function handleMessage(message, interaction = {}) {
     case "RETRY_LIBRARY_MAINTENANCE":
       return enqueue(async () => updateLibraryMaintenance("retry"));
     case "UNDO_FACET_UPDATE":
-      return enqueue(async () => undoFacetUpdate());
+      return enqueue(async () => undoFacetUpdate(message.confirmationToken));
     default:
       return { ok: false, message: "未知操作" };
   }
@@ -3384,6 +3402,7 @@ async function deleteCollectionWithEntries(message) {
   };
 }
 
+
 async function moveEntryBatchToTrash(entryIdsValue, stateValue) {
   const state = stateValue ?? await readState();
   const activeIds = new Set(state.entries.map((entry) => entry.id));
@@ -3455,19 +3474,36 @@ async function restoreSelectedTrashItems(message = {}) {
 }
 
 async function permanentlyDeleteTrashItems(message = {}) {
+  reportTrashCleanupProgress("checking");
   const state = await readTrashCleanupState();
   return commitTrashCleanup(planTrashCleanup(state, message.itemIds ?? [], await trashCleanupActiveAssetIds()));
 }
 
 async function emptyTrashAction() {
+  reportTrashCleanupProgress("checking");
   const state = await readTrashCleanupState();
-  const ids = normalizeTrashState(state.trashState).items.map(item => item.id);
+  // The cleanup planner validates snapshots; collecting IDs needs no deep copy.
+  const ids = (state.trashState?.items ?? []).map(item => String(item?.id ?? "").trim());
   return commitTrashCleanup(planTrashCleanup(state, ids, await trashCleanupActiveAssetIds()));
 }
 
+async function withTrashCleanupProgress(task) {
+  try { return await task(); }
+  finally { reportTrashCleanupProgress(null); }
+}
+
+function reportTrashCleanupProgress(phase) {
+  trashCleanupProgress = phase ? { phase } : null;
+  void chrome.runtime.sendMessage({ type: "TRASH_CLEANUP_PROGRESS", progress: trashCleanupProgress }).catch(() => undefined);
+}
+
 async function readTrashCleanupState() {
-  const state = await readState();
-  return { ...state, ...await libraryStorage.get(TRASH_HISTORY_KEYS) };
+  const keys = ['schemaVersion', 'entries', 'trashState', 'creativeRuns', 'creativeSkills',
+    'composerSessions', 'creativeJobs', 'importStaging', ...TRASH_HISTORY_KEYS];
+  const version = (await libraryStorage.get('schemaVersion')).schemaVersion;
+  if (version !== SCHEMA_VERSION) await readState();
+  // No view models, AI settings or duplicate recovery reads for physical cleanup.
+  return libraryStorage.getSnapshot(keys);
 }
 
 async function trashCleanupActiveAssetIds() {
@@ -3485,6 +3521,7 @@ async function commitTrashCleanup(taken) {
   };
   // Commit deletion intent with metadata: interruption cannot orphan the cleanup work.
   // This journal stores IDs only; it cannot restore a permanently deleted case.
+  reportTrashCleanupProgress("committing");
   await commitLocalChanges({ ...taken.changes, [TRASH_CLEANUP_KEY]: pending });
   const cleanup = await resumeTrashCleanup();
   return {
@@ -3499,6 +3536,7 @@ async function resumeTrashCleanup() {
   const stored = await libraryStorage.get(TRASH_CLEANUP_KEY);
   const pending = stored[TRASH_CLEANUP_KEY];
   if (!pending) return { ok: true, deletedMediaCount: 0 };
+  reportTrashCleanupProgress("checking");
   const state = await readTrashCleanupState();
   const retained = retainedTrashCleanupAssets(state, await trashCleanupActiveAssetIds());
   const mediaIds = pending.mediaIds.filter(id => !retained.has(id));
@@ -3506,10 +3544,12 @@ async function resumeTrashCleanup() {
   const entryIds = new Set(state.entries.map(entry => entry.id));
   const screenshotEntryIds = pending.screenshotEntryIds.filter(id => !entryIds.has(id));
   try {
+    reportTrashCleanupProgress("deleting");
     await deleteMediaBlobs(mediaIds);
     // Linked originals stay at their user-owned location; remove only the local handle.
-    await Promise.all(localReferenceIds.map(id => deleteLocalAssetHandle(id)));
-    await Promise.all(screenshotEntryIds.map(id => libraryStorage.remove(screenshotStorageKey(id))));
+    await deleteLocalAssetHandles(localReferenceIds);
+    if (screenshotEntryIds.length) await libraryStorage.remove(screenshotEntryIds.map(screenshotStorageKey));
+    reportTrashCleanupProgress("finishing");
     await libraryStorage.remove(TRASH_CLEANUP_KEY);
     return { ok: true, deletedMediaCount: mediaIds.length, failedMediaCount: 0 };
   } catch (error) {
@@ -4224,9 +4264,9 @@ async function cancelImportJobAction(jobId) {
   await deleteUnreferencedMedia(cleanupIds);
   const committedState = await readState();
   const retainedLocalAssetIds = collectRetainedLocalAssetIds({ ...committedState, importStaging: staging });
-  await Promise.allSettled(localReferenceCleanupIds
-    .filter((assetId) => !retainedLocalAssetIds.has(assetId))
-    .map((assetId) => deleteLocalAssetHandle(assetId)));
+  await deleteLocalAssetHandles(localReferenceCleanupIds
+    .filter((assetId) => !retainedLocalAssetIds.has(assetId)))
+    .catch(error => console.warn("取消导入的本机引用清理未完成", error));
   return { ok: true, message: "已取消剩余导入项", job: canceled.job };
 }
 
@@ -4238,7 +4278,7 @@ async function retryImportJobAction(jobId) {
   return { ok: true, message: "失败项已重新加入后台导入", job: retried.job };
 }
 
-async function undoImportJobAction(jobId) {
+async function undoImportJobAction(jobId, confirmationToken) {
   const state = await readState();
   const undone = undoImportJob(state.importJobs, jobId);
   const targetIds = new Set(undone.createdEntryIds);
@@ -4259,7 +4299,7 @@ async function undoImportJobAction(jobId) {
     [STORAGE_KEYS.organizerState]: moved.organizerState,
     [STORAGE_KEYS.compoundCases]: moved.compoundCases,
     [STORAGE_KEYS.importJobs]: undone.state
-  });
+  }, { guard: confirmationToken ? undoConfirmations.guard("UNDO_IMPORT_JOB", confirmationToken, jobId) : undefined });
   return { ok: true, message: `已撤销本次导入的 ${importedEntries.length} 个案例，可在回收站恢复`, job: undone.job };
 }
 
@@ -6962,7 +7002,7 @@ async function applyStagedAnalysisRebuild(jobId) {
   };
 }
 
-async function undoDeepSeekBatch(jobId) {
+async function undoDeepSeekBatch(jobId, confirmationToken) {
   const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisBatchUndo
@@ -6976,7 +7016,7 @@ async function undoDeepSeekBatch(jobId) {
     return { ok: false, message: "创作词库已在批量分析后继续修改，不能安全自动撤回" };
   }
   const restored = restoreAnalysisBatchUndo(domainState(state), undo);
-  await commitLocalChanges(storagePayload(restored));
+  await commitLocalChanges(storagePayload(restored), { guard: confirmationToken ? undoConfirmations.guard("UNDO_ANALYSIS_BATCH", confirmationToken, jobId) : undefined });
   await libraryStorage.remove([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisBatchUndo,
@@ -8062,7 +8102,7 @@ async function ensureLibraryMaintenanceAlarm(running) {
   } else await chrome.alarms.clear(LIBRARY_MAINTENANCE_ALARM);
 }
 
-async function undoFacetUpdate() {
+async function undoFacetUpdate(confirmationToken) {
   const state = await readState();
   const undone = undoFacetHistory(domainState(state), state.facetUndo);
   const update = {
@@ -8071,7 +8111,7 @@ async function undoFacetUpdate() {
     ...(undone.entriesChanged ? { [STORAGE_KEYS.entries]: undone.state.entries } : {})
   };
   if (undone.remainingSteps) update[STORAGE_KEYS.facetUndo] = undone.history;
-  await commitLocalChanges(update);
+  await commitLocalChanges(update, { guard: confirmationToken ? undoConfirmations.guard("UNDO_FACET_UPDATE", confirmationToken) : undefined });
   if (!undone.remainingSteps) await libraryStorage.remove(STORAGE_KEYS.facetUndo);
   return {
     ok: true,
@@ -8653,6 +8693,52 @@ async function applyLibraryImportBatch(state, message) {
   return response;
 }
 
+async function previewLibraryUndo(message) {
+  const action = message.action;
+  const extraKeys = {
+    UNDO_FACET_UPDATE: [STORAGE_KEYS.facetUndo],
+    UNDO_IMPORT_JOB: [STORAGE_KEYS.importJobs],
+    UNDO_ANALYSIS_BATCH: [STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisBatchUndo],
+    RESTORE_LIBRARY_REPLACEMENT_POINT: [STORAGE_KEYS.libraryReplacementRecoveryPoint, STORAGE_KEYS.settings,
+      STORAGE_KEYS.composerSettings, STORAGE_KEYS.composerSessions, STORAGE_KEYS.creativeExperimentSettings,
+      STORAGE_KEYS.creativeRuns, STORAGE_KEYS.creativeSkills]
+  }[action];
+  if (!extraKeys) throw new Error("未知操作");
+  return undoConfirmations.prepare(action, [CASE_LIBRARY_REVISION_KEY, ...extraKeys], async () => {
+    const state = await readState();
+    const identify = entry => ({ id: entry.id, title: entry.title || entry.id });
+    if (action === "RESTORE_LIBRARY_REPLACEMENT_POINT") {
+      const point = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
+      if (!point) throw new Error("当前没有可回退的资料库状态");
+      return { ok: true, expectedPointId: point.id, createdAt: point.createdAt,
+        ...replacementImpact(folderBackupState(state), point.state) };
+    }
+    if (action === "UNDO_FACET_UPDATE") {
+      const undone = undoFacetHistory(domainState(state), state.facetUndo);
+      return { ok: true, cases: state.entries.filter((entry, index) => entry !== undone.state.entries[index]).map(identify) };
+    }
+    if (action === "UNDO_IMPORT_JOB") {
+      const undone = undoImportJob(state.importJobs, message.jobId);
+      const ids = new Set(undone.createdEntryIds);
+      const cases = state.entries.filter(entry => ids.has(entry.id));
+      if (cases.length !== ids.size || cases.some(entry => entry.importBatchId !== undone.job.importBatchId)) {
+        throw new Error("导入案例已变化，未执行撤销");
+      }
+      return { ok: true, jobId: undone.job.id, cases: cases.map(identify) };
+    }
+    const stored = await libraryStorage.get([STORAGE_KEYS.batchJob, STORAGE_KEYS.analysisBatchUndo]);
+    const job = requireAnalysisBatch(stored[STORAGE_KEYS.batchJob], message.jobId, "text_tags");
+    const undo = stored[STORAGE_KEYS.analysisBatchUndo];
+    if (!undo || undo.jobId !== job.id) throw new Error("没有这次批量分析的撤回快照");
+    if (state.facetCatalog.revision !== (job.resultCatalogRevision ?? job.catalogRevision)) {
+      throw new Error("创作词库已在批量分析后继续修改，不能安全自动撤回");
+    }
+    restoreAnalysisBatchUndo(domainState(state), undo);
+    const ids = new Set(undo.appliedEntries.map(entry => entry.entryId));
+    return { ok: true, jobId: job.id, cases: state.entries.filter(entry => ids.has(entry.id)).map(identify) };
+  });
+}
+
 async function restoreLibraryReplacementPoint(state, message) {
   const point = normalizeLibraryReplacementRecoveryPoint(state.libraryReplacementRecoveryPoint);
   if (!point) return { ok: false, message: "当前没有可回退的资料库状态" };
@@ -8664,6 +8750,7 @@ async function restoreLibraryReplacementPoint(state, message) {
   if (!operationId || expectedPointId !== point.id) {
     return { ok: false, message: "回退点已经变化，请刷新资料库后重新确认" };
   }
+  const guard = undoConfirmations.guard("RESTORE_LIBRARY_REPLACEMENT_POINT", message.confirmationToken);
   const currentManagedState = folderBackupState(state);
   const swapped = swapLibraryReplacementRecoveryPoint(currentManagedState, point, {
     retainedAssetIds: [...collectRetainedLocalAssetIds(currentManagedState)],
@@ -8680,7 +8767,7 @@ async function restoreLibraryReplacementPoint(state, message) {
     [STORAGE_KEYS.creativeRuns]: normalizeCreativeRuns(swapped.targetState.creativeRuns),
     [STORAGE_KEYS.creativeSkills]: normalizeCreativeSkillsState(swapped.targetState.creativeSkills),
     [STORAGE_KEYS.libraryReplacementRecoveryPoint]: swapped.recoveryPoint
-  });
+  }, { guard });
   return libraryReplacementRestoreResponse(swapped.recoveryPoint);
 }
 

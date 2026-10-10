@@ -311,7 +311,7 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
       savedAt: current.savedAt, libraryAddedAt: now, libraryUpdatedAt: now, schemaVersion: current.schemaVersion,
       mediaAssets: selected.mediaAssets, primaryMediaId: selected.primaryMediaId, mediaPrompts: selected.mediaPrompts,
       timeNotes: selected.timeNotes, videoAnalyses: selected.videoAnalyses,
-      customLabels: [], facetAssignments: selected.facetAssignments.filter(a => a.visualId), analysisCandidates: [], analysisBreakdown: [], visualSetAnalyses: selected.visualSetAnalyses,
+      customLabels: uniqueNames(group.customLabels), facetAssignments: selected.facetAssignments.filter(a => a.visualId), analysisCandidates: [], analysisBreakdown: [], visualSetAnalyses: selected.visualSetAnalyses,
       sourcePages: group.sourceUrl ? [{ url: httpUrl(group.sourceUrl), title: group.title.trim() }] : [] }, group);
     const document = { version: 1, blocks: selectedBlocks.length
       ? current.articleDocument.blocks.filter(b => group.textBlockIds.includes(b.id) || ids.has(b.assetId))

@@ -416,6 +416,7 @@ test("the generic collector preserves original resolution and every selectable m
     location: globalThis.location,
     chrome: globalThis.chrome,
     Readability: globalThis.Readability,
+    Element: globalThis.Element,
     HTMLElement: globalThis.HTMLElement,
     HTMLCanvasElement: globalThis.HTMLCanvasElement,
     getComputedStyle: globalThis.getComputedStyle
@@ -438,7 +439,7 @@ test("the generic collector preserves original resolution and every selectable m
     width: 320,
     height: 480,
     className: "work-image",
-    matches: (selector) => selector === "img",
+    matches: (selector) => selector.split(",").includes("img"),
     closest: () => null,
     getAttribute: (name) => attributes.get(name) || "",
     hasAttribute: (name) => attributes.has(name),
@@ -451,6 +452,8 @@ test("the generic collector preserves original resolution and every selectable m
     querySelector: () => null,
     querySelectorAll: (selector) => selector === "img,video,iframe,canvas" ? [image] : []
   });
+  Object.defineProperty(body, "childNodes", { get: () => body.querySelectorAll("img,video,iframe,canvas") });
+  globalThis.Element = Element;
   globalThis.HTMLElement = Element;
   globalThis.HTMLCanvasElement = Canvas;
   globalThis.window = { scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800, scrollTo: () => undefined };
@@ -507,7 +510,7 @@ test("the generic collector preserves original resolution and every selectable m
     const dataUrl = "data:image/webp;base64,AAAA";
     const canvas = Object.assign(new Canvas(), {
       width: 800, height: 600, toDataURL: () => dataUrl,
-      getAttribute: () => "", closest: () => null, matches: () => false,
+      getAttribute: () => "", closest: () => null, matches: selector => selector.split(",").includes("canvas"),
       getBoundingClientRect: () => ({ x: 0, y: 0, width: 800, height: 600, top: 0, bottom: 600 })
     });
     body.children = [canvas];

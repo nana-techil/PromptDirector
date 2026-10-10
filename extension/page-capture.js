@@ -706,6 +706,39 @@ export async function collectPageCaptureSnapshot(options = {}) {
   let xSourceScroll = null;
   let selectedTemplateNode = null;
 
+  // Reuse the rendered component tree within each scan pass. Slots carry the
+  // assigned content once; unassigned light DOM is not visible page content.
+  let renderedTreeCache = new WeakMap();
+  function renderedElements(root) {
+    if (renderedTreeCache.has(root)) return renderedTreeCache.get(root);
+    const result = [];
+    const seen = new Set();
+    const visit = node => {
+      if (seen.has(node)) return;
+      seen.add(node);
+      if (node instanceof Element) result.push(node);
+      const children = node.localName === 'slot'
+        ? node.assignedNodes({ flatten: true }) : (node.shadowRoot || node).childNodes;
+      for (const child of children || []) visit(child);
+    };
+    const children = root.shadowRoot ? root.shadowRoot.childNodes : root.childNodes;
+    for (const child of children || []) visit(child);
+    renderedTreeCache.set(root, result);
+    return result;
+  }
+  function renderedQueryAll(root, selector) {
+    return renderedElements(root).filter(node => node.matches(selector));
+  }
+  function composedParent(node) {
+    return node?.assignedSlot || node?.parentElement || node?.getRootNode?.().host || null;
+  }
+  function composedClosest(node, selector) {
+    for (let current = node; current; current = composedParent(current)) {
+      if (current.matches?.(selector)) return current;
+    }
+    return null;
+  }
+
   try {
     if (options.listMode && options.selectionTemplate) {
       const template = options.selectionTemplate;
@@ -733,6 +766,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
         candidate.title = document.title;
         candidate.id = `manual:${sessionId}`;
         candidate.region = null;
+        candidate.sourceFacts.captureScope = "selection";
+        candidate.extraction.scope = "selection";
         candidate.textBlocks = candidate.textBlocks.map(block => ({ ...block, kind: "section" }));
         candidate.contentText = candidate.textBlocks.map(block => block.text).join("\n\n");
         const ids = new Map(candidate.media.map(item => [item.id, `${candidate.id}:${item.id}`]));
@@ -931,6 +966,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     };
     const collectVisibleWithFallbacks = async () => {
       hiddenGenericNodes = new WeakMap();
+      renderedTreeCache = new WeakMap();
       collectDocumentParts();
       const current = collectVisible();
       await attachViewportFallbacks(current);
@@ -950,7 +986,9 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const capturedCards = [...accumulated.values()];
     const pageType = detectPageType({ adapter, metadata, structured, article, cardCount: capturedCards.length });
     const pageRoot = contentRoot || document.body;
-    const bodyCandidate = template ? null : candidateForRoot(pageRoot, 0, {
+    const scopedPost = !options.listMode && !pageSelection && !contentRoot && pageType === "post"
+      ? capturedCards.filter(candidate => candidate.title === cleanText(document.querySelector("h1")?.textContent)) : [];
+    const bodyCandidate = template || scopedPost.length === 1 ? null : candidateForRoot(pageRoot, 0, {
       adapter, metadata, structured, article: contentRoot ? null : article, siteData, pageSelection, canonicalUrl,
       pageType: contentRoot ? "article" : siteData?.pageType || pageType, maxMedia: documentMediaLimit, pageRoot, contentRoot
     });
@@ -960,7 +998,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         bodyCandidate.articleDocument?.blocks || [], bodyCandidate.media);
     }
     if (bodyCandidate) await attachViewportFallbacks([bodyCandidate]);
-    const regionCandidates = !template && !contentRoot && !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
+    const regionCandidates = scopedPost.length !== 1 && !template && !contentRoot && !siteData && !pageSelection && !["feed", "gallery"].includes(pageType)
       ? collectSubjectRegionRoots(positiveInteger(options.maxRegionCandidates, 5)).flatMap((root, index) => {
           const candidate = candidateForRoot(root, index, {
             adapter, metadata, structured, article: null, siteData: null, canonicalUrl, pageType, maxMedia
@@ -969,7 +1007,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         })
       : [];
     if (regionCandidates.length) await attachViewportFallbacks(regionCandidates);
-    const candidates = template ? capturedCards.slice(0, maxCandidates) : capturedCards.length > 0 && (adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) && !siteData && !pageSelection || capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType)))
+    const candidates = scopedPost.length === 1 ? scopedPost : template ? capturedCards.slice(0, maxCandidates) : capturedCards.length > 0 && (adapter.id === "pinterest" && !/^\/pin\//u.test(location.pathname) && !siteData && !pageSelection || capturedCards.length > 1 && (options.listMode || ["feed", "gallery"].includes(pageType)))
       ? capturedCards.slice(0, maxCandidates)
       : regionCandidates.length ? regionCandidates
         : bodyCandidate ? [bodyCandidate] : capturedCards.slice(0, maxCandidates);
@@ -1632,7 +1670,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const capturePost = context.adapter.id === "x" && !context.pageSelection && !options.editedRegion?.token;
     const post = capturePost ? xPostContent(root) : null;
     if (capturePost && !post) return null;
-    const cardLink = isPageRoot || context.pageType === "article" ? "" : context.templateCard
+    const cardLink = isPageRoot || context.pageType === "article"
+      || context.pageType === "post" && root.contains?.(document.querySelector("h1")) ? "" : context.templateCard
       ? genericDetailReferences(root)[0]?.url || safeHttpUrl(context.templateCard.querySelector('a[href]')?.href)
         || genericDetailReferences(context.templateCard.querySelector('img,video') || context.templateCard)[0]?.url || ''
       : safeHttpUrl(root.querySelector("a[href]")?.href);
@@ -1838,7 +1877,13 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function createSelectionTemplatePlan() {
-    const selected = selectedTemplateNode;
+    let selected = selectedTemplateNode;
+    let componentMediaIndex = null;
+    if (selected.matches('img,video') && selected.getRootNode().host) {
+      const media = selected;
+      while (selected.getRootNode().host) selected = selected.getRootNode().host;
+      componentMediaIndex = templateMediaPeers(selected).indexOf(media);
+    }
     // A deliberate selection supplies the scope: inspect its ancestors rather
     // than relying on site-specific names such as grid, wall, list or gallery.
     let card = selected.matches('img,video') ? selected.parentElement : selected;
@@ -1856,6 +1901,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         index: media ? templateMediaPeers(node.parentElement).findIndex(peer => templateMediaSources(peer).some(source => templateMediaSources(node).includes(source)))
           : [...node.parentElement.children].filter(peer => peer.tagName === node.tagName).indexOf(node) });
     }
+    if (componentMediaIndex !== null) path.push({ tag: 'media', index: componentMediaIndex });
     return { parent: card.parentElement, shape: repeatedCardShape(card), path, cards: new WeakMap() };
   }
 
@@ -1876,7 +1922,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function templateMediaPeers(parent) {
     const groups = [];
-    for (const node of [...parent.children].filter(child => child.matches('img,video'))) {
+    for (const node of parent.shadowRoot ? renderedQueryAll(parent, 'img,video') : [...parent.children].filter(child => child.matches('img,video'))) {
       const sources = templateMediaSources(node);
       const existing = groups.findIndex(peer => templateMediaSources(peer).some(source => sources.includes(source)));
       if (existing < 0) groups.push(node);
@@ -1970,7 +2016,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (options.manualContentHtml) return false;
     const semantic = "nav,aside,header,footer,[role=navigation],[role=banner],[role=complementary],[role=contentinfo]";
     const feishu = location.hostname === "feishu.cn" || location.hostname.endsWith(".feishu.cn");
-    if (!feishu) return Boolean(element.closest?.(`${semantic},[class*=comment],[class*=recommend],[data-testid*=comment],[data-testid*=recommend]`));
+    if (!feishu) return Boolean(composedClosest(element, `${semantic},[class*=comment],[class*=recommend],[data-testid*=comment],[data-testid*=recommend]`));
     for (let node = element; node; node = node.parentElement) {
       if (node.matches?.(semantic)) return true;
       // Feishu's comment-capable block wrappers contain document text, not replies.
@@ -1988,6 +2034,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const pathFor = (element) => {
       const parts = [];
       let current = element;
+      while (current.getRootNode?.().host) current = current.getRootNode().host;
       while (current?.nodeType === 1) {
         const tag = cleanText(current.tagName).toLocaleLowerCase("en-US");
         const siblings = [...(current.parentElement?.children || [])].filter((item) => item.tagName === current.tagName);
@@ -2032,7 +2079,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
       }
       return cleanBlockText(element.textContent) ? "text" : "";
     };
-    const candidates = [...root.querySelectorAll?.(`${semanticSelector},div,section,figure`) || []]
+    const candidates = renderedQueryAll(root, `${semanticSelector},div,section,figure`)
       .filter((element) => !isPageChrome(element));
     const leafElements = candidates.filter((element) => {
       const kind = kindFor(element);
@@ -2085,11 +2132,28 @@ export async function collectPageCaptureSnapshot(options = {}) {
   }
 
   function contentRootHtml(root, parts = []) {
-    const fragment = root.cloneNode(!parts.length);
-    for (const part of parts) fragment.append(part.cloneNode(true));
+    const componentContent = root.shadowRoot || renderedElements(root).some(node => node.shadowRoot);
+    const pairs = [];
+    const cloneRendered = node => {
+      if (!(node instanceof Element)) return node.cloneNode(true);
+      const copy = node.localName.includes("-") || node.localName === "slot" ? document.createElement("div") : node.cloneNode(false);
+      if (node.localName.includes("-")) {
+        for (const attribute of node.attributes) copy.setAttribute(attribute.name, attribute.value);
+      }
+      pairs.push([node, copy]);
+      if (node.matches("img,video")) {
+        const source = safeHttpUrl(node.currentSrc || node.src);
+        if (source) copy.setAttribute("src", source);
+      }
+      const children = node.localName === "slot" ? node.assignedNodes({ flatten: true }) : (node.shadowRoot || node).childNodes;
+      for (const child of children || []) copy.append(cloneRendered(child));
+      return copy;
+    };
+    const fragment = componentContent && !parts.length ? cloneRendered(root) : root.cloneNode(!parts.length);
+    for (const part of parts) fragment.append(componentContent ? cloneRendered(part) : part.cloneNode(true));
     if (genericCapture && root === genericRoot) {
-      const originals = [...root.querySelectorAll("*")];
-      const copies = [...fragment.querySelectorAll("*")];
+      const originals = componentContent ? pairs.map(([node]) => node) : [...root.querySelectorAll("*")];
+      const copies = componentContent ? pairs.map(([,copy]) => copy) : [...fragment.querySelectorAll("*")];
       originals.forEach((node, index) => {
         if (node.matches("script,style,template,noscript") || isPageChrome(node) || genericNodeHidden(node)
           || node.matches("img,video,iframe,canvas") && isExcludedMedia(node)) copies[index]?.remove();
@@ -2138,7 +2202,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const selector = "h1,h2,h3,h4,h5,h6,p,li,blockquote,pre,code[data-language],figure,table";
     const containers = "li,blockquote,pre,code[data-language],figure,table";
     const blocks = [];
-    for (const node of blockRoot?.querySelectorAll?.(selector) || []) {
+    for (const node of renderedQueryAll(blockRoot, selector)) {
       const parentContainer = node.parentElement?.closest?.(containers);
       if (parentContainer && parentContainer !== node) continue;
       const text = readBlockText(node);
@@ -2181,7 +2245,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     const downloadCards = [...(blockRoot.querySelectorAll?.(".rde-asset-embed") || [])];
     const selector = "h1,h2,h3,h4,h5,h6,p,ul,ol,blockquote,pre,code[data-language],table,figcaption,img,video,iframe,a[href],.rde-asset-embed";
     const structuralContainers = "p,ul,ol,blockquote,pre,code[data-language],table,figcaption";
-    const elements = [...(genericCapture && options.selectionTemplate && blockRoot?.matches?.(selector) ? [blockRoot] : []), ...(blockRoot?.querySelectorAll?.(selector) || [])];
+    const elements = [...(genericCapture && options.selectionTemplate && blockRoot?.matches?.(selector) ? [blockRoot] : []), ...renderedQueryAll(blockRoot, selector)];
     for (const element of elements) {
       if (isPageChrome(element)) continue;
       const tagName = cleanText(element.tagName).toLowerCase();
@@ -2526,6 +2590,10 @@ export async function collectPageCaptureSnapshot(options = {}) {
   function collectVideoVariants(player) {
     const urls = [player.currentSrc, player.getAttribute("src"), player.getAttribute("data-src"), player.getAttribute("data-video-src"),
       ...[...player.querySelectorAll("source")].flatMap(source => [source.getAttribute("src"), source.getAttribute("data-src")])];
+    const host = player.getRootNode?.().host;
+    if (host && renderedQueryAll(host, "video").length === 1) {
+      urls.push(host.getAttribute("src"), ...[...host.children].filter(node => node.matches("source")).map(source => source.getAttribute("src")));
+    }
     return [...new Set(urls.map(safeHttpUrl).filter(Boolean))].map(url => ({ url, sourceKind: "video-element" }));
   }
 
@@ -2547,7 +2615,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function collectMedia(root, limit) {
     const media = [];
-    for (const [elementIndex, element] of [...(genericCapture && options.selectionTemplate && root.matches("img,video,iframe,canvas") ? [root] : []), ...root.querySelectorAll("img,video,iframe,canvas")].entries()) {
+    for (const [elementIndex, element] of [...(genericCapture && options.selectionTemplate && root.matches("img,video,iframe,canvas") ? [root] : []), ...renderedQueryAll(root, "img,video,iframe,canvas")].entries()) {
       if (isExcludedMedia(element)) continue;
       if (element.matches?.("img") && playerForCompanionPoster(element, root)) continue;
       if (element instanceof HTMLCanvasElement) {
@@ -2864,7 +2932,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (hiddenGenericNodes.has(element)) return hiddenGenericNodes.get(element);
     const style = getComputedStyle(element);
     const hidden = element.matches?.('[hidden],[aria-hidden="true"],template,dialog:not([open])')
-      || style.display === "none" || style.visibility === "hidden" || genericNodeHidden(element.parentElement);
+      || style.display === "none" || style.visibility === "hidden" || genericNodeHidden(composedParent(element));
     hiddenGenericNodes.set(element, Boolean(hidden));
     return Boolean(hidden);
   }
@@ -2882,7 +2950,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
     if (genericCapture && (isPageChrome(element) || genericNodeHidden(element))) return true;
     const postPhoto = Boolean(xPostPhotoUrl(element));
     const postVideo = element.matches("video") && Boolean(xPostMediaUrl(element));
-    if (!postPhoto && !postVideo && element.closest("nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
+    if (!postPhoto && !postVideo && composedClosest(element, "nav,aside,header,[role=banner],[aria-label*=广告],[aria-label*=advertisement]")) return true;
     const rect = element.getBoundingClientRect();
     // X may defer intrinsic dimensions until a photo is opened. Its owned
     // photo link plus a real source identifies the asset without decoding it.
@@ -2909,7 +2977,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function isContentRoot(root) {
     if (!(root instanceof HTMLElement) || root.closest("nav,aside,header,[role=banner]")) return false;
-    return cleanText(root.innerText).length > 20 || root.querySelector("img,video,iframe,canvas") || genericCapture && options.selectionTemplate && root.matches("img,video,iframe,canvas");
+    return cleanText(root.innerText).length > 20 || renderedQueryAll(root, "img,video,iframe,canvas").length || genericCapture && options.selectionTemplate && root.matches("img,video,iframe,canvas");
   }
 
   function sameUrl(value, expected) {

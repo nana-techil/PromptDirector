@@ -71,7 +71,9 @@ def check_interruption(phase):
         assert proof["replay"] == proof["result"] and proof["recoveryIdUnchanged"], proof
         rollback = page.evaluate("""async () => {
           const point = (await chrome.storage.local.get('libraryReplacementRecoveryPoint')).libraryReplacementRecoveryPoint;
-          const request = {type:'RESTORE_LIBRARY_REPLACEMENT_POINT', expectedPointId:point.id, operationId:crypto.randomUUID()};
+          const preview = await chrome.runtime.sendMessage({type:'PREVIEW_LIBRARY_UNDO',action:'RESTORE_LIBRARY_REPLACEMENT_POINT'});
+          if (!preview.ok) throw new Error(preview.message);
+          const request = {type:'RESTORE_LIBRARY_REPLACEMENT_POINT', expectedPointId:point.id, confirmationToken:preview.confirmationToken, operationId:crypto.randomUUID()};
           const first = await chrome.runtime.sendMessage(request);
           const second = await chrome.runtime.sendMessage(request);
           const stored = await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries','libraryReplacementRecoveryPoint']));

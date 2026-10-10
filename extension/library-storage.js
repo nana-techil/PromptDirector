@@ -313,48 +313,62 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     caseCache = { revision: update[CASE_LIBRARY_REVISION_KEY], ids: plan.ids, values: plan.values,
       orphanKeys: await cleanup([...new Set(leftovers)]) };
   };
-  const updateCase = (entryId, transform, { keys = [], metadata = () => ({}) } = {}) => lock(async () => {
+  const updateCases = (entryIds, transform, { keys = [], metadata = () => ({}) } = {}) => lock(async () => {
     await assertWritable(backend);
-    const key = caseRecordKey(entryId);
-    const stored = await backend.get([...new Set([CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, BROWSE_PROJECTION_META_KEY, key, ...keys])]);
-    const indexed = indexedCaseIds(stored[CASE_INDEX_KEY]);
+    const ids = [...new Set(entryIds)];
+    const stored = await backend.get([...new Set([CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, BROWSE_PROJECTION_META_KEY, ...ids.map(caseRecordKey), ...keys])]);
+    const indexed = new Set(indexedCaseIds(stored[CASE_INDEX_KEY]) ?? []);
     let entries;
-    let current;
-    if (indexed?.includes(entryId)) {
-      if (!Object.hasOwn(stored, key)) throw Object.assign(new Error('案例记录读取不到，资料没有改动'), { code: 'CASE_RECORDS_MISSING', missingIds: [entryId] });
-      current = stored[key];
-    } else {
-      // Old libraries and cases added by an older version retain the established merge/migration.
+    if (ids.some(id => !indexed.has(id))) {
+      // Retain the established old-library merge path, once per batch.
       const plain = await backend.get(ENTRIES_KEY);
-      if (!plain[ENTRIES_KEY]?.some(entry => entry.id === entryId)) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
-      const legacy = indexed ? await read([ENTRIES_KEY, ...keys]) : plain;
-      entries = legacy[ENTRIES_KEY] ?? [];
-      current = entries.find(entry => entry.id === entryId);
-      Object.assign(stored, legacy);
-      if (!current) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
+      if (plain[ENTRIES_KEY]?.some(entry => ids.includes(entry.id) && !indexed.has(entry.id))) {
+        const legacy = indexed.size ? await read([ENTRIES_KEY, ...keys]) : plain;
+        entries = legacy[ENTRIES_KEY] ?? [];
+        Object.assign(stored, legacy);
+      }
     }
-    const next = await transform(structuredClone(current));
-    if (!next || next.id !== entryId) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
-    if (sameCaseValue(current, next)) return { entry: structuredClone(next), changed: false };
+    const legacyById = entries && new Map(entries.map(entry => [entry.id, entry]));
+    const results = [], records = {};
+    for (const id of ids) {
+      const current = entries ? legacyById.get(id) : indexed.has(id) ? stored[caseRecordKey(id)] : null;
+      if (!current && indexed.has(id)) throw Object.assign(new Error('案例记录读取不到，资料没有改动'), { code: 'CASE_RECORDS_MISSING', missingIds: [id] });
+      const next = await transform(current ? structuredClone(current) : null, id);
+      // Batch callers can skip a concurrently removed or changed record without losing other results.
+      if (!next) continue;
+      if (!current) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
+      if (next.id !== id) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
+      const changed = !sameCaseValue(current, next);
+      results.push({ entry: structuredClone(next), changed });
+      if (changed) records[caseRecordKey(id)] = next;
+    }
+    if (!Object.keys(records).length) return results;
     const extra = await metadata(stored);
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)
       || Object.keys(extra).some(name => touchesCaseLibrary([name]) || name === CASE_INDEX_KEY || name === CASE_LIBRARY_REVISION_KEY || isCaseRecordKey(name) || isBrowseKey(name))) throw new Error('案例附加更新内容无效');
-    if (entries) await write(await withSummary({ ...extra, [ENTRIES_KEY]: entries.map(entry => entry.id === entryId ? next : entry) }));
+    if (entries) await write(await withSummary({ ...extra, [ENTRIES_KEY]: entries.map(entry => records[caseRecordKey(entry.id)] ?? entry) }));
     else {
       const nextRevision = revision();
-      const snapshot = structuredClone(next);
-      await backend.set({ ...extra, [key]: snapshot, [caseBrowseKey(entryId)]: caseBrowseProjection(snapshot), [CASE_LIBRARY_REVISION_KEY]: nextRevision,
+      await backend.set({ ...extra, ...records, ...browseRecords(Object.values(records)), [CASE_LIBRARY_REVISION_KEY]: nextRevision,
         ...(validBrowseMarker(stored[BROWSE_PROJECTION_META_KEY], stored[CASE_LIBRARY_REVISION_KEY]) ? { [BROWSE_PROJECTION_META_KEY]: browseMarker(nextRevision) } : {}) });
-      updateCachedCases({ [key]: { newValue: snapshot }, [CASE_LIBRARY_REVISION_KEY]: { oldValue: stored[CASE_LIBRARY_REVISION_KEY], newValue: nextRevision } });
+      updateCachedCases({ ...Object.fromEntries(Object.entries(records).map(([key, value]) => [key, { newValue: value }])),
+        [CASE_LIBRARY_REVISION_KEY]: { oldValue: stored[CASE_LIBRARY_REVISION_KEY], newValue: nextRevision } });
     }
-    return { entry: structuredClone(next), changed: true };
+    return results;
   });
+  const updateCase = async (entryId, transform, options) => (await updateCases([entryId], async current => {
+    if (!current) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
+    const next = await transform(current);
+    if (!next) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
+    return next;
+  }, options))[0];
   return Object.freeze({
     get: read,
     // View readers may share frozen case records; editing callers keep the mutable get contract.
     getSnapshot: keys => read(keys, true),
     getSnapshotBatches,
     updateCase,
+    updateCases,
     // Available before our minimum Chrome version; never load values to enumerate keys.
     getKeys: () => backend.getKeys(),
     set: values => lock(async () => {
@@ -423,11 +437,11 @@ export function createLibraryCommitter({ storage, syncedKeys, syncMetaKey, markD
       done({ bytes: () => jsonBytes(update) });
     }
   };
-  commit.updateCase = async (entryId, transform, options = {}) => {
+  for (const method of ['updateCase', 'updateCases']) commit[method] = async (entryId, transform, options = {}) => {
     const done = startPhase('background', 'writeCase');
     const sync = !isSyncApplying() && options.markSyncDirty !== false && syncedKeys.has(ENTRIES_KEY);
     try {
-      return await storage.updateCase(entryId, transform, sync ? {
+      return await storage[method](entryId, transform, sync ? {
         keys: [syncMetaKey], metadata: stored => ({ [syncMetaKey]: markDirty(stored[syncMetaKey], options.dirtyAssetIds) })
       } : {});
     } finally { done(); }
@@ -436,10 +450,11 @@ export function createLibraryCommitter({ storage, syncedKeys, syncMetaKey, markD
   async function commitLibraryUpdate(update, options) {
     const payload = { ...update };
     const affectsSync = Object.keys(payload).some(key => syncedKeys.has(key));
-    if (isSyncApplying() || options.markSyncDirty === false || !affectsSync) return storage.set(payload);
-    return storage.update(syncMetaKey, stored => ({
-      ...payload,
-      [syncMetaKey]: markDirty(stored[syncMetaKey], options.dirtyAssetIds)
-    }));
+    const sync = !isSyncApplying() && options.markSyncDirty !== false && affectsSync;
+    if (!sync && !options.guard) return storage.set(payload);
+    return storage.update([...new Set([...(sync ? [syncMetaKey] : []), ...(options.guard?.keys ?? [])])], stored => {
+      options.guard?.check(stored);
+      return { ...payload, ...(sync ? { [syncMetaKey]: markDirty(stored[syncMetaKey], options.dirtyAssetIds) } : {}) };
+    });
   }
 }
