@@ -1,6 +1,11 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "Skill文件只能从插件工作空间传入": "Skill files can only be sent from the plugin workspace",
+  "未知Skill文件操作": "Unknown Skill file operation",
+  "这里只接收Skill文件": "This operation only accepts Skill files",
+  "无法传入Skill文件": "Could not send Skill files",
+  "无法操作Skill": "Could not perform the Skill operation",
   "返回任务与维护": "Back to tasks and maintenance",
   "切换整库状态": "Switch library state",
   "撤销标签修改": "Undo tag change",

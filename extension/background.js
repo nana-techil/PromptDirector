@@ -938,6 +938,18 @@ async function handleMessage(message, interaction = {}) {
       return { ok: true, data: await (["save_skill", "restore_skill"].includes(message.operation)
         ? skillWriter.execute(message.operation, message.input) : skillOperations.execute(message.operation, message.input)) };
     }
+    case 'COMPOSER_SKILL_TRANSFER': {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(''))) {
+        throw agentError('unauthorized', 'Skill文件只能从插件工作空间传入');
+      }
+      if (!['begin_transfer', 'append_transfer', 'finish_transfer'].includes(message.operation)) throw agentError('invalid_input', '未知Skill文件操作');
+      if (message.operation === 'begin_transfer') {
+        if (message.input?.purpose !== 'skill-file') throw agentError('invalid_input', '这里只接收Skill文件');
+      } else if ((await agentTransfers.get(message.input?.id)).purpose !== 'skill-file') {
+        throw agentError('invalid_input', '这里只接收Skill文件');
+      }
+      return { ok: true, data: await dispatchAgentOperation(message.operation, message.input) };
+    }
     case 'REVIEW_TRANSFER': {
       if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('library.html')) throw agentError('unauthorized', '审片操作只能从案例库调用');
       if (!['begin_transfer', 'append_transfer', 'finish_transfer', 'abort_transfer'].includes(message.operation)) throw agentError('invalid_input', '未知审片文件操作');
@@ -8309,7 +8321,7 @@ async function exportArchive(state, requestedEntryIds) {
       url: archive.url,
       filename: sharedArchivePath(state.settings.outputPath, archiveLocale(state)),
       conflictAction: "uniquify",
-      saveAs: false
+      saveAs: true
     });
     await waitForDownload(downloadId);
   } finally {
@@ -8337,7 +8349,7 @@ async function exportProjectArchive(state, collectionId) {
       url: archive.url,
       filename: projectArchivePath(state.settings.outputPath, project.name, archiveLocale(state)),
       conflictAction: "uniquify",
-      saveAs: false
+      saveAs: true
     });
     await waitForDownload(downloadId);
   } finally {

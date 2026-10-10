@@ -22,6 +22,7 @@ import {
   resetAgentTaskMethod,
   taskKeyForRoute,
   taskMethodFor,
+  agentInstructionFor,
   updateAgentInstruction,
   updateAgentTaskMethod
 } from "./composer-agent.js";
@@ -801,7 +802,7 @@ export function createInstructionSnapshot(settingsValue, route, targetType, outp
     agentVersion: settings.agentVersion,
     route: normalizedRoute,
     routeSource,
-    agentInstruction: settings.agentInstruction.text,
+    agentInstruction: agentInstructionFor(settings, locale),
     taskMethod: taskMethodFor(settings, normalizedRoute, targetType, locale),
     instruction: String(instruction ?? "").trim(),
     outputLanguage: locale

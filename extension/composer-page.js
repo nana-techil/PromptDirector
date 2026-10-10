@@ -64,7 +64,7 @@ import {
 import { applyComposerServiceResult, planComposerSession, prepareComposerTurnStart } from "./composer-turn-core.js";
 import { sessionHasVideoReferences } from "./composer-video-references.js";
 import { createComposerImageWorkspace } from "./composer-image-workspace.js";
-import { composerAssemblyLayers } from "./composer-agent.js";
+import { composerAssemblyLayers, agentInstructionFor } from "./composer-agent.js";
 import {
   createComposerActiveTurn,
   createLatestCheckpointWriter,
@@ -2789,7 +2789,7 @@ function freezeComposerAssemblySnapshot(session, {
     outputMode: session.outputMode,
     outputLanguage: payload.outputLanguage,
     productionReviewEnabled: session.productionReviewEnabled,
-    agentInstruction: composerSettings.agentInstruction.text,
+    agentInstruction: agentInstructionFor(composerSettings, payload.outputLanguage),
     taskMethod,
     userRequest,
     skills: session.appliedSkills.map((skill, index) => ({

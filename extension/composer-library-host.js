@@ -50,9 +50,14 @@ export function createLocalComposerLibraryTools(options) {
       return { dataUrl: await blobToDataUrl(blob), mimeType: blob.type, sha256 };
     }
   });
-  const workspace = createComposerWorkspaceTools({ ...options, caseTools, invokeSkill: async (operation,input) => {
+  const workspace = createComposerWorkspaceTools({ ...options, caseTools,
+    invokeSkillTransfer: async (operation,input) => {
+      const response = await sendMessage({type:'COMPOSER_SKILL_TRANSFER',operation,input});
+      if (!response?.ok) throw new Error(response?.message || '无法传入Skill文件');
+      return response.data;
+    }, invokeSkill: async (operation,input) => {
     const response = await sendMessage({type:'SKILL_OPERATION',operation,input});
-    if (!response?.ok) throw new Error(response?.message || '无法读取Skill');
+    if (!response?.ok) throw new Error(response?.message || '无法操作Skill');
     return response.data;
   }, loadState: async () => {
     const state = await readWorkspaceLibraryState(sendMessage);

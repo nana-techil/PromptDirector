@@ -125,10 +125,10 @@ import {
 import { getAiModelCapability } from "./ai-model-capabilities.js";
 import {
   COMPOSER_METHOD_VERSION,
-  DEFAULT_TASK_METHODS,
   isComposerEligibleEntry,
   normalizeComposerSettings
 } from "./composer.js";
+import { agentInstructionFor, defaultTaskMethodFor, taskMethodFor } from "./composer-agent.js";
 import { textFingerprint } from "./analysis-batch.js";
 import { canonicalTextAnalysisInput } from "./analysis-input.js";
 import { entryTextRevision } from "./analysis-revision.js";
@@ -11557,8 +11557,10 @@ function renderComposerMethodSettings() {
   const taskKey = elements.composerTaskKey.value;
   const normalized = normalizeComposerSettings(composerSettings);
   elements.composerMethodVersion.textContent = `v${normalized.methodVersion}`;
-  renderRuleEditor(elements.composerAgentInstruction, normalized.agentInstruction.text);
-  renderRuleEditor(elements.composerTaskMethod, normalized.taskMethods[taskKey].text, `composer-task-method:${taskKey}`);
+  const locale = currentLocale();
+  renderRuleEditor(elements.composerAgentInstruction, agentInstructionFor(normalized, locale));
+  const [route, targetType] = taskKey.split(".");
+  renderRuleEditor(elements.composerTaskMethod, taskMethodFor(normalized, route, targetType, locale), `composer-task-method:${taskKey}`);
   elements.creativeExperimentEnabled.checked = Boolean(creativeExperimentSettings.enabled);
   elements.creativeExperimentAutoAnalyze.checked = Boolean(creativeExperimentSettings.autoAnalyze);
   elements.creativeExperimentAutoAnalyze.disabled = !creativeExperimentSettings.enabled;
@@ -11575,7 +11577,7 @@ function renderComposerMethodStatus() {
   if (!elements.composerTaskKey) return;
   const taskKey = elements.composerTaskKey.value;
   const normalized = normalizeComposerSettings(composerSettings);
-  elements.composerMethodDefaultText.textContent = DEFAULT_TASK_METHODS[taskKey];
+  elements.composerMethodDefaultText.textContent = defaultTaskMethodFor(taskKey, currentLocale());
   elements.composerMethodMigration.textContent = normalized.migrationCandidates[taskKey]?.length > 1
     ? t("这个任务仍有两个历史语言版本；当前会按输出语言继续使用，保存上方单一方法后完成合并。")
     : "";
