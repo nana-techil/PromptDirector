@@ -7334,7 +7334,7 @@ async function createDetailMediaGallery(entryValue, { immersive = false } = {}) 
       showQuickMenu(download, mediaActions, { x: event.clientX, y: event.clientY }, message => showFeedback(message, true));
     });
     if (contentAssets.length > 1) { caption.append(mediaNavigation); caption.classList.add('has-media-navigation'); }
-    const tools = el('div', 'detail-media-tools ui-scrollbar'); tools.append(actions); caption.append(tools);
+    const tools = el('div', 'detail-media-tools'); tools.append(actions); caption.append(tools);
     if (localVideo || asset.kind === "image") {
       if (localVideo) caption.classList.add('review-media-toolbar');
       for (const button of actions.querySelectorAll('button')) {

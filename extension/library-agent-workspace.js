@@ -20,7 +20,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   const temporaryMedia = document.querySelector('#temporary-review-media');
   const temporaryActions = document.querySelector('#temporary-review-actions');
   const temporarySave = document.querySelector('#temporary-review-save');
-  const temporaryTools = document.createElement('div'); temporaryTools.className = 'detail-media-tools ui-scrollbar';
+  const temporaryTools = document.createElement('div'); temporaryTools.className = 'detail-media-tools';
   temporaryTools.append(temporarySave); temporaryActions.append(temporaryTools);
   const readableDialogIds = ['manager-dialog', 'text-batch-dialog', 'vision-batch-dialog', 'share-dialog', 'import-dialog', 'library-package-import-dialog'];
   let temporaryFeedback = null, frameSaving = null, temporaryGroup = null, switchingTemporary = false;

@@ -1816,24 +1816,20 @@ html.detail-open:has(.detail-sidebar-mode.open:not(.is-reviewing)) body { overfl
 .media-prompt-section .prompt-section-heading { gap: 6px; flex-wrap: wrap; }
 .media-prompt-section .prompt-toolbar { gap: 4px; }
 .video-analysis-workspace:empty { display: none; }
-/* Equal side cells keep media navigation still while available tools change. */
+/* Keep media navigation at the left edge and give actions the remaining width. */
 .detail-visual-caption.has-media-navigation,
 .detail-visual-gallery.is-immersive .detail-visual-caption.has-media-navigation,
 .detail-visual-gallery.is-video-detail .detail-visual-caption.has-media-navigation.review-media-toolbar,
 .detail-drawer.is-reviewing .detail-visual-caption.has-media-navigation,
 #temporary-review-actions.has-media-navigation {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: auto; overflow: visible;
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr); grid-template-rows: auto; overflow: visible;
 }
-.detail-visual-caption.has-media-navigation > span:first-child { grid-column: 1; grid-row: 1; }
-.has-media-navigation > .detail-media-navigation { grid-column: 2; grid-row: 1; }
+.detail-visual-caption.has-media-navigation > span:first-child { grid-column: 2; grid-row: 1; }
+.has-media-navigation > .detail-media-navigation { grid-column: 1; grid-row: 1; }
 .detail-media-tools { display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; min-width: 0; overflow-x: auto; margin-left: auto; }
 .detail-media-tools > * { flex-shrink: 0; }
-/* Use the shared custom track even when the OS auto-hides native scrollbars. */
-.detail-media-tools.ui-scrollbar,
+/* Only the thumbnail rail shows a track; actions retain wheel/touch scrolling. */
 .detail-visual-rail.ui-scrollbar { scrollbar-width: auto; scrollbar-color: auto; }
-.detail-media-tools { align-items: flex-start; min-height: calc(var(--ui-control-height) + var(--ui-space-1)); }
-.has-media-navigation > .detail-media-navigation,
-.detail-visual-caption > span:first-child { margin-bottom: var(--ui-space-1); }
 .has-media-navigation > .detail-media-tools { grid-column: 3; grid-row: 1; width: 100%; justify-content: safe flex-end; }
 .detail-visual-caption:not(.has-media-navigation) > .detail-media-tools { flex-shrink: 1; }
 @media (max-width: 640px) {

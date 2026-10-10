@@ -140,9 +140,15 @@ def main():
                                 page.mouse.wheel(0, overflow+bounds['width'])
                                 page.wait_for_function('(selector)=>{const n=document.querySelector(selector);return n.scrollLeft>=n.scrollWidth-n.clientWidth-1;}', arg=selector)
                             value=target.evaluate('''node => {
-                              if(node.scrollWidth>node.clientWidth && getComputedStyle(node).scrollbarWidth==='none')return {hit:false,scrollbarHidden:true};
+                              const isTools=node.classList.contains('detail-media-tools');
+                              if(isTools && getComputedStyle(node).scrollbarWidth!=='none')return {hit:false,unwantedActionScrollbar:true};
+                              if(!isTools && node.scrollWidth>node.clientWidth && getComputedStyle(node).scrollbarWidth==='none')return {hit:false,thumbnailScrollbarHidden:true};
                               const navigation=node.closest('.detail-visual-gallery').querySelector('.detail-media-navigation');
-                              if(node.classList.contains('detail-media-tools') && navigation && Math.abs(navigation.getBoundingClientRect().top-node.querySelector('button').getBoundingClientRect().top)>1)return {hit:false,buttonsMisaligned:true};
+                              if(isTools && navigation) {
+                                const caption=node.closest('.detail-visual-caption'), nav=navigation.getBoundingClientRect();
+                                if(Math.abs(nav.left-caption.getBoundingClientRect().left-parseFloat(getComputedStyle(caption).paddingLeft))>1)return {hit:false,navigationNotLeftAligned:true};
+                                if(Math.abs(nav.top-node.querySelector('button').getBoundingClientRect().top)>1)return {hit:false,buttonsMisaligned:true};
+                              }
                               const children=[...node.querySelectorAll('button')].filter(n=>n.checkVisibility());
                               const last=children.at(-1); if(!last)return {hit:true};
                               const r=last.getBoundingClientRect(), bounds=node.getBoundingClientRect();
