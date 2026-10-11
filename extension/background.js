@@ -664,6 +664,8 @@ const skillWriter = createSkillWriter({ storage: libraryStorage, transfers: agen
   readBlob: getMediaBlob, commit: commitLocalChanges, enqueue, cleanup: deleteUnreferencedMedia });
 const agentCapturePreview = createAgentCapturePreview({ storage: libraryStorage, chromeApi: chrome,
   collect: collectPageCaptureTab, commit: commitPageCapture,
+  readImage: async media => media.localAssetId ? await getMediaBlob(media.localAssetId) || await getScreenshotBlob(media.localAssetId)
+    : fetchBoundedMedia(media.url, { kind: 'image', maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes, maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels }),
   loadState: () => libraryStorage.get(STORAGE_KEYS.organizerState),
   getLibraryId: async () => (await libraryIdentity.read()).libraryId });
 const captureAssistantControllers = new Map();
@@ -672,18 +674,31 @@ const agentTasks = createAgentTasks({ storage: libraryStorage,
   // This browser library may adopt its receipts predating library IDs.
   allowLegacyTasks: true,
   execute: async (operation, input, requestId, scope) => {
-    await scope.assertCurrent();
     if (operation === 'capture_assist') {
-      const controller = new AbortController(); captureAssistantControllers.set(requestId, controller);
+      const controller = captureAssistantControllers.get(requestId) || new AbortController(); captureAssistantControllers.set(requestId, controller);
       try {
+        await scope.assertCurrent();
         return await runCaptureAssistant(input, { runtime: await getComposerAiRuntime(), signal: controller.signal,
-          call: async (name, args) => { await scope.assertCurrent(); return executeAgentOperation(name, args); },
+          call: async (name, args) => { await scope.assertCurrent(); return executeAgentOperation(name,
+            name === 'save_capture' ? { ...args, captureAssistantRequestId: requestId } : args); },
+          onDelta: (_delta, text) => { void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId, text }).catch(() => {}); },
+          onPreview: preview => { void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId, preview }).catch(() => {}); },
           onStatus: message => { void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId, message }).catch(() => {}); } });
       } finally { captureAssistantControllers.delete(requestId); }
     }
+    await scope.assertCurrent();
     if (['prepare_capture', 'update_capture', 'save_capture'].includes(operation)) return enqueueCapture(async () => {
-      try { return await agentCapturePreview.execute(operation, input, requestId, scope); }
-      finally { activeCaptureAssetIds.clear(); }
+      const controller = input.captureAssistantRequestId ? captureAssistantControllers.get(input.captureAssistantRequestId) : null;
+      const progress = controller ? createCaptureSaveProgress({ requestId: input.captureAssistantRequestId,
+        send: message => chrome.runtime.sendMessage(message) }) : undefined;
+      if (progress) {
+        progress.signal = controller.signal;
+        progress.retain = async ids => { ids.forEach(id => activeCaptureAssetIds.add(id)); };
+        progress.commit = async () => { controller.signal.throwIfAborted(); controller.committing = true;
+          void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId: input.captureAssistantRequestId, committing: true }).catch(() => {}); };
+      }
+      try { return await agentCapturePreview.execute(operation, input, requestId, scope, progress); }
+      finally { progress?.close(); activeCaptureAssetIds.clear(); }
     });
     if (operation === "capture") return enqueueCapture(async () => {
       await scope.assertCurrent();
@@ -954,22 +969,33 @@ async function handleMessage(message, interaction = {}) {
     case 'START_CAPTURE_ASSIST':
     case 'GET_CAPTURE_ASSIST_TASK':
     case 'CANCEL_CAPTURE_ASSIST':
+    case 'SHOW_CAPTURE_ASSIST_CASE':
     case 'GET_CAPTURE_ASSIST_PREVIEW': {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL('collector.html'))) {
         throw agentError('unauthorized', '采集助手只能从采集侧边栏操作');
       }
+      if (message.type === 'SHOW_CAPTURE_ASSIST_CASE') return { ok: true, ...await agentWorkspace.show({ caseId: message.caseId }) };
       if (message.type === 'START_CAPTURE_ASSIST') {
         if (typeof message.input?.instruction !== 'string' || !message.input.instruction.trim() || !Number.isInteger(message.input.tabId)) throw new Error('请输入当前网页的采集要求');
         if ((await chrome.tabs.get(message.input.tabId)).url !== message.input.sourceUrl) throw new Error('采集网页已改变，请重新开始当前网页的采集');
         if (captureAssistantControllers.size) throw new Error('已有采集助手任务正在运行，请先等待或停止');
-        return { ok: true, task: await agentTasks.submit('capture_assist', message.input, message.requestId) };
+        const controller = new AbortController(); captureAssistantControllers.set(message.requestId, controller);
+        try {
+          const task = await agentTasks.submit('capture_assist', message.input, message.requestId);
+          if (!['queued', 'running'].includes(task.state)) captureAssistantControllers.delete(message.requestId);
+          return { ok: true, task };
+        } catch (error) { captureAssistantControllers.delete(message.requestId); throw error; }
       }
       if (message.type === 'GET_CAPTURE_ASSIST_PREVIEW') return agentCapturePreview.view(message.input);
       let task;
       try { task = await agentTasks.inspect(message.requestId, { waitMs: message.waitMs ?? 0 }); }
       catch (error) { return { ok: false, code: error.code, message: userMessage(error) }; }
       if (task.operation !== 'capture_assist') throw new Error('这不是采集助手任务');
-      if (message.type === 'CANCEL_CAPTURE_ASSIST') captureAssistantControllers.get(message.requestId)?.abort(new Error('采集助手已停止，已有预览保留'));
+      if (!['queued', 'running'].includes(task.state)) captureAssistantControllers.delete(message.requestId);
+      if (message.type === 'CANCEL_CAPTURE_ASSIST') {
+        const controller = captureAssistantControllers.get(message.requestId);
+        if (controller && !controller.committing) controller.abort(new Error('采集助手已停止，已有预览保留'));
+      }
       return { ok: true, task };
     }
     case "GET_REFERENCE_SELECTION":
@@ -1015,6 +1041,12 @@ async function handleMessage(message, interaction = {}) {
       if (!['video', 'image'].includes(record.prepared?.asset?.kind)) throw agentError('invalid_review_media', '请选择图片或视频');
       return { assetId: record.assetId, name: record.name, kind: record.prepared.asset.kind, byteSize: record.byteSize,
         sha256: record.sha256, mimeType: record.mimeType, transferId: record.id, feedback: record.reviewFeedback || { revision: 0, notes: [], frames: [] } };
+    }
+    case 'CAPTURE_LOCAL_FILE': {
+      if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('collector.html')) throw agentError('unauthorized', '本机采集文件只能从采集侧栏传入');
+      const record = await agentTransfers.stageLocal(message.input || {});
+      if (!['image', 'video', 'document', 'attachment'].includes(record.prepared?.asset?.kind)) throw agentError('invalid_input', '请选择图片、视频或文档');
+      return { ok: true, transferId: record.id, asset: record.prepared.asset, poster: record.prepared.poster };
     }
     case 'REVIEW_FEEDBACK': {
       if (interaction.sender?.id !== chrome.runtime.id || interaction.sender?.url?.split(/[?#]/u)[0] !== chrome.runtime.getURL('library.html')) throw agentError('unauthorized', '审片备注只能从案例库调用');
@@ -2186,6 +2218,7 @@ async function fetchPageCaptureImage(url, { onProgress, signal }) {
 // written. Items restored from a save checkpoint, local files and page-session fallbacks are not
 // fetched ahead; they keep their existing path.
 function pageCaptureDownloadPlan(media, candidate, progress) {
+  if (media.localTransferId) return null;
   const cached = key => progress.mediaCached?.(key) === true;
   if (["document", "attachment"].includes(media.kind)) {
     const supported = media.kind === "attachment"
@@ -2231,6 +2264,7 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
   let entries = [...state.entries];
   const savedAssets = createCaptureAssetIndex();
   const savedAssetIds = [];
+  const captureFiles = new Map();
   let metadataCommitted = false;
   try {
     for (const candidate of selected) {
@@ -2262,6 +2296,18 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
         const context = { kind: media.kind, index: mediaOffset + candidate.media.findIndex(item => item.id === media.id) + 1, count: mediaCount };
         const onProgress = value => progress.update(value);
         progress.stage('preparing', context);
+        if (media.localTransferId) {
+          const record = await agentTransfers.get(media.localTransferId);
+          if (record.state !== 'ready' || record.assetId !== media.localAssetId || record.prepared?.asset?.kind !== media.kind) throw new Error('本机文件已变化或不可用，请重新选择');
+          const blob = await getMediaBlob(record.assetId);
+          if (!blob || blob.size !== record.byteSize) throw new Error('本机原件未取得，已有预览保留');
+          await progress.retain?.([record.assetId, ...(record.prepared.poster ? [record.prepared.poster.id] : [])]);
+          mediaAssets.push({ ...record.prepared.asset, sourceTitle: media.filename || record.name,
+            sourceUrl: candidate.canonicalUrl, originalWorkUrl: candidate.canonicalUrl });
+          if (record.prepared.poster) mediaAssets.push({ ...record.prepared.poster, usage: 'poster', derivedFromAssetId: record.assetId });
+          articleAssetIds.set(media.id, record.assetId); captureFiles.set(record.id, { record, candidateId: candidate.id });
+          warnings.push(...record.prepared.warnings); continue;
+        }
         if (["document", "attachment"].includes(media.kind)) {
           if (!(media.kind === "attachment" ? /\.skill$/iu.test(media.filename) && media.mimeType === "application/zip" : isSupportedDocumentMimeType(media.mimeType))) {
             warnings.push(`${media.filename || media.alt || media.url}：已保留来源链接，未知或高风险文件不会自动下载`);
@@ -2549,8 +2595,9 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
         ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
     }
     const explicitClassification = captureMetadata.contentTypeExplicit && isValidContentPath(state.taxonomy, [captureMetadata.contentTypeId]);
+    const explicitOrganization = captureMetadata.collectionId || captureMetadata.newCollectionName || captureMetadata.customLabelsExplicit;
     const affectedIds = results.filter(item => ["saved", "partial"].includes(item.status)
-      || item.status === "duplicate" && explicitClassification).map(item => item.entryId);
+      || item.status === "duplicate" && (explicitClassification || explicitOrganization)).map(item => item.entryId);
     if (!affectedIds.length) {
       return { ok: true, message: "所选内容均已存在或无法保存", results };
     }
@@ -2588,7 +2635,11 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
       organizerState = organizerAfterCapturePlacement(latest.organizerState, entries, affectedIds, captureMetadata);
       await progress.commit?.();
       progress.stage('writing');
-      await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState });
+      const files = Object.fromEntries([...captureFiles.values()].flatMap(({ record, candidateId }) => {
+        const result = results.find(item => item.candidateId === candidateId && item.entryId);
+        return result ? [[agentTransfers.key(record.id), { ...record, state: 'committed', entryId: result.entryId, prepared: null, chunks: 0 }]] : [];
+      }));
+      await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState, ...files });
     });
     metadataCommitted = true;
     const postCommitWarnings = [];

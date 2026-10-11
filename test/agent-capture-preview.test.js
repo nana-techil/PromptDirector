@@ -121,3 +121,63 @@ test('an auxiliary history cleanup failure must not turn a confirmed save into f
   assert.equal(f.commits.length, 2);
   await assert.rejects(api.execute('save_capture', { captureId: 'saved-two', expectedRevision: 3 }, 'retry', f.scope), { code: 'capture_not_editable' });
 });
+
+test('an adapter failure keeps an editable evidence-backed preview instead of preventing Agent supplementation', async () => {
+  const f = fixture(); f.options.collect = async () => { throw Object.assign(new Error('Selected post not mounted'), { code: 'X_POST_NOT_MOUNTED' }); };
+  const api = createAgentCapturePreview(f.options);
+  const prepared = await api.execute('prepare_capture', { tabId: 1 }, 'failed-scan', f.scope);
+  assert.deepEqual(prepared.candidates, []); assert.equal(prepared.scanError.code, 'X_POST_NOT_MOUNTED');
+  const page = JSON.parse((await api.read({ captureId: 'failed-scan', part: 'page' })).content);
+  assert.equal(page.text, 'complete observed page'); assert.equal(f.commits.length, 0);
+  const repaired = await api.execute('update_capture', { captureId: 'failed-scan', expectedRevision: 1,
+    candidates: [{ id: 'recovered', title: 'Recovered', canonicalUrl: 'https://example.test/work', contentText: page.text, media: [] }],
+    selections: [{ candidateId: 'recovered', includeText: true, selectedMediaIds: [] }] }, 'repair', f.scope);
+  assert.equal(repaired.selections.length, 1); assert.equal(repaired.revision, 2);
+});
+
+test('a failed adapter must not turn a website access challenge into saveable page evidence', async () => {
+  const f = fixture(); f.options.collect = async () => { throw new Error('adapter failed'); };
+  f.options.chromeApi.scripting.executeScript = async () => [{ result: { ok: false, message: 'Complete website access check' } }];
+  const api = createAgentCapturePreview(f.options);
+  await assert.rejects(api.execute('prepare_capture', { tabId: 1 }, 'blocked', f.scope), { code: 'capture_page_unavailable' });
+  assert.deepEqual(f.data, {}); assert.equal(f.commits.length, 0);
+});
+
+test('a screenshot is read only from the verified visible source and discarded after even a switch back', async () => {
+  const f = fixture(), listeners = {};
+  for (const name of ['onActivated', 'onUpdated']) f.options.chromeApi.tabs[name] = { addListener: fn => { listeners[name] = fn; }, removeListener: fn => { assert.equal(listeners[name], fn); delete listeners[name]; } };
+  f.options.chromeApi.tabs.get = async id => ({ id, active: true, status: 'complete', windowId: 2, url: 'https://example.test/work' });
+  f.options.chromeApi.tabs.captureVisibleTab = async () => 'data:image/png;base64,eA==';
+  const api = createAgentCapturePreview(f.options); await api.execute('prepare_capture', { tabId: 1 }, 'visible', f.scope);
+  const shot = await api.read({ captureId: 'visible', part: 'screenshot' });
+  assert.equal(shot.dataUrl, 'data:image/png;base64,eA=='); assert.deepEqual(listeners, {});
+  f.options.chromeApi.tabs.captureVisibleTab = async () => { listeners.onActivated({ windowId: 2, tabId: 7 }); return 'data:image/png;base64,eA=='; };
+  await assert.rejects(api.read({ captureId: 'visible', part: 'screenshot' }), { code: 'page_changed' });
+  assert.deepEqual(listeners, {}); assert.equal(f.commits.length, 0);
+});
+
+test('retry reads fresh observed page facts, keeps chosen originals, and pins later work to the changed revision', async () => {
+  const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'fresh', f.scope);
+  await f.api.execute('update_capture', { captureId: 'fresh', expectedRevision: 1, selections: selected }, 'choose', f.scope);
+  f.options.chromeApi.scripting.executeScript = async () => [{ result: { ok: true, url: 'https://example.test/work', text: 'Video link appeared after loading', media: [{ kind: 'video', url: 'https://example.test/new.mp4' }], links: [] } }];
+  const page = await f.api.read({ captureId: 'fresh', expectedRevision: 2, part: 'page', refresh: true });
+  assert.equal(page.revision, 3); assert.match(page.content, /new.mp4/);
+  const summary = await f.api.read({ captureId: 'fresh' }); assert.deepEqual(summary.selections, selected.map(item => ({ ...item, mediaDecision: 'confirmed' })));
+  const preview = await f.api.view({ captureId: 'fresh' });
+  const originals = applyPageCaptureSelections(preview.batch);
+  assert.equal(originals[0].contentText, 'Full original body');
+  assert.equal(originals[0].media[0].originalPrompt, 'Exact original prompt');
+  await assert.rejects(f.api.execute('update_capture', { captureId: 'fresh', expectedRevision: 2, selections: [] }, 'stale', f.scope), { code: 'capture_changed' });
+  assert.equal((await f.api.read({ captureId: 'fresh', part: 'page', refresh: true })).revision, 3, 'unchanged observed evidence reuses the existing revision');
+});
+
+test('reading a selected image returns actual original bytes, while missing originals never fall back to another picture', async () => {
+  const f = fixture(); f.options.readImage = async () => new Blob(['original pixels'], { type: 'image/png' });
+  const api = createAgentCapturePreview(f.options); await api.execute('prepare_capture', { tabId: 1 }, 'image', f.scope);
+  const image = await api.read({ captureId: 'image', part: 'image', candidateId: 'original', mediaId: 'photo' });
+  assert.equal(Buffer.from(image.dataUrl.split(',')[1], 'base64').toString(), 'original pixels');
+  await assert.rejects(api.read({ captureId: 'image', part: 'image', candidateId: 'original', mediaId: 'absent' }), { code: 'capture_candidate_not_found' });
+  f.options.readImage = async () => null;
+  const missing = createAgentCapturePreview(f.options);
+  await assert.rejects(missing.read({ captureId: 'image', part: 'image', candidateId: 'original', mediaId: 'photo' }), { code: 'capture_page_unavailable' });
+});

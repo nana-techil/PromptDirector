@@ -1,4 +1,4 @@
-import { agentError, requireAgentId, requireInteger, requireWebUrl, AGENT_CHUNK_BYTES } from './agent-protocol.js';
+import { agentError, requireAgentId, requireInteger, requireWebUrl, AGENT_CHUNK_BYTES, bytesToBase64 } from './agent-protocol.js';
 import { waitForAgentTab } from './agent-capture.js';
 import { normalizePageCaptureBatch, normalizePageCaptureCandidate } from './page-capture.js';
 import { PAGE_CAPTURE_LIMITS } from './resource-limits.js';
@@ -6,7 +6,7 @@ import { resolveAgentProject } from './agent-save.js';
 import { operationBudget } from './resource-policy.js';
 
 const prefix = 'agentCapture:';
-export function createAgentCapturePreview({ storage, chromeApi, collect, commit, loadState, getLibraryId, budget }) {
+export function createAgentCapturePreview({ storage, chromeApi, collect, commit, loadState, getLibraryId, budget, readImage }) {
   const key = id => prefix + requireAgentId(id);
   async function own(id) {
     const record = (await storage.get(key(id)))[key(id)];
@@ -46,6 +46,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         canonicalUrl: item.canonicalUrl, completeness: item.completeness,
         textCharacters: item.contentText.length, media: item.media.map(({ id, kind, url }) => ({ id, kind, url })) })),
       selections: record.batch.selections, saveMode: record.batch.saveMode, combinedTitle: record.batch.combinedTitle,
+      ...(record.scanError ? { scanError: record.scanError } : {}),
       ...(record.lastSaveRequestId ? { lastSaveRequestId: record.lastSaveRequestId } : {}),
       ...(record.results ? { results: record.results } : {}), untrustedContent: true };
   }
@@ -58,7 +59,27 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       const record = await own(input.captureId);
       version(record, input);
       const part = input.part ?? 'summary';
+      if (input.refresh) {
+        if (part !== 'page' || input.offset) throw agentError('invalid_input', '重新读取网页须从正文首屏开始');
+        await permission(record.batch.sourceUrl);
+        if ((await chromeApi.tabs.get(record.batch.tabId)).url !== record.batch.sourceUrl) throw agentError('page_changed', '采集网页已改变，请重新开始当前网页的采集');
+        const [evidence] = await chromeApi.scripting.executeScript({ target: { tabId: record.batch.tabId }, func: readCapturePageEvidence, args: [record.page.selector || ''] });
+        if (!evidence?.result?.ok) throw agentError('capture_page_unavailable', evidence?.result?.message || '无法读取采集网页');
+        if (evidence.result.url !== record.batch.sourceUrl || (await chromeApi.tabs.get(record.batch.tabId)).url !== record.batch.sourceUrl) throw agentError('page_changed', '读取时网页地址已改变，未生成采集预览');
+        if (JSON.stringify(evidence.result) !== JSON.stringify(record.page)) { record.page = evidence.result; record.revision++; await persist(record); }
+      }
       if (part === 'summary') return summary(record);
+      if (part === 'screenshot') return screenshot(record);
+      if (part === 'image') {
+        const candidate = record.batch.candidates.find(item => item.id === input.candidateId);
+        const media = candidate?.media.find(item => item.id === input.mediaId);
+        if (!media || media.kind !== 'image') throw agentError('capture_candidate_not_found', '请选择这份预览中的图片');
+        if (!media.localAssetId) await permission(media.url);
+        const blob = await readImage?.(media);
+        if (!blob?.type?.startsWith('image/')) throw agentError('capture_page_unavailable', '图片原件未取得，不能用封面代替');
+        return { captureId: record.id, revision: record.revision, part, candidateId: candidate.id, mediaId: media.id,
+          sourceUrl: candidate.canonicalUrl, dataUrl: `data:${blob.type};base64,${bytesToBase64(new Uint8Array(await blob.arrayBuffer()))}`, untrustedContent: true };
+      }
       if (!['page', 'candidate'].includes(part)) throw agentError('invalid_input', '采集读取部分无效');
       const offset = input.offset ?? 0, length = input.length ?? 12000;
       requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
@@ -70,7 +91,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         offset, totalCharacters: text.length, nextOffset: offset + length < text.length ? offset + length : null,
         untrustedContent: true };
     },
-    async execute(operation, input, requestId, scope) {
+    async execute(operation, input, requestId, scope, progress) {
       if (operation === 'prepare_capture') {
         if (Boolean(input.url) === (input.tabId !== undefined)) throw agentError('invalid_input', '请选择url或tabId其中一个');
         const mode = input.mode ?? 'loaded';
@@ -86,7 +107,11 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (input.initialBatch && (input.initialBatch.tabId !== tab.id || input.initialBatch.sourceUrl !== url)) {
           throw agentError('page_changed', '当前采集预览属于其他网页，请先完成当前采集');
         }
-        const snapshot = input.initialBatch || await collect(tab, { sessionId: requestId, mode, maxCandidates });
+        let snapshot = input.initialBatch, scanError = null;
+        if (!snapshot) {
+          try { snapshot = await collect(tab, { sessionId: requestId, mode, maxCandidates }); }
+          catch (error) { scanError = { code: error.code || 'capture_failed', message: error.message }; }
+        }
         const [evidence] = await chromeApi.scripting.executeScript({ target: { tabId: tab.id },
           func: readCapturePageEvidence, args: [input.selector || ''] });
         if (!evidence?.result?.ok) throw agentError('capture_page_unavailable', evidence?.result?.message || '无法读取采集网页');
@@ -95,8 +120,10 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         }
         await scope.assertCurrent();
         const batch = normalizePageCaptureBatch({ ...snapshot, id: requestId, tabId: tab.id, sourceUrl: url,
+          ...(scanError ? { error: scanError.message } : {}),
           selections: input.initialBatch?.selections || [] });
-        const record = { id: requestId, libraryId: scope.libraryId, revision: 1, state: 'preview', batch, page: evidence.result };
+        const record = { id: requestId, libraryId: scope.libraryId, revision: 1, state: 'preview', batch, page: evidence.result,
+          ...(scanError ? { scanError } : {}) };
         await persist(record);
         return summary(record);
       }
@@ -154,6 +181,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           selections: selections.map(item => ({ ...item, mediaDecision: 'confirmed' })),
           saveMode: input.saveMode ?? record.batch.saveMode, combinedTitle: input.combinedTitle ?? record.batch.combinedTitle,
           captureMode: candidates.length > 1 ? 'list' : 'single' });
+        if (input.candidates?.length) record.batch.error = '';
         if (record.batch.candidates.length !== candidates.length || record.batch.selections.length !== selections.length) {
           throw agentError('invalid_selection', '候选重复或所选内容无效，预览未改变');
         }
@@ -171,8 +199,8 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       record.state = 'saving'; record.lastSaveRequestId = requestId;
       await persist(record);
       try {
-        const result = await commit(record.batch, { collectionId,
-          ...(input.generationPromptChoices ? { generationPromptChoices: input.generationPromptChoices } : {}) });
+        const result = await commit(record.batch, { ...input.captureMetadata, collectionId,
+          ...(input.generationPromptChoices ? { generationPromptChoices: input.generationPromptChoices } : {}) }, progress);
         await scope.assertCurrent();
         record.results = result.results || [];
         record.state = result.ok && record.results.length && record.results.every(item => ['saved', 'duplicate'].includes(item.status)) ? 'completed' : 'preview';
@@ -185,6 +213,29 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       }
     }
   };
+  async function screenshot(record) {
+    await permission(record.batch.sourceUrl);
+    const tab = await chromeApi.tabs.get(record.batch.tabId);
+    if (tab.url !== record.batch.sourceUrl || !tab.active || tab.status === 'loading' || tab.pendingUrl) {
+      throw agentError('page_changed', '请将采集网页保持在当前标签，截图未取得');
+    }
+    let changed = false;
+    const activated = info => { if (info.windowId === tab.windowId && info.tabId !== tab.id) changed = true; };
+    const updated = (id, change) => { if (id === tab.id && (change.url || change.status === 'loading')) changed = true; };
+    chromeApi.tabs.onActivated.addListener(activated);
+    chromeApi.tabs.onUpdated.addListener(updated);
+    try {
+      const dataUrl = await chromeApi.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      const current = await chromeApi.tabs.get(tab.id);
+      if (changed || !current.active || current.url !== tab.url) throw agentError('page_changed', '截图期间网页已切换，截图已丢弃');
+      if (!dataUrl?.startsWith('data:image/png;base64,')) throw agentError('capture_page_unavailable', '网页截图未取得');
+      return { captureId: record.id, revision: record.revision, part: 'screenshot', sourceUrl: tab.url,
+        dataUrl, capturedAt: new Date().toISOString(), untrustedContent: true };
+    } finally {
+      chromeApi.tabs.onActivated.removeListener(activated);
+      chromeApi.tabs.onUpdated.removeListener(updated);
+    }
+  }
   async function permission(url) {
     const origin = new URL(requireWebUrl(url)).origin;
     if (!await chromeApi.permissions.contains({ origins: [`${origin}/*`] })) {

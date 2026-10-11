@@ -51,3 +51,15 @@ test('unsupported backend and lost receipt cannot silently save or resubmit anot
     assert.equal(secondCalls.filter(item => item.operation === 'save_capture').length, 1);
   } finally { await second.close(); }
 });
+
+test('capture screenshot is exposed to external Agents as pixels with source metadata, without copying base64 into text', async () => {
+  const server = createServer(async operation => operation === 'status' ? { capabilities: ['read_capture'] }
+    : { captureId: 'visible', part: 'screenshot', sourceUrl: 'https://example.test/', dataUrl: 'data:image/png;base64,eA==' });
+  try {
+    const tool = server._registeredTools.promptdirector_read_capture;
+    const response = await tool.handler(tool.inputSchema.parse({ captureId: 'visible', part: 'screenshot' }));
+    assert.equal(response.isError, undefined); assert.equal(response.content[1].type, 'image');
+    assert.equal(response.content[1].mimeType, 'image/png'); assert.equal(response.content[1].data, 'eA==');
+    assert.equal(JSON.parse(response.content[0].text).dataUrl, undefined);
+  } finally { await server.close(); }
+});

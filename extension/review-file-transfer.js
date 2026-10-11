@@ -2,13 +2,13 @@ import { createMediaStage } from './staged-media.js';
 import { saveMediaBlob } from './media-store.js';
 
 // Local files use the same original-byte preparation and receipt path as Agents.
-export async function prepareReviewFile(file, chromeApi = chrome) {
+export async function prepareReviewFile(file, chromeApi = chrome, messageType = 'REVIEW_LOCAL_FILE') {
   const id = `review-${crypto.randomUUID()}`;
   const stage = createMediaStage(chromeApi);
   try {
     await stage.register([`agent-file:${id}`]);
     await saveMediaBlob(`agent-file:${id}`, file);
-    const response = await chromeApi.runtime.sendMessage({ type: 'REVIEW_LOCAL_FILE', input: { id, name: file.name || 'frame.webp' } });
+    const response = await chromeApi.runtime.sendMessage({ type: messageType, input: { id, name: file.name || 'frame.webp' } });
     if (!response || response.ok === false) throw new Error(response?.message || '文件准备失败');
     return response;
   } finally {

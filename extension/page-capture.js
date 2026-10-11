@@ -3069,6 +3069,7 @@ function uniqueMedia(values) {
       kind,
       placement: value?.placement === "inline" ? "inline" : "unplaced",
       ...(localAssetId ? { localAssetId } : {}),
+      ...(clean(value?.localTransferId) ? { localTransferId: clean(value.localTransferId) } : {}),
       ...(value?.contentHash ? { contentHash: clean(value.contentHash) } : {}),
       ...(value?.isQuoted === true ? { isQuoted: true } : {}),
       ...(safeUrl(value?.quotedPostUrl) ? { quotedPostUrl: safeUrl(value.quotedPostUrl) } : {}),

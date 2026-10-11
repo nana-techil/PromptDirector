@@ -102,7 +102,10 @@ let regionCaptureState = null;
 let pageCaptureBatch = null;
 const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptureBatch,
   isBusy: () => Boolean(saving || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || smartVisualSession || regionCaptureState || draft?.targetCaseId),
-  applyBatch: batch => { pageCaptureBatch = normalizePageCaptureBatch(batch); render(); } });
+  getCollections: () => collections, getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
+  changeProject: (...args) => updateCaptureMetadata(...args),
+  save: () => savePageCapture(false), cancelSave: () => cancelCaptureSave(),
+  applyBatch: batch => { pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render(); } });
 let pageCaptureAppendBase = null;
 let pageCaptureDraftIds = new Set();
 const draftVisualHashes = new Map();
@@ -307,6 +310,7 @@ elements.contentType.addEventListener("change", () => updateCaptureMetadata({
   contentTypeExplicit: true
 }));
 
+await captureAssistantView.restore();
 void startAutomaticPageCapture();
 
 async function startAutomaticPageCapture() {
@@ -1890,6 +1894,7 @@ async function savePageCapture(textOnly = false) {
   if (saving && !textOnly) return cancelCaptureSave();
   if (saving || !pageCaptureBatch || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureBatch.status === "saving") return;
   const trigger = textOnly ? elements.pageCaptureSaveTextOnly : elements.pageCaptureSave;
+  let result;
   await withButton(trigger, async () => {
     const reviewBatch = pageCaptureBatch;
     saving = true;
@@ -1922,15 +1927,18 @@ async function savePageCapture(textOnly = false) {
         ...metadata
       }, { send: waitForCaptureSave });
       await finishPageCaptureSave(response, reviewBatch, saveBatch, selected, metadata);
+      result = response;
     } catch (error) {
       captureProgressGate.end();
       pageCaptureBatch = normalizePageCaptureBatch({ ...reviewBatch, status: "preview", error: error.message });
       showFeedback(error.message || t("网页内容保存失败"), true);
       render();
+      result = { ok: false, message: error.message || t("网页内容保存失败") };
     } finally {
       captureProgressGate.end(); saving = false; awaitingCaptureSaveReply = false; await refresh(); render();
     }
   });
+  return result;
 }
 
 async function confirmSmartVisualSelection() {

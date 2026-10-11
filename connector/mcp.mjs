@@ -60,6 +60,11 @@ export function createServer(callBridge = callExtension) {
           return { content: [{ type: 'text', text: JSON.stringify(metadata), annotations: { audience: ['assistant'] } },
             { type: 'image', ...image }] };
         }
+        if (name === 'read_capture' && ['screenshot', 'image'].includes(result.part) && /^data:image\/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/=]+$/u.test(result.dataUrl || '')) {
+          const { dataUrl, ...metadata } = result;
+          return { content: [{ type: 'text', text: JSON.stringify(metadata), annotations: { audience: ['assistant'] } },
+            { type: 'image', data: dataUrl.split(',')[1], mimeType: dataUrl.slice(5, dataUrl.indexOf(';')) }] };
+        }
         return { content: [{ type: 'text', text: JSON.stringify(result), annotations: { audience: ['assistant'] } }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code || 'operation_failed', message: error.message }) }] }; }
     });
