@@ -32,7 +32,7 @@ export function captureSessionForPage(store, tab) {
 export function newCaptureConversation(store, current) {
   if (current.messages.length || current.turns?.length) store.history.push({ ...current, pendingBatch: null, captureId: '', pendingRevision: null });
   const session = { id: crypto.randomUUID(), messages: [], requestId: '', captureId: current.captureId || '',
-    projectDraft: current.projectDraft, sourceUrl: current.sourceUrl, pageTitle: current.pageTitle, tabId: current.tabId, draft: '', pendingBatch: current.pendingBatch || null };
+    aiProfile: current.aiProfile, projectDraft: current.projectDraft, sourceUrl: current.sourceUrl, pageTitle: current.pageTitle, tabId: current.tabId, draft: '', pendingBatch: current.pendingBatch || null };
   store.pages[current.sourceUrl] = session;
   return session;
 }

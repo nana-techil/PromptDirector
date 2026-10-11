@@ -2,6 +2,8 @@ import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
 import { createAgentCapturePreview } from './agent-capture-preview.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { runCaptureAssistant } from './capture-assistant.js';
+import { createAgentContextRuntime } from './agent-runtime-context.js';
+import { captureChatAssetIds, readCaptureChatAttachment, resolveCaptureLocalMedia } from './capture-chat-attachments.js';
 import { createCaseDedupeOperations } from './case-dedupe-operations.js';
 import { createCaptureSaveTasks, CAPTURE_SAVE_TASK_KEY, rebaseCaptureEntries } from './capture-save-tasks.js';
 import { jsonBytes, startPhase, timingEnabled } from "./perf-trace.js";
@@ -653,7 +655,7 @@ const agentTransfers = createAgentTransfers({
   storage: libraryStorage, readBlob: getMediaBlob, writeBlob: savePortableAssetBlob, deleteBlob: deleteMediaBlob,
   cleanup: deleteUnreferencedMedia,
   reuse: async record => reusableAgentFile(record, await readCaseLibraryState(), getMediaBlob),
-  protectedIds: async () => [...collectRetainedLocalAssetIds(await readState())],
+  protectedIds: async () => [...collectRetainedLocalAssetIds(await readState()), ...captureChatAssetIds((await libraryStorage.get('captureAssistantDialog')).captureAssistantDialog)],
   prepare: async record => {
     await ensureOffscreenDocument();
     const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "PREPARE_AGENT_FILE", record });
@@ -665,6 +667,7 @@ const skillWriter = createSkillWriter({ storage: libraryStorage, transfers: agen
   readBlob: getMediaBlob, commit: commitLocalChanges, enqueue, cleanup: deleteUnreferencedMedia });
 const agentCapturePreview = createAgentCapturePreview({ storage: libraryStorage, chromeApi: chrome,
   collect: collectPageCaptureTab, commit: commitPageCapture,
+  resolveLocalMedia: media => resolveCaptureLocalMedia(media, agentTransfers),
   readImage: async media => media.localAssetId ? await getMediaBlob(media.localAssetId) || await getScreenshotBlob(media.localAssetId)
     : fetchBoundedMedia(media.url, { kind: 'image', maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes, maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels }),
   loadState: () => libraryStorage.get(STORAGE_KEYS.organizerState),
@@ -679,7 +682,15 @@ const agentTasks = createAgentTasks({ storage: libraryStorage,
       const controller = captureAssistantControllers.get(requestId) || new AbortController(); captureAssistantControllers.set(requestId, controller);
       try {
         await scope.assertCurrent();
-        return await runCaptureAssistant(input, { runtime: await getComposerAiRuntime(), signal: controller.signal,
+        const runtimeKey = `captureAssistantRuntime:${scope.libraryId}:${input.sessionId || requestId}`;
+        const contextRuntime = createAgentContextRuntime({ turnId: requestId,
+          load: async () => (await libraryStorage.get(runtimeKey))[runtimeKey],
+          update: async transform => {
+            await scope.assertCurrent();
+            return libraryStorage.update(runtimeKey, stored => ({ [runtimeKey]: transform(stored[runtimeKey] || {}) }));
+          } });
+        return await runCaptureAssistant(input, { runtime: await getComposerAiRuntime(), signal: controller.signal, sessionRuntime: contextRuntime,
+          readAttachment: transferId => readCaptureChatAttachment(transferId, { transfers: agentTransfers, readBlob: getMediaBlob }),
           call: async (name, args) => { await scope.assertCurrent(); return executeAgentOperation(name,
             name === 'save_capture' ? { ...args, captureAssistantRequestId: requestId } : args); },
           onDelta: (_delta, text) => { void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId, text }).catch(() => {}); },
@@ -768,6 +779,7 @@ async function executeAgentOperation(operation, input) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
       extensionVersion: chrome.runtime.getManifest().version, searchGuidance: { systemLanguage: chrome.i18n.getUILanguage(), languages: [...new Set([chrome.i18n.getUILanguage().split(/[-_]/u)[0], 'en'])], expansion: 'calling_agent', querySemantics: 'terms_and_alternatives_or', pluginApiCalls: false }, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
       caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
+      captureReadParts: CAPTURE_OPERATION_SPECS.find(spec => spec.name === 'read_capture').parameters.properties.part.enum,
       workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [...CAPTURE_OPERATION_SPECS.map(spec => spec.name), WORKSPACE_SCREENSHOT_SPEC.name, ...AGENT_CASE_ACTION_SPECS.map(spec => spec.name), ...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
     case "manage_analysis_batch":
     case "list_analysis_batches":
@@ -4213,6 +4225,7 @@ function upsertSessionList(values, sessionValue) {
   const sessions = normalizeComposerSessions(values);
   preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
   session.toolContinuations = sessions.find(item => item.id === session.id)?.toolContinuations || {};
+  session.toolContext = sessions.find(item => item.id === session.id)?.toolContext || session.toolContext;
   session.toolSkillVersionIds = sessions.find(item => item.id === session.id)?.toolSkillVersionIds || [];
   return normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
 }
@@ -5188,6 +5201,7 @@ async function deleteUnreferencedMedia(assetIdsValue) {
   if (!candidates.size) return;
   const state = await readState();
   const referenced = referencedMediaAssetIds(state);
+  for (const id of captureChatAssetIds((await libraryStorage.get('captureAssistantDialog')).captureAssistantDialog)) referenced.add(id);
   await deleteMediaBlobs([...candidates].filter((assetId) => !referenced.has(assetId)));
 }
 
@@ -5230,6 +5244,7 @@ async function upsertComposerSession(value) {
   const session = createComposerSession(value);
   preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
   session.toolContinuations = sessions.find(item => item.id === session.id)?.toolContinuations || {};
+  session.toolContext = sessions.find(item => item.id === session.id)?.toolContext || session.toolContext;
   session.toolSkillVersionIds = sessions.find(item => item.id === session.id)?.toolSkillVersionIds || [];
   if (!isMeaningfulComposerSession(session)) return { ok: false, message: "空白新对话不会保存到历史" };
   const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);

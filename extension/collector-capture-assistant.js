@@ -4,7 +4,7 @@ import { renderMarkdownDocument } from './markdown-renderer.js';
 import { createCaptureProjectMenu } from './capture-organization.js';
 import { setTaskFeedbackState } from './task-feedback.js';
 import { getLibraryStorage } from './library-storage.js';
-import { applyPageCaptureSelections, normalizePageCaptureBatch } from './page-capture.js';
+import { applyPageCaptureSelections } from './page-capture.js';
 import { captureSaveProgressPresentation } from './capture-save-progress.js';
 import { prepareReviewFile } from './review-file-transfer.js';
 import { restoreCaptureSessions, captureSessionForPage, newCaptureConversation } from './capture-assistant-sessions.js';
@@ -12,6 +12,10 @@ import { buildCaptureDiagnostic, captureDiagnosticValue } from './capture-assist
 import { diagnosticFilename } from './composer-diagnostics.js';
 import { confirmAppAction } from './ui-dialogs.js';
 import { LOCAL_ASSET_FILE_ACCEPT } from './local-media.js';
+import { availableAiModelChoicesForTask } from './ai-provider-registry.js';
+import { composerProfileForTaskAssignment } from './composer.js';
+import { composerLibraryToolService } from './composer-service.js';
+import { getMediaBlob } from './media-store.js';
 const storage = getLibraryStorage();
 const stateKey = 'captureAssistantDialog';
 
@@ -27,13 +31,14 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   const field = document.createElement('textarea'); field.id = 'capture-assistant-input'; field.rows = 2;
   field.placeholder = t('问怎么采集，或告诉我想保存什么…'); field.setAttribute('aria-label', field.placeholder);
   const controls = node('div', 'capture-assistant-controls');
-  const attach = button('补充本机文件', 'quiet capture-assistant-attach'); attach.replaceChildren(createUiIcon('paperclip'));
+  const attach = button('添加附件', 'quiet capture-assistant-attach'); attach.replaceChildren(createUiIcon('paperclip'));
   const file = document.createElement('input'); file.type = 'file'; file.multiple = true; file.hidden = true; file.accept = LOCAL_ASSET_FILE_ACCEPT;
-  const model = button('使用已配置的模型，可能产生 API 费用。', 'quiet capture-assistant-model');
+  const model = node('select', 'capture-assistant-model'); model.id = 'capture-assistant-model'; model.setAttribute('aria-label', t('选择模型')); model.title = t('使用已配置的模型，可能产生 API 费用。');
+  const attachmentRow = node('div', 'capture-assistant-attachments'); attachmentRow.hidden = true;
   const send = button('发送', 'capture-assistant-send'); send.id = 'capture-assistant-send'; send.type = 'submit'; send.replaceChildren(createUiIcon('arrow-up'));
   const stop = button('停止', 'button-secondary compact'); stop.id = 'capture-assistant-stop'; stop.hidden = true;
   const status = node('p', 'capture-assistant-status ui-task-feedback'); status.id = 'capture-assistant-status'; status.setAttribute('role', 'status');
-  controls.append(attach, model, stop, send); composer.append(field, controls, status, file); panel.append(contextRow, conversation, composer);
+  controls.append(attach, model, stop, send); composer.append(attachmentRow, field, controls, status, file); panel.append(contextRow, conversation, composer);
   document.querySelector('.collector-header').after(panel);
   const toggle = document.getElementById('open-capture-assistant'); toggle.setAttribute('aria-controls', panel.id);
   const fresh = button('新对话', 'quiet compact capture-assistant-new'); fresh.id = 'capture-assistant-new'; fresh.hidden = true; toggle.before(fresh);
@@ -44,7 +49,35 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   let state = { messages: [], requestId: '', captureId: '' }, checking = false, opened = false, loaded = false;
   let baseBatch = null, previewBatch = null, renderedMessages = null, renderedBatch = undefined, resultPreview = null, stream = null, localSaving = false, preparingFiles = false;
   let persistTail = Promise.resolve(), syncTail = Promise.resolve(), switching = false, deferredPage = false;
-  let sessions = restoreCaptureSessions();
+  let sessions = restoreCaptureSessions(), modelChoices = [], renderedAttachments = '';
+  const modelLabels = new Map();
+  const attachmentUrls = new Map();
+  function renderModels() {
+    model.replaceChildren(...modelChoices.map(profile => {
+      const option = document.createElement('option'); option.value = JSON.stringify(profile); option.textContent = modelLabels.get(JSON.stringify([profile.serviceId, profile.model])) || profile.model; return option;
+    }));
+    const selected = state.aiProfile;
+    const current = modelChoices.find(profile => profile.serviceId === selected?.serviceId && profile.model === selected?.model);
+    if (current) model.value = JSON.stringify(current);
+    else { const placeholder = document.createElement('option'); placeholder.textContent = t('选择模型'); placeholder.value = ''; placeholder.disabled = true; placeholder.selected = true; model.prepend(placeholder); }
+    model.disabled = busy() || !modelChoices.length;
+  }
+  function attachmentView(item, removable = false) {
+    const chip = node('span', 'capture-assistant-attachment'); chip.dataset.transferId = item.transferId;
+    if (item.kind === 'image') {
+      const image = document.createElement('img'); image.alt = ''; chip.append(image);
+      void getMediaBlob(item.assetId).then(blob => {
+        if (!blob || !image.isConnected) return;
+        if (!attachmentUrls.has(item.assetId)) attachmentUrls.set(item.assetId, URL.createObjectURL(blob));
+        image.src = attachmentUrls.get(item.assetId);
+      });
+    }
+    const label = node('span'); label.textContent = item.name; chip.append(label);
+    if (removable) { const remove = button('移除', 'quiet compact'); remove.replaceChildren(createUiIcon('x')); remove.disabled = busy();
+      remove.addEventListener('click', () => { state.attachments = state.attachments.filter(file => file.transferId !== item.transferId); void persist(); render(); }); chip.append(remove); }
+    return chip;
+  }
+  window.addEventListener('pagehide', () => { attachmentUrls.forEach(url => URL.revokeObjectURL(url)); attachmentUrls.clear(); });
   function persist() {
     if (state.sourceUrl) {
       if (!switching) { const draft = getDraft() || {}; state.projectDraft = { collectionId: draft.collectionId || '', newCollectionName: draft.newCollectionName || '' }; }
@@ -109,6 +142,12 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     send.disabled = busy(); stop.hidden = preparingFiles || !(state.requestId || localSaving);
     stop.disabled = Boolean(state.committing);
     projects.render(busy() || isBusy());
+    renderModels();
+    const attachmentKey = JSON.stringify([state.id, state.attachments || [], busy()]);
+    if (attachmentKey !== renderedAttachments) {
+      attachmentRow.replaceChildren(...(state.attachments || []).map(item => attachmentView(item, true)));
+      attachmentRow.hidden = !state.attachments?.length; renderedAttachments = attachmentKey;
+    }
     if (renderedMessages !== state.messages) {
       const nearEnd = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 40;
       conversation.replaceChildren(...(state.messages.length ? state.messages.map(messageView) : [welcome()]));
@@ -131,6 +170,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     }
     if (message.role === 'user') {
       const bubble = node('div', 'capture-assistant-bubble'); bubble.textContent = message.content; line.append(bubble);
+      if (message.attachments?.length) { const row = node('div', 'capture-assistant-attachments'); row.append(...message.attachments.map(item => attachmentView(item))); line.append(row); }
     } else {
       const speaker = node('div', 'capture-assistant-speaker'); speaker.append(createUiIcon('sparkles'), document.createTextNode(t('采集助手')));
       line.append(speaker, renderMarkdownDocument(message.content || ''));
@@ -216,8 +256,15 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       context.textContent = t('当前网页 · {title}', { title: tab?.title || getBatch()?.candidates[0]?.title || t('请先打开要采集的网页') }); context.title = tab?.url || '';
       const runtime = await chrome.runtime.sendMessage({ type: 'GET_COMPOSER_AI_RUNTIME' });
       if (!runtime?.ok) throw new Error(runtime?.message || '无法读取模型设置');
-      const assignment = runtime.aiTaskAssignments?.creativePlanning;
-      model.textContent = assignment?.model || t('选择模型');
+      const profiles = runtime.visionSettings?.providerProfiles || {};
+      modelLabels.clear();
+      modelChoices = availableAiModelChoicesForTask('creativePlanning', { providers: profiles }).flatMap(choice => {
+        const profile = composerProfileForTaskAssignment({ providerId: choice.providerId, model: choice.modelId });
+        modelLabels.set(JSON.stringify([profile.serviceId, profile.model]), `${choice.providerLabel} · ${profile.model}`);
+        return profile.serviceId !== 'unassigned' && composerLibraryToolService({ aiProfile: profile }, runtime.aiSettings, runtime.visionSettings).nativeTools ? [profile] : [];
+      });
+      state.aiProfile ||= composerProfileForTaskAssignment(runtime.aiTaskAssignments?.creativePlanning);
+      renderModels();
       if (state.lastError) feedback(state.lastError, true);
       if (state.requestId) { feedback(t('正在回复…'), false, true); void check(); }
       else if (state.pendingRevision) { await applyPendingPreview(); await persist(); }
@@ -228,7 +275,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     } catch (error) { feedback(error.message, true); }
   }
   async function submit(instruction) {
-    if (!instruction) return;
+    if (!instruction && !state.attachments?.length) return;
     let owner;
     try {
       await syncPage();
@@ -242,12 +289,13 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       baseBatch = currentBatch;
       if (state.tabId !== tab.id || state.sourceUrl !== tab.url) state.captureId = '';
       const requestId = crypto.randomUUID(), metadata = getDraft() || {};
-      const input = { instruction, messages: state.messages.map(message => message.role === 'result'
+      const attachments = [...(state.attachments || [])];
+      const input = { instruction: instruction || t('请查看附件'), attachments, sessionId: state.id, aiProfile: state.aiProfile, messages: state.messages.map(message => message.role === 'result'
         ? { role: 'assistant', content: JSON.stringify({ saveReceipt: message.result }) } : message), tabId: tab.id,
         sourceUrl: tab.url, pageTitle: tab.title, locale: currentLocale(), project: metadata.collectionId || '', newCollectionName: metadata.newCollectionName || '', captureMetadata: getMetadata(),
         blockedByOtherPage, collectorBusy: isBusy(),
         ...(state.captureId ? { captureId: state.captureId } : reusableBatch ? { initialBatch: baseBatch } : {}) };
-      state = { ...state, requestId, committing: false, tabId: tab.id, sourceUrl: tab.url, pendingRevision: null, draft: '', lastError: '', messages: [...state.messages, { role: 'user', content: instruction }] };
+      state = { ...state, requestId, committing: false, tabId: tab.id, sourceUrl: tab.url, pendingRevision: null, draft: '', attachments: [], lastError: '', messages: [...state.messages, { role: 'user', content: input.instruction, attachments }] };
       owner = state;
       state.events = [...(state.events || []), { type: 'turn_started', requestId, tabId: tab.id, sourceUrl: tab.url, previewSourceUrl: currentBatch?.sourceUrl, at: new Date().toISOString() }];
       field.value = ''; await persist();
@@ -276,6 +324,8 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
         state.pendingRevision = task.result?.revision || null;
         if (task.result?.saveResult?.results?.length) state.messages = [...state.messages, { role: 'result', result: task.result.saveResult }];
         if (task.state !== 'completed' || task.result?.ok === false) {
+          stream?.remove(); stream = null;
+          if (!state.attachments?.length) state.attachments = state.messages.findLast(message => message.role === 'user')?.attachments || [];
           if (state.pendingRevision) await applyPendingPreview();
           throw new Error(task.error?.message || task.result?.message || t('采集未完成，已有内容保留'));
         }
@@ -344,33 +394,31 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   window.addEventListener('focus', pageChanged);
   toggle.addEventListener('click', () => { void open(!opened); });
   attach.addEventListener('click', () => file.click());
-  file.addEventListener('change', async () => {
-    if (!file.files.length || busy() || isBusy()) return;
-    const files = [...file.files]; file.value = '';
-    const before = getBatch(); let expected = before; localSaving = true; preparingFiles = true; render(); feedback(t('正在读取本机文件…'), false, true);
+  async function addFiles(files) {
+    if (!files.length || busy() || isBusy()) return;
+    await syncPage(); const owner = state;
+    localSaving = true; preparingFiles = true; render(); feedback(t('正在读取本机文件…'), false, true);
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!/^https?:/iu.test(tab?.url || '') || before && (before.tabId !== tab.id || before.sourceUrl !== tab.url)) throw new Error(t('请先打开要采集的网页'));
-      let batch = before || { id: crypto.randomUUID(), tabId: tab.id, sourceUrl: tab.url, selections: [], candidates: [{ id: crypto.randomUUID(), title: tab.title || files[0].name, canonicalUrl: tab.url, contentText: '', media: [] }] };
-      const candidateId = batch.selections[0]?.candidateId || batch.candidates[0]?.id;
-      if (!candidateId) throw new Error(t('请选择要保存的内容'));
       for (const item of files) {
         const prepared = await prepareReviewFile(item, chrome, 'CAPTURE_LOCAL_FILE');
-        const asset = prepared.asset;
-        if (getBatch() !== expected || (await chrome.tabs.get(tab.id)).url !== tab.url) throw new Error(t('当前预览已变化，附件已保留'));
-        batch = normalizePageCaptureBatch({ ...batch,
-          candidates: batch.candidates.map(candidate => candidate.id !== candidateId ? candidate : { ...candidate, media: [...candidate.media,
-            { id: asset.id, localAssetId: asset.id, localTransferId: prepared.transferId, kind: asset.kind, url: '', placement: 'inline',
-              filename: item.name, mimeType: asset.mimeType, contentHash: asset.contentHash, width: asset.width, height: asset.height }] }),
-          selections: [...batch.selections.filter(selection => selection.candidateId !== candidateId),
-            { ...(batch.selections.find(selection => selection.candidateId === candidateId) || { candidateId, includeText: Boolean(batch.candidates.find(candidate => candidate.id === candidateId)?.contentText) }),
-              selectedMediaIds: [...(batch.selections.find(selection => selection.candidateId === candidateId)?.selectedMediaIds || []), asset.id], mediaDecision: 'confirmed' }] });
-        state.captureId = ''; state.pendingRevision = null; state.pendingBatch = batch;
-        applyBatch(batch); expected = getBatch(); previewBatch = expected; baseBatch = expected; await persist();
+        owner.attachments = [...(owner.attachments || []), { transferId: prepared.transferId, assetId: prepared.asset.id,
+          name: item.name, kind: prepared.asset.kind, mimeType: prepared.asset.mimeType }];
+        await persist();
       }
+      owner.lastError = '';
       feedback('');
-    } catch (error) { state.lastError = error.message; feedback(error.message, true); }
-    finally { localSaving = false; preparingFiles = false; await persist(); render(); pageChanged(); conversation.scrollTop = conversation.scrollHeight; }
+    } catch (error) { owner.lastError = error.message; feedback(error.message, true); }
+    finally { localSaving = false; preparingFiles = false; await persist(); render(); pageChanged(); }
+  }
+  file.addEventListener('change', () => { const files = [...file.files]; file.value = ''; void addFiles(files); });
+  field.addEventListener('paste', event => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (files.length) { event.preventDefault(); void addFiles(files); }
+  });
+  composer.addEventListener('dragover', event => { if (event.dataTransfer?.types.includes('Files')) event.preventDefault(); });
+  composer.addEventListener('drop', event => {
+    const files = [...(event.dataTransfer?.files || [])];
+    if (files.length) { event.preventDefault(); void addFiles(files); }
   });
   fresh.addEventListener('click', async () => {
     await syncPage();
@@ -380,9 +428,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   composer.addEventListener('submit', event => { event.preventDefault(); void submit(field.value.trim()); });
   field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!busy()) void submit(field.value.trim()); } });
   field.addEventListener('input', () => { state.draft = field.value; void persist(); });
-  model.addEventListener('click', () => {
-    state.messages = [...state.messages, { role: 'assistant', content: t('使用已配置的模型，可能产生 API 费用。') }]; render(); void persist();
-  });
+  model.addEventListener('change', () => { state.aiProfile = JSON.parse(model.value); void persist(); });
   stop.addEventListener('click', async () => {
     if (localSaving) { await cancelSave(); return; }
     const response = await chrome.runtime.sendMessage({ type: 'CANCEL_CAPTURE_ASSIST', requestId: state.requestId });

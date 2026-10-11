@@ -1,6 +1,9 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "添加附件": "Add attachments",
+  "请查看附件": "Please review the attachments",
+  "当前模型不能接收图片，请选择支持图像的已配置模型，附件已保留": "This model cannot receive images. Choose a configured vision model. Your attachments are preserved.",
   "查看原因": "View reason",
   "普通采集仍在进行，可以先询问用法，完成后继续": "Regular capture is still running. You can ask how to use the collector and continue when it finishes.",
   "继续补采": "Continue capture",

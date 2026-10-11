@@ -263,3 +263,9 @@ npm run check
 `read_case_details` 同时需要多个部分时可传 `parts:["overview","source","media"]`，返回一个共同revision和分页JSON对象。与单部分`part`互斥；续页保持parts与expectedRevision，完整拼接后再解析。服务在一次资料读取中构造所需部分，不重复读取整库或计算未请求的分析覆盖。只读一个部分时继续用part。找当前案例新截图优先更新media，按derivedFromAssetId/frameTimeMs/capturedAt定位，再read_media；不扫描本机目录。
 
 检索由调用 Agent 生成跨语言同义表达，至少覆盖 `status.searchGuidance` 的用户系统语言和英语，用 `query`／`alternatives` 一次合并。多个词为交集，同义查询为并集；无需插件调用付费翻译 API，也不要求用户自己翻译。
+
+### 原文定位与批量采集任务
+
+`read_capture(part="page")`包含当前选区、可见代码区和对话框的定位事实。`read_capture(part="source", selector)`冻结指定网页区域的完整原文，返回新的revision；`update_capture`的候选可用`textSources:[{selector,target:"text"或"prompt"}]`直接采用原文，包括原始代码空白。Agent分页读取不意味着原文被截短，未读完不能称全文已读。旧后台的`status.captureReadParts`没有`source`时，不假定新能力可用。
+
+`update_capture.task`可登记`objective/outcome/candidateIds/state`，批量保存须选中全部声明的实际候选；缺少具体案例编号或对应保存回执时预览仍保留。`create_project`直接返回持久项目回执，不需要轮询`get_task`。媒体可提供网页`url`或已准备好原件的`localTransferId`，插件验证文件身份和类型；上传截图仅用于对话时不会自动保存。内部采集助手和外部MCP调用沿同一预览及入库规则执行。

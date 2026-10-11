@@ -1,4 +1,5 @@
 import { markSyncMetaDirty } from './sync-model.js';
+import { createAgentContextRuntime } from './agent-runtime-context.js';
 
 // Continuations belong to user work. Keeping them in the canonical session
 // makes backup/sync retain the same identity; gallery reads exclude sessions.
@@ -15,17 +16,14 @@ export function createComposerToolProgress({ storage, sessionId, userMessageId }
     };
   });
   return {
-    async loadContinuation({ model, protocol }) {
-      const stored = await storage.get('composerSessions');
-      const value = stored.composerSessions?.find(session => session.id === sessionId)?.toolContinuations?.[userMessageId];
-      if (!value) return null;
-      if (value.needsTargetReview) throw new Error('导入的工作进度需要重新核对目标案例，未重放旧工具动作');
-      if (value.protocol !== protocol || value.body?.model !== model) throw new Error('本轮模型或协议已变化，请先核对未完成任务');
-      return value;
-    },
-    saveContinuation: checkpoint => update(values => ({ ...values, [userMessageId]: checkpoint })),
-    retainSkillVersions: versionIds => versionIds.length ? update(values => values, versionIds) : undefined,
-    clearContinuation: () => update(values => { delete values[userMessageId]; return values; })
+    ...createAgentContextRuntime({ turnId: userMessageId,
+      load: async () => (await storage.get('composerSessions')).composerSessions?.find(session => session.id === sessionId),
+      update: transform => storage.update(['composerSessions', 'syncMeta'], stored => {
+        if (!stored.composerSessions?.some(session => session.id === sessionId)) throw new Error('工作对话已不存在，未保存工具事实');
+        return { composerSessions: stored.composerSessions.map(session => session.id === sessionId ? transform(session) : session),
+          syncMeta: markSyncMetaDirty(stored.syncMeta) };
+      }) }),
+    retainSkillVersions: versionIds => versionIds.length ? update(values => values, versionIds) : undefined
   };
 }
 

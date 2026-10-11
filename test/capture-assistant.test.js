@@ -6,6 +6,29 @@ const runtime = { aiTaskAssignments: { creativePlanning: { providerId: 'deepseek
   aiSettings: { apiKey: 'isolated-fixture', consent: true } };
 const input = { tabId: 1, sourceUrl: 'https://example.test/', instruction: 'Collect the original prompt', locale: 'en' };
 const preview = { captureId: 'preview', revision: 1, state: 'preview', tabId: 1, sourceUrl: input.sourceUrl };
+
+test('new project creation uses the shared synchronous durable project receipt instead of incorrectly polling it as an Agent task', async () => {
+  const project = { id: 'actually-created', name: '用户指定的新项目' }; const calls = [];
+  const result = await runCaptureAssistant({ ...input, instruction: '新建项目并保存' }, { runtime, signal: new AbortController().signal,
+    call: async (name, args) => { calls.push(name); assert.equal(args.name, project.name); return { ok: true, requestId: args.requestId, project }; },
+    execute: async (_request, _settings, _images, { toolRuntime }) => {
+      const receipt = await toolRuntime.execute('create_project', { requestId: 'project-request', name: project.name });
+      assert.equal(receipt.data.project.id, project.id); assert.equal(receipt.data.ok, true); return { text: '取得真实项目编号' };
+    } });
+  assert.equal(result.ok, true); assert.deepEqual(calls, ['create_project']);
+});
+
+test('a newer preview-only request is not forced to save by an inherited task goal', async () => {
+  let current = { ...preview, selections: [{ candidateId: 'original' }], task: { outcome: 'save', candidateIds: ['original'], state: 'active' } };
+  const result = await runCaptureAssistant({ ...input, captureId: preview.captureId, instruction: '改一下选择，先不要保存' }, {
+    runtime, signal: new AbortController().signal,
+    call: async name => { assert(['read_capture', 'update_capture'].includes(name)); return name === 'read_capture' ? current : { state: 'completed', result: { ...current, revision: 2 } }; },
+    execute: async (_request, _settings, _images, { toolRuntime }) => {
+      await toolRuntime.execute('update_capture', { captureId: preview.captureId, expectedRevision: 1, selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: [] }] });
+      assert.equal(await toolRuntime.finishTurn({}), undefined); return { text: '仅修改预览' };
+    } });
+  assert.equal(result.ok, true); assert.equal(result.outcome, 'preview'); assert(!result.saveResult);
+});
 function fixture(execute, extras = {}) {
   const calls = [];
   return { calls, run: () => runCaptureAssistant({ ...input, ...extras }, { runtime, signal: new AbortController().signal,

@@ -651,3 +651,10 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .page-capture-details-option { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .page-capture-details-option[hidden] { display: none; }
 .page-capture-details-option input { margin: 0; width: auto; }
+
+.capture-assistant-attachments { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; min-width: 0; }
+.capture-assistant-attachment { display: inline-flex; gap: 6px; align-items: center; max-width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--ui-container-radius); font-size: 11px; }
+.capture-assistant-attachment > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.capture-assistant-attachment img { width: 36px; height: 36px; object-fit: cover; border-radius: 4px; }
+.capture-assistant-attachment button { flex: none; padding: 4px; min-width: 24px; }
+.capture-assistant-model { color-scheme: light dark; cursor: pointer; }

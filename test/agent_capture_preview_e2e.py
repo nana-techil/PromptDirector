@@ -57,7 +57,10 @@ def main():
             with extension_session('pd-agent-capture-', extension_dir=ext, viewport={'width':390,'height':844}, extra_args=['--ignore-certificate-errors']) as run:
                 panel = run.open_page('collector.html')
                 run.seed_storage(panel, {'entries': [], 'capturePermissionOnboarding': {'version':1,'acknowledgedAt':'2026-10-11T00:00:00Z','clipboardIncluded':False},
-                    **ai_configuration_fixture(providers={'deepseek': {'apiKey':'isolated-fixture','consent':True,'models':{'creativePlanning':'deepseek-flash'}}},
+                    **ai_configuration_fixture(providers={'deepseek': {'apiKey':'isolated-fixture','consent':True,'models':{'creativePlanning':'deepseek-flash'}},
+                    'custom-media': {'apiKey':'isolated-vision-fixture','consent':True,'endpoint':'https://api.deepseek.com/chat/completions','protocol':'chat_completions',
+                    'models':{'creativePlanning':'fixture-vision','imageAnalysis':'fixture-vision'},
+                    'discoveredModels':[{'id':'fixture-vision','tasks':['creativePlanning','imageAnalysis'],'inputModalities':['text','image'],'outputModalities':['text'],'supportedParameters':['tools'],'status':'available'}]}},
                                                assignments={'creativePlanning':{'providerId':'deepseek','model':'deepseek-flash'}})})
                 web = run.context.new_page(); web.goto(origin + '/work')
                 worker = run.context.service_workers[0]
@@ -113,13 +116,23 @@ def main():
                     let delta,finish;
                     const tool=(name,args)=>{delta={tool_calls:[{index:0,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]};finish='tool_calls';};
                     const prepared=results.find(m=>m.name==='prepare_capture')?.data||current;
-                    if(/怎么|如何|how|先不要采集/iu.test(instruction)){delta={content:'点击“帮我采集”得到预览，再选择项目保存。也可以直接说“保存到镜头参考”。'};finish='stop';}
+                    if(/怎么|如何|how|先不要采集/iu.test(instruction) && !/保存这些附件/u.test(instruction)){delta={content:'点击“帮我采集”得到预览，再选择项目保存。也可以直接说“保存到镜头参考”。'};finish='stop';}
+                    else if(/保存这些附件/u.test(instruction) && !results.find(m=>m.name==='update_capture')) {
+                      const files=JSON.parse(system.match(/本对话可读附件：(\[[^\n]+\])。/u)[1]);
+                      const media=files.map((file,i)=>({id:'file-'+i,kind:file.kind,localTransferId:file.transferId}));
+                      tool('update_capture',{requestId:'attach-select',captureId:prepared.captureId,expectedRevision:prepared.revision,
+                        candidates:[{id:'chat-files',title:'Explicitly requested local originals',canonicalUrl:page.url,contentText:'',media}],
+                        selections:[{candidateId:'chat-files',includeText:false,selectedMediaIds:media.map(item=>item.id)}],saveMode:'multiple',
+                        task:{objective:'Select the requested attachments, do not save yet',candidateIds:['chat-files'],outcome:'preview',state:'active'}});
+                    } else if(/保存这些附件/u.test(instruction)) { delta={content:'已按明确要求选入原件，请保存。'};finish='stop'; }
                     else if(!prepared)tool('prepare_capture',{requestId:'model-prepare',tabId:page.tabId});
-                    else if(/保存到|save to/iu.test(instruction)){
+                    else if(/保存到|save to|新建镜头参考并保存/iu.test(instruction)){
                       if(!results.find(m=>m.name==='read_projects'))tool('read_projects',{name:'镜头参考'});
                       else if(!results.find(m=>m.name==='save_capture')){
                         const projects=JSON.parse(results.find(m=>m.name==='read_projects').data.content);
-                        tool('save_capture',{requestId:'model-save',captureId:prepared.captureId,expectedRevision:prepared.revision,project:projects[0].id});
+                        const created=results.find(m=>m.name==='create_project')?.data.project;
+                        if(/新建镜头参考并保存/u.test(instruction) && !projects.length && !created) tool('create_project',{requestId:'new-target-project',name:'镜头参考'});
+                        else tool('save_capture',{requestId:'model-save',captureId:prepared.captureId,expectedRevision:prepared.revision,project:created?.id||projects[0].id});
                       }else{delta={content:'已按保存回执完成。'};finish='stop';}
                     }else if(!results.find(m=>m.name==='read_capture'))tool('read_capture',{captureId:prepared.captureId,part:'page'});
                     else if(!results.find(m=>m.name==='update_capture')){
@@ -127,10 +140,11 @@ def main():
                       const media=evidence.media.filter(m=>['image','video'].includes(m.kind)).map((m,i)=>({id:'assistant-media-'+i,kind:m.kind,url:m.url,posterUrl:m.posterUrl}));
                       tool('update_capture',{requestId:'model-select',captureId:prepared.captureId,expectedRevision:prepared.revision,
                         candidates:[{id:'assistant-candidate',title:'Assistant creative reference',canonicalUrl:evidence.url,contentText:evidence.text,media}],
-                        selections:[{candidateId:'assistant-candidate',includeText:true,selectedMediaIds:media.map(m=>m.id)}],saveMode:'multiple'});
+                        selections:[{candidateId:'assistant-candidate',includeText:true,selectedMediaIds:media.map(m=>m.id)}],saveMode:'multiple',
+                        ...(captureAI.premature?{task:{objective:'Save the requested case',candidateIds:['assistant-candidate'],outcome:'save',state:'active'}}:{})});
                     }else{
                       if(captureAI.hold)await new Promise((resolve,reject)=>{captureAI.release=resolve;init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true})});
-                      delta={content:'**已选择原文和原图。** 可以直接保存。'};finish='stop';
+                      delta={content:captureAI.premature?'已保存全部 FORGED_SAVED_REPLY':'**已选择原文和原图。** 可以直接保存。'};finish='stop';
                     }
                     const events=[{model:'fixture-observed-model',choices:[{index:0,delta,finish_reason:null}]},{choices:[{index:0,delta:{},finish_reason:finish}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}}];
                     if(captureAI.requests.length===1) {
@@ -267,6 +281,15 @@ def main():
                 expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
                 expect(panel.locator('.capture-assistant-preview')).to_contain_text('Assistant creative reference')
                 assert worker.evaluate('captureAI.requests.length')==stopped_requests
+                before_false_claim=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.length")
+                worker.evaluate('captureAI.hold=false;captureAI.premature=true')
+                panel.locator('#capture-assistant-input').fill('采集这页，按任务保存')
+                panel.locator('#capture-assistant-send').click()
+                expect(panel.locator('#capture-assistant-status')).to_contain_text('任务尚未完成',timeout=30000)
+                expect(panel.locator('.capture-assistant-conversation')).not_to_contain_text('FORGED_SAVED_REPLY')
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
+                assert panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.length")==before_false_claim
+                worker.evaluate('captureAI.premature=false')
                 # Select real local files through the visible attachment button.
                 import struct, zlib
                 def png_chunk(kind, data): return struct.pack('>I',len(data))+kind+data+struct.pack('>I',zlib.crc32(kind+data))
@@ -274,15 +297,45 @@ def main():
                     +png_chunk(b'IDAT',zlib.compress((b'\x00'+bytes([35,90,120])*24)*24))+png_chunk(b'IEND',b''))
                 local_text=b'Exact local document original. Lighting and camera movement notes.'
                 local_video=(Path(__file__).parent/'fixtures/review-workspace-smoke.mp4').read_bytes()
+                before_attachments=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.length")
+                panel.evaluate("""() => {
+                  const clip=new DataTransfer();clip.items.add(new File(['notes'], 'pasted-notes.txt', {type:'text/plain'}));
+                  document.querySelector('#capture-assistant-input').dispatchEvent(new ClipboardEvent('paste',{clipboardData:clip,bubbles:true,cancelable:true}));
+                }""")
+                expect(panel.locator('.capture-assistant-composer .capture-assistant-attachments')).to_contain_text('pasted-notes.txt',timeout=30000)
+                expect(panel.locator('.capture-assistant-attach')).to_be_enabled(timeout=30000)
+                panel.evaluate("""() => {
+                  const drop=new DataTransfer();drop.items.add(new File(['drop original'], 'dropped-notes.txt', {type:'text/plain'}));
+                  document.querySelector('.capture-assistant-composer').dispatchEvent(new DragEvent('drop',{dataTransfer:drop,bubbles:true,cancelable:true}));
+                }""")
+                expect(panel.locator('.capture-assistant-composer .capture-assistant-attachments')).to_contain_text('dropped-notes.txt',timeout=30000)
+                expect(panel.locator('.capture-assistant-attach')).to_be_enabled(timeout=30000)
+                panel.locator('.capture-assistant-composer .capture-assistant-attachment button').first.click()
+                panel.locator('.capture-assistant-composer .capture-assistant-attachment button').first.click()
+                expect(panel.locator('.capture-assistant-composer .capture-assistant-attachments')).to_be_hidden()
+                assert panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.length")==before_attachments
                 with panel.expect_file_chooser() as chosen:
                     panel.locator('.capture-assistant-attach').click()
                 chosen.value.set_files([{'name':'local-original.png','mimeType':'image/png','buffer':local_png},
                     {'name':'capture-notes.txt','mimeType':'text/plain','buffer':local_text},
                     {'name':'local-video.mp4','mimeType':'video/mp4','buffer':local_video}])
-                expect(panel.locator('.capture-assistant-preview')).to_contain_text('local-video.mp4',timeout=30000)
+                expect(panel.locator('.capture-assistant-composer .capture-assistant-attachments')).to_contain_text('local-video.mp4',timeout=30000)
+                assert 'local-video.mp4' not in panel.locator('.capture-assistant-preview').inner_text()
+                assert panel.locator('#capture-assistant-model option').count() >= 2
+                expect(panel.locator('#capture-assistant-status')).to_have_text('')
                 panel.screenshot(path=str(out/'capture-chat-local-files-zh-dark-390.png'))
                 panel.reload();panel.locator('#open-capture-assistant').click()
-                expect(panel.locator('.capture-assistant-preview')).to_contain_text('local-original.png',timeout=30000)
+                expect(panel.locator('.capture-assistant-composer .capture-assistant-attachments')).to_contain_text('local-original.png',timeout=30000)
+                selected=next(index for index,text in enumerate(panel.locator('#capture-assistant-model option').all_text_contents()) if text.endswith('fixture-vision'))
+                panel.locator('#capture-assistant-model').select_option(index=selected)
+                panel.screenshot(path=str(out/'capture-chat-model-and-attachments-zh-dark-390.png'))
+                panel.locator('#capture-assistant-input').fill('保存这些附件，先选入预览')
+                panel.locator('#capture-assistant-send').click()
+                expect(panel.locator('.capture-assistant-preview')).to_contain_text('local-video.mp4',timeout=30000)
+                assert worker.evaluate("captureAI.requests.some(request=>request.model==='fixture-vision' && JSON.stringify(request).includes('image_url'))")
+                assert panel.evaluate("async()=>(await (await import('./library-storage.js')).getLibraryStorage().get('aiTaskAssignments')).aiTaskAssignments.creativePlanning.model")== 'deepseek-flash'
+                panel.reload();panel.locator('#open-capture-assistant').click()
+                assert panel.locator('#capture-assistant-model').input_value().find('fixture-vision') >= 0
                 receipt_count=panel.locator('.capture-assistant-result').count()
                 panel.locator('#capture-assistant-save').click()
                 expect(panel.locator('.capture-assistant-result')).to_have_count(receipt_count+1,timeout=30000)
@@ -295,12 +348,11 @@ def main():
                     assert bytes(actual)==data
                 # Natural-language explicit save uses the shared project lookup
                 # and durable MCP receipt, while guidance above used no tool.
-                call('create_project',{'requestId':'capture-project','name':'镜头参考'})
                 worker.evaluate('captureAI.hold=false;captureAI.release=null')
                 panel.locator('#capture-assistant-input').fill('采集正文与原图')
                 panel.locator('#capture-assistant-send').click()
                 expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
-                panel.locator('#capture-assistant-input').fill('保存到镜头参考')
+                panel.locator('#capture-assistant-input').fill('新建镜头参考并保存')
                 panel.locator('#capture-assistant-send').click()
                 expect(panel.locator('#capture-assistant-save')).to_have_count(0,timeout=30000)
                 expect(panel.locator('.capture-assistant-result').last).to_contain_text('已保存',timeout=30000)
@@ -318,7 +370,9 @@ def main():
                 copy_page=opened_copy.value
                 expect(copy_page.locator('#detail-drawer')).to_be_visible(timeout=30000)
                 from urllib.parse import urlparse, parse_qs
-                assert parse_qs(urlparse(copy_page.url).query)['case']==[saved_id]
+                # The library consumes the opening query after showing it.
+                # Verify the actual drawer identity, not an ephemeral URL.
+                expect(copy_page.locator('#detail-drawer')).to_have_attribute('data-entry-id',saved_id,timeout=30000)
                 copy_page.close()
                 panel.screenshot(path=str(out/'capture-chat-project-saved-zh-dark-390.png'))
                 # The site adapter really fails; the Agent reads the actual DOM
@@ -365,8 +419,8 @@ def main():
                         panel.screenshot(path=str(out/f'capture-chat-{locale}-{theme}-{width}.png'))
                 results={'mcpPreviewAndSupplement':True,'exactOriginalBytesReadback':True,'saveRetryDoesNotDuplicate':True,
                     'guidanceWithoutScanTools':True,'markdownAndStreamingWired':True,'inChatSaveAndOpenCase':True,
-                    'closeContinuesAndReopenRestores':True,'explicitStopRetainsPreview':True,'changedPageDoesNotApplyOldPreview':True,
-                    'sameSourceDoesNotDuplicateOrReplaceOriginalPrompt':True,'localFilesSurviveReloadAndExactBytes':True,'naturalLanguageSaveToProject':True,
+                    'closeContinuesAndReopenRestores':True,'explicitStopRetainsPreview':True,'changedPageDoesNotApplyOldPreview':True,'earlyFalseCompletionDoesNotRemainInChatOrWriteCases':True,
+                    'sameSourceDoesNotDuplicateOrReplaceOriginalPrompt':True,'localFilesSurviveReloadAndExactBytes':True,'chatPasteDropRemoveWithoutLibraryWrites':True,'modelSelectionSendsActualImageWithoutChangingGlobalRoute':True,'naturalLanguageSaveToProject':True,'naturalLanguageCreateProjectAndSave':True,
                     'adapterFailureRecoveredFromObservedPage':True,'partialSaveRetainsSuccessfulOriginalsAndPreview':True,'perPageConversationAndPreviewRestore':True,'newChatPreservesPendingSelectionAfterReload':True,'multiPageDiagnosticNativeDownload':True,'crossProjectSaveReceiptOpensTargetCopy':True,
                     'diagnosticExcludesSecretsAndMediaPayloads':True,'paidRequests':0,'pageErrors':run.page_errors}
                 (out/'capture-chat-results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2)+'\n')

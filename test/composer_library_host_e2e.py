@@ -48,6 +48,11 @@ def main():
         method = execute('read_skill', {'skillId': skill['id']})
         assert method['content'] == '保留完整方法正文', method
 
+        call('recordToolResult', {'callId':'actual-read','name':'read_case_details','args':{'caseId':'bridge-case'},'data':document})
+        page.reload()
+        facts = call('loadContext', None)['data']
+        assert len(facts)==1 and original in facts[0]['data']['content'], facts
+
         checkpoint = {'protocol': 'chat_completions', 'body': {'model': 'fixture-model'}, 'nextOffset': 7000}
         call('saveContinuation', checkpoint)
         page.reload()
@@ -59,7 +64,7 @@ def main():
         assert stored['composerSessions'][0]['toolContinuations']['other-request']['marker'] == '保留另一个任务'
         assert not run.page_errors, run.page_errors
         print(json.dumps({'workerCaseRead': True, 'workerSearch': True, 'workerSkillRead': True,
-                          'continuationReload': True, 'otherTaskPreserved': True}, ensure_ascii=False))
+                          'continuationReload': True, 'otherTaskPreserved': True, 'sharedOriginalContextReload':True}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

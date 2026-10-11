@@ -85,6 +85,8 @@ export function createLocalComposerLibraryTools(options) {
     };
     return { ...tools, budget: options.budget,
       execute: (name, args, context = {}) => invoke('execute', { name, args, callId: context.callId }, context.signal),
+      loadContext: () => invoke('loadContext'),
+      recordToolResult: input => invoke('recordToolResult', input),
       loadContinuation: input => invoke('loadContinuation', input),
       saveContinuation: input => invoke('saveContinuation', input),
       retainSkillVersions: input => invoke('retainSkillVersions', input),
@@ -92,6 +94,8 @@ export function createLocalComposerLibraryTools(options) {
   }
   return { ...tools,
     budget: options.budget,
+    loadContext: () => taskProgress().loadContext(),
+    recordToolResult: input => taskProgress().recordToolResult(input),
     loadContinuation: input => taskProgress().loadContinuation(input),
     saveContinuation: checkpoint => taskProgress().saveContinuation(checkpoint),
     retainSkillVersions: ids => taskProgress().retainSkillVersions(ids),
@@ -99,7 +103,7 @@ export function createLocalComposerLibraryTools(options) {
 }
 
 export async function handleComposerLibraryHost(message, storage = getLibraryStorage(), hostOptions = {}) {
-  const operations = ['execute', 'loadContinuation', 'saveContinuation', 'retainSkillVersions', 'clearContinuation'];
+  const operations = ['execute', 'loadContext', 'recordToolResult', 'loadContinuation', 'saveContinuation', 'retainSkillVersions', 'clearContinuation'];
   if (!operations.includes(message.operation)) throw new Error('未知创作台资料工具动作');
   const { composerSessions } = await storage.get('composerSessions');
   const session = composerSessions?.find(item => item.id === message.sessionId);

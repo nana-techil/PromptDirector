@@ -454,6 +454,7 @@ export function createComposerSession(input = {}) {
     referenceSnapshots: snapshots,
     appliedSkills: normalizeAppliedSkillSnapshots(input.appliedSkills),
     messages: normalizeMessages(input.messages),
+    toolContext: Array.isArray(input.toolContext) ? structuredClone(input.toolContext) : [],
     toolContinuations: Object.fromEntries(Object.entries(input.toolContinuations || {}).filter(([id, value]) => id && value?.body && ['chat_completions', 'responses'].includes(value.protocol))
       .map(([id, value]) => [id, structuredClone(value)])),
     toolSkillVersionIds: uniqueStrings(input.toolSkillVersionIds),

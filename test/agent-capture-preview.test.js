@@ -19,6 +19,45 @@ function fixture() {
   return { data, commits, options, scope, api: createAgentCapturePreview(options),
     permission: value => { allowed = value; }, navigate: () => { url = 'https://example.test/elsewhere'; }, changeLibrary: () => { libraryId = 'library-b'; } };
 }
+
+test('source-backed capture stores the full original code even when the model read only a prefix or supplied fabricated code', async () => {
+  const f = fixture(); const original = '  export function source() {\n  return "keep actual code";\n}\n' + '// full original\n'.repeat(1000);
+  f.options.chromeApi.scripting.executeScript = async ({ func }) => [{ result: { ok: true, url: 'https://example.test/work', text: func.name === 'readCaptureSource' ? original : 'page facts', format: 'code', links: [], media: [] } }];
+  await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  const read = await f.api.read({ captureId: 'preview', part: 'source', selector: 'pre', length: 7 });
+  assert.equal(read.content, original.slice(0, 7)); assert.notEqual(read.nextOffset, null);
+  const updated = await f.api.execute('update_capture', { captureId: 'preview', expectedRevision: read.revision,
+    candidates: [{ id: 'code', title: 'Actual source', canonicalUrl: 'https://example.test/work', contentText: 'invented example', originalPrompt: 'fake source', media: [],
+      textSources: [{ selector: 'pre', target: 'prompt' }] }], selections: [{ candidateId: 'code', includeText: true, selectedMediaIds: [] }], saveMode: 'multiple' }, 'supplement', f.scope);
+  let page = await f.api.read({ captureId: 'preview', part: 'candidate', candidateId: 'code' }), content = page.content;
+  while (page.nextOffset !== null) {
+    page = await f.api.read({ captureId: 'preview', part: 'candidate', candidateId: 'code', expectedRevision: page.revision, offset: page.nextOffset }); content += page.content;
+  }
+  const candidate = JSON.parse(content);
+  assert(candidate.contentText.includes(original)); assert(!candidate.contentText.includes('fake source')); assert(!candidate.contentText.includes('invented example'));
+  await f.api.execute('save_capture', { captureId: 'preview', expectedRevision: updated.revision }, 'save-code', f.scope);
+  assert(applyPageCaptureSelections(f.commits[0])[0].contentText.includes(original));
+});
+
+test('a declared batch task cannot save only one of its explicitly requested cases', async () => {
+  const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  const added = await f.api.execute('update_capture', { captureId: 'preview', expectedRevision: 1,
+    candidates: [{ id: 'second', title: 'Second', canonicalUrl: 'https://example.test/work', contentText: 'actual second original', media: [] }],
+    selections: selected, saveMode: 'multiple', task: { objective: 'Save both selected cases', outcome: 'save', candidateIds: ['original', 'second'], state: 'active' } }, 'add', f.scope);
+  await assert.rejects(f.api.execute('save_capture', { captureId: 'preview', expectedRevision: added.revision }, 'save-half', f.scope), { code: 'capture_task_incomplete' });
+  assert.equal(f.commits.length, 0);
+  assert.equal((await f.api.read({ captureId: 'preview' })).task.candidateIds.length, 2);
+});
+
+test('missing case identities or receipts for the wrong candidate never mark the capture complete', async () => {
+  for (const receipt of [{ status: 'saved', candidateId: 'original' }, { status: 'saved', candidateId: 'wrong-case', entryId: 'different' }]) {
+    const f = fixture(); const api = createAgentCapturePreview({ ...f.options, commit: async () => ({ ok: true, results: [receipt] }) });
+    await api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+    await api.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: selected }, 'select', f.scope);
+    assert.equal((await api.execute('save_capture', { captureId: 'preview', expectedRevision: 2 }, 'save', f.scope)).state, 'preview');
+    assert.equal((await api.read({ captureId: 'preview' })).selections.length, 1);
+  }
+});
 const selected = [{ candidateId: 'original', includeText: true, selectedMediaIds: ['photo'] }];
 
 test('preview does not write cases, survives restarting the service, and only saves explicitly selected originals', async () => {
