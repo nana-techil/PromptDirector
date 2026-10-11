@@ -50,6 +50,7 @@ import {
   pageCaptureStructureMatches
 } from "./page-capture.js";
 import { createTagEditor } from "./tag-editor.js";
+import { installCaptureAssistant } from './collector-capture-assistant.js';
 
 await initializeUi();
 
@@ -99,6 +100,9 @@ let smartVisualSession = null;
 let smartVisualCommitCreative = false;
 let regionCaptureState = null;
 let pageCaptureBatch = null;
+const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptureBatch,
+  isBusy: () => Boolean(saving || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || smartVisualSession || regionCaptureState || draft?.targetCaseId),
+  applyBatch: batch => { pageCaptureBatch = normalizePageCaptureBatch(batch); render(); } });
 let pageCaptureAppendBase = null;
 let pageCaptureDraftIds = new Set();
 const draftVisualHashes = new Map();
@@ -645,6 +649,7 @@ async function addClipboardContentToDraft({ text: clipboardText, image } = {}) {
 }
 
 function render() {
+  captureAssistantView.refresh();
   if (!draft) return;
   const view = collectorViewState(draft, targetEntry, { organizing });
   if (!view.hasContent) organizing = false;

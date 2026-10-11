@@ -106,6 +106,8 @@ Agent 根据任务需要与候选质量选择 limit、判断是否继续；证�
 | `read_skill_file` | 按清单读取当前生成文件或原始包文件，支持文字与二进制分块 |
 | `download_skill_file` | 将指定 Skill 文件完整保存到 Agent 本机，核对摘要；不执行脚本 |
 | `capture_url` | 插件打开独立 Chrome 标签并调用现有采集流程 |
+| `prepare_capture` / `read_capture` | 保留可接续预览，分页读取识别结果及网页正文、链接、媒体事实 |
+| `update_capture` / `save_capture` | 补充漏采资料、明确选择后沿插件原保存管线入库；旧版本拒绝覆盖 |
 | `list_analysis_batches` | 按要求关键字或状态找回当前资料库的外部分析批次 |
 | `submit_analysis_results` | 一页结果共用一次保存，逐项保留成功与失败 |
 | `manage_analysis_batch` | 分批登记分析输入，封口、取消、恢复接收及失败项重试；不调用模型 |

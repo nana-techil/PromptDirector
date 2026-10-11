@@ -1,5 +1,6 @@
 import { AGENT_INSTRUCTIONS, TOOL_TITLES } from './agent-guidance.mjs';
 import { WORKSPACE_OPERATION_SPECS } from '../extension/workspace-operation-specs.js';
+import { CAPTURE_OPERATION_SPECS } from '../extension/capture-operation-specs.js';
 import {ANALYSIS_BATCH_SPECS} from '../extension/analysis-batch-specs.js';
 import { AGENT_CASE_ACTION_SPECS } from '../extension/agent-case-action-specs.js';
 import { WORKSPACE_SCREENSHOT_SPEC } from '../extension/workspace-screenshot-specs.js';
@@ -47,7 +48,7 @@ export function createServer(callBridge = callExtension) {
   });
   function tool(name, description, inputSchema, readonly, handler, destructive = false) {
     server.registerTool(`promptdirector_${name}`, { title: TOOL_TITLES[name], description, inputSchema,
-      annotations: { readOnlyHint: readonly, destructiveHint: destructive, idempotentHint: name !== 'show_case', openWorldHint: name === 'capture_url' } },
+      annotations: { readOnlyHint: readonly, destructiveHint: destructive, idempotentHint: name !== 'show_case', openWorldHint: ['capture_url', 'prepare_capture', 'save_capture'].includes(name) } },
     async input => {
       try {
         const result = await handler(input).catch(error => {
@@ -61,6 +62,17 @@ export function createServer(callBridge = callExtension) {
         }
         return { content: [{ type: 'text', text: JSON.stringify(result), annotations: { audience: ['assistant'] } }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code || 'operation_failed', message: error.message }) }] }; }
+    });
+  }
+  for (const spec of CAPTURE_OPERATION_SPECS) {
+    tool(spec.name, spec.description, z.fromJSONSchema(spec.parameters), spec.name === 'read_capture', async input => {
+      const status = await requireStatus(current => current.capabilities?.includes(spec.name));
+      if (!status.capabilities?.includes(spec.name)) throw Object.assign(new Error('插件尚未加载可接续采集工具，请保存未完成内容后重载扩展。'), { code: 'unsupported_capture_operation' });
+      const result = await call(spec.name, input);
+      if (!['queued', 'running'].includes(result.state)) return result;
+      try { return await call('get_task', { requestId: input.requestId, waitMs: TASK_WAIT_MS }); }
+      catch (error) { return { ...result, waitError: { code: error.code || 'operation_failed', message: error.message },
+        next: '完成状态尚未确认，请用原请求编号查询get_task，不要新建重复请求。' }; }
     });
   }
   for (const spec of WORKSPACE_OPERATION_SPECS) {

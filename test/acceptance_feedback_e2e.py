@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from playwright.sync_api import expect
 from e2e_support import EXTENSION_DIR, base_entry, extension_session
@@ -70,6 +71,39 @@ def main():
                     composer = call('open_workspace', {'surface': 'composer'})
                 assert composer['state'] == 'ready' and composer['surface'] == 'composer', composer
                 composer_page.value.close()
+                # The reported symptom happened after a reload and reconnect.
+                # Close every extension view and actually restart its MV3 worker;
+                # no live page or in-memory projection can preserve this result.
+                idle_seconds = float(os.environ.get('PD_SELECTION_IDLE_SECONDS', '0'))
+                if idle_seconds:
+                    print(json.dumps({'selectionIdleSeconds': idle_seconds, 'referenceCount': 2}), flush=True)
+                    time.sleep(idle_seconds)
+                    assert call('read_workspace_context', {'source': 'selection'})['selectionRevision'] == revision
+                for old in [setup, page]:
+                    old.close()
+                assert call('read_workspace_context', {'source': 'selection'})['selectedCaseCount'] == 2
+                run.restart_browser(extension_dir=ext)
+                worker = run.context.service_workers[0]
+                page = run.open_page('library.html')
+                expect(page.locator('.case-card')).to_have_count(2)
+                selected = call('read_workspace_context', {'source': 'selection'})
+                assert selected['selectedCaseCount'] == 2 and selected['selectionRevision'] == revision, selected
+                # Human changes supersede an earlier Agent command, and an
+                # explicit Cancel is the only action here expected to clear.
+                live = call('read_live_workspace')
+                expect(page.locator('.case-card[aria-pressed="true"]')).to_have_count(2)
+                page.locator('.case-card').first.click()
+                expect(page.locator('.case-card[aria-pressed="true"]')).to_have_count(1)
+                stale = worker.evaluate("async input => {try {return await agentTestDispatch('control_workspace',input)} catch(error) {return {code:error.code}}}",
+                    {'requestId': 'feedback-stale-selection', 'tabId': live['tabId'], 'expectedRevision': live['controlRevision'],
+                     'action': 'set_selection', 'caseIds': ['feedback-0', 'feedback-1']})
+                assert stale['code'] == 'workspace_changed', stale
+                assert call('read_workspace_context', {'source': 'selection'})['selectedCaseCount'] == 1
+                page.locator('#share-cancel').click()
+                expect(page.locator('.case-card[aria-pressed="true"]')).to_have_count(0)
+                page.reload()
+                expect(page.locator('.case-card')).to_have_count(2)
+                assert call('read_workspace_context', {'source': 'selection'})['selectedCaseCount'] == 0
                 status = call('status')
                 assert 'open_workspace' in status['capabilities']
                 assert 'en' in status['searchGuidance']['languages'] and status['searchGuidance']['pluginApiCalls'] is False
@@ -83,6 +117,8 @@ def main():
                 expect(page.locator('#settings-dialog')).to_be_visible()
                 page.locator('#settings-close').click()
             if mode in ('all', 'layout', 'toolbar'):
+                if setup.is_closed():
+                    setup = run.open_page('collector.html')
                 if page.locator('#share-cancel').is_visible():
                     page.locator('#share-cancel').click()
                 artifact = Path(os.environ.get('PD_E2E_ARTIFACT_DIR', tempfile.gettempdir()))

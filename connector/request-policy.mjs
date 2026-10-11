@@ -5,7 +5,7 @@ import { WORKSPACE_OPERATION_SPECS } from '../extension/workspace-operation-spec
 export const CONNECTOR_TIMEOUT_MS = 30_000;
 export const TASK_WAIT_MS = WORKSPACE_OPERATION_SPECS.find(spec => spec.name === 'wait_workspace_changes').parameters.properties.waitMs.maximum;
 const WRITES = new Set(['edit_case', 'organize_case', 'create_project', 'update_project', 'save_skill', 'restore_skill',
-  'trash_case', 'save_material', 'capture', 'control_workspace', 'manage_analysis_batch',
+  'trash_case', 'save_material', 'capture', 'prepare_capture', 'update_capture', 'save_capture', 'control_workspace', 'manage_analysis_batch',
   'submit_analysis_result', 'submit_analysis_results', 'begin_transfer', 'append_transfer', 'finish_transfer']);
 const MEDIA_READS = new Set(['read_media', 'read_skill_file', 'read_review_media', 'capture_workspace']);
 

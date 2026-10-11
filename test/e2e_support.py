@@ -32,6 +32,14 @@ class ExtensionTestSession:
     extension_id: str
     profile_dir: Path
     page_errors: list[str]
+    playwright: Playwright
+
+    def restart_browser(self, *, extension_dir: Path = EXTENSION_DIR) -> None:
+        """Reopen the same disposable profile, discarding all worker/page memory."""
+        self.context.close()
+        self.context = launch_context(self.playwright, str(self.profile_dir), viewport={"width": 1280, "height": 900},
+                                      accept_downloads=True, extension_dir=extension_dir)
+        self.context.on("page", lambda page: record_page_errors(page, self.page_errors))
 
     def open_page(self, path: str, *, wait_until: str = "domcontentloaded") -> Page:
         page = self.context.new_page()
@@ -96,6 +104,7 @@ def extension_session(
     extension_dir: Path = EXTENSION_DIR,
     preserve_http_cache: bool = False,
     show_scrollbars: bool = False,
+    extra_args: list[str] | None = None,
 ) -> Iterator[ExtensionTestSession]:
     with tempfile.TemporaryDirectory(prefix=profile_prefix) as profile:
         with sync_playwright() as playwright:
@@ -107,15 +116,17 @@ def extension_session(
                 extension_dir=extension_dir,
                 preserve_http_cache=preserve_http_cache,
                 show_scrollbars=show_scrollbars,
+                extra_args=extra_args,
             )
             page_errors: list[str] = []
             context.on("page", lambda page: record_page_errors(page, page_errors))
             try:
                 worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
-                yield ExtensionTestSession(context, worker.url.split("/")[2], Path(profile), page_errors)
+                run = ExtensionTestSession(context, worker.url.split("/")[2], Path(profile), page_errors, playwright)
+                yield run
                 assert not page_errors, f"扩展页面出现运行时错误：{page_errors}"
             finally:
-                context.close()
+                (run.context if 'run' in locals() else context).close()
 
 
 def launch_context(
@@ -127,6 +138,7 @@ def launch_context(
     extension_dir: Path = EXTENSION_DIR,
     preserve_http_cache: bool = False,
     show_scrollbars: bool = False,
+    extra_args: list[str] | None = None,
 ) -> BrowserContext:
     network_blocked = os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1"
     cache_safe_args = ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"] if network_blocked and preserve_http_cache else []
@@ -144,6 +156,7 @@ def launch_context(
             f"--disable-extensions-except={extension_dir}",
             f"--load-extension={extension_dir}",
             *cache_safe_args,
+            *(extra_args or []),
         ],
     )
     worker = wait_for_extension_worker(context)

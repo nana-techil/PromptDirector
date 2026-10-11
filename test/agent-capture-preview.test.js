@@ -1,0 +1,123 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createAgentCapturePreview } from '../extension/agent-capture-preview.js';
+import { applyPageCaptureSelections } from '../extension/page-capture.js';
+
+function fixture() {
+  const data = {}, commits = []; let allowed = true, url = 'https://example.test/work', libraryId = 'library-a';
+  const storage = { get: async key => ({ [key]: structuredClone(data[key]) }), set: async value => Object.assign(data, structuredClone(value)),
+    remove: async keys => { for (const key of keys) delete data[key]; } };
+  const scope = { libraryId, assertCurrent: async () => { if (libraryId !== scope.libraryId) throw Object.assign(new Error('changed'), { code: 'library_changed' }); } };
+  const options = { storage, chromeApi: { permissions: { contains: async () => allowed },
+    tabs: { get: async id => ({ id, url, status: 'complete' }) },
+    scripting: { executeScript: async () => [{ result: { ok: true, url, text: 'complete observed page', links: [], media: [] } }] } },
+    collect: async () => ({ candidates: [{ id: 'original', title: 'Original', canonicalUrl: url, contentText: 'Full original body',
+      articleDocument: { version: 1, blocks: [{ id: 'old-paragraph', kind: 'paragraph', text: 'Full original body', sourceOrder: 0 }] },
+      media: [{ id: 'photo', kind: 'image', url: 'https://example.test/photo.png', originalPrompt: 'Exact original prompt' }] }] }),
+    commit: async batch => { commits.push(structuredClone(batch)); return { ok: true, results: [{ candidateId: 'original', status: 'saved', entryId: 'saved' }] }; },
+    loadState: async () => ({ collections: [] }), getLibraryId: async () => libraryId };
+  return { data, commits, options, scope, api: createAgentCapturePreview(options),
+    permission: value => { allowed = value; }, navigate: () => { url = 'https://example.test/elsewhere'; }, changeLibrary: () => { libraryId = 'library-b'; } };
+}
+const selected = [{ candidateId: 'original', includeText: true, selectedMediaIds: ['photo'] }];
+
+test('preview does not write cases, survives restarting the service, and only saves explicitly selected originals', async () => {
+  const f = fixture();
+  const first = await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  assert.deepEqual(first.selections, []); assert.equal(f.commits.length, 0);
+  await assert.rejects(f.api.execute('save_capture', { captureId: 'preview', expectedRevision: 1 }, 'save-empty', f.scope), { code: 'capture_selection_required' });
+  const reloaded = createAgentCapturePreview(f.options);
+  assert.equal((await reloaded.read({ captureId: 'preview', part: 'page' })).content.includes('complete observed page'), true);
+  const updated = await reloaded.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: selected }, 'select', f.scope);
+  assert.equal(updated.revision, 2);
+  const result = await reloaded.execute('save_capture', { captureId: 'preview', expectedRevision: 2 }, 'save', f.scope);
+  assert.equal(result.state, 'completed');
+  const actual = applyPageCaptureSelections(f.commits[0]);
+  assert.equal(actual.length, 1); assert.equal(actual[0].contentText, 'Full original body');
+  assert.equal(actual[0].media[0].originalPrompt, 'Exact original prompt');
+  await assert.rejects(reloaded.execute('save_capture', { captureId: 'preview', expectedRevision: 3 }, 'again', f.scope), { code: 'capture_not_editable' });
+});
+
+test('Agent supplementation retains existing body, structured document, media and original prompt rather than replacing them with a summary', async () => {
+  const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  await f.api.execute('update_capture', { captureId: 'preview', expectedRevision: 1,
+    candidates: [{ id: 'original', title: 'Original', canonicalUrl: 'https://example.test/work', contentText: 'Additional prompt from DOM',
+      media: [{ id: 'extra', kind: 'image', url: 'https://example.test/extra.png' }] }],
+    selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: ['extra'] }] }, 'supplement', f.scope);
+  const result = JSON.parse((await f.api.read({ captureId: 'preview', part: 'candidate', candidateId: 'original' })).content);
+  assert.match(result.contentText, /Full original body/); assert.match(result.contentText, /Additional prompt from DOM/);
+  assert.deepEqual(result.articleDocument.blocks.map(item => item.text), ['Full original body', 'Additional prompt from DOM']);
+  assert.equal(result.media.length, 2); assert.equal(result.media[0].originalPrompt, 'Exact original prompt');
+  assert.equal(result.completeness, 'partial');
+  await f.api.execute('save_capture', { captureId: 'preview', expectedRevision: 2 }, 'save', f.scope);
+  assert.deepEqual(applyPageCaptureSelections(f.commits[0])[0].media.map(item => item.id), ['extra']);
+});
+
+test('stale selection, invalid media and changed sources fail without changing preview or cases', async () => {
+  const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  const before = structuredClone(f.data);
+  for (const [input, code] of [
+    [{ expectedRevision: 0, selections: selected }, 'invalid_input'],
+    [{ expectedRevision: 2, selections: selected }, 'capture_changed'],
+    [{ expectedRevision: 1, selections: [{ ...selected[0], selectedMediaIds: ['missing'] }] }, 'invalid_selection'],
+    [{ expectedRevision: 1, candidates: [{ id: 'original', canonicalUrl: 'https://another.test/', contentText: 'replacement' }] }, 'capture_source_changed'],
+    [{ expectedRevision: 1, candidates: [{ id: 'original', canonicalUrl: 'https://example.test/work', media: [{ id: 'photo', url: 'https://example.test/replacement.png' }] }] }, 'capture_source_changed']
+  ]) await assert.rejects(f.api.execute('update_capture', { captureId: 'preview', ...input }, 'bad', f.scope), { code });
+  assert.deepEqual(f.data, before); assert.equal(f.commits.length, 0);
+});
+
+test('full paginated page reads are pinned to a revision and never silently combine different selections', async () => {
+  const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  let page = await f.api.read({ captureId: 'preview', part: 'page', length: 7 }), content = page.content;
+  while (page.nextOffset !== null) {
+    page = await f.api.read({ captureId: 'preview', part: 'page', expectedRevision: page.revision, offset: page.nextOffset, length: 7 }); content += page.content;
+  }
+  assert.equal(JSON.parse(content).text, 'complete observed page');
+  await assert.rejects(f.api.read({ captureId: 'preview', part: 'page', offset: 7 }), { code: 'capture_revision_required' });
+  await f.api.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: selected }, 'select', f.scope);
+  await assert.rejects(f.api.read({ captureId: 'preview', part: 'page', expectedRevision: 1, offset: 7 }), { code: 'capture_changed' });
+});
+
+test('permission denial and changing library prevent preview creation or saving into the wrong library', async () => {
+  const f = fixture(); f.permission(false);
+  await assert.rejects(f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope), { code: 'site_permission_required' });
+  assert.deepEqual(f.data, {});
+  f.permission(true); await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  f.changeLibrary(); await assert.rejects(f.api.read({ captureId: 'preview' }), { code: 'library_mismatch' });
+});
+
+test('partial save retains preview for completion without discarding original material', async () => {
+  const f = fixture(); f.options.commit = async () => ({ ok: true, results: [{ status: 'partial', entryId: 'partial', warnings: ['video unavailable'] }] });
+  const api = createAgentCapturePreview(f.options);
+  await api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  await api.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: selected }, 'select', f.scope);
+  assert.equal((await api.execute('save_capture', { captureId: 'preview', expectedRevision: 2 }, 'save', f.scope)).state, 'preview');
+  assert.equal((await api.read({ captureId: 'preview', part: 'candidate', candidateId: 'original' })).content.includes('Full original body'), true);
+});
+
+test('saved preview history follows existing resource budgets while unfinished work and saved cases remain protected', async () => {
+  const f = fixture(); const api = createAgentCapturePreview({ ...f.options, budget: { maxAutomaticHistoryItems: 1 } });
+  await api.execute('prepare_capture', { tabId: 1 }, 'unfinished', f.scope);
+  for (const id of ['saved-one', 'saved-two']) {
+    await api.execute('prepare_capture', { tabId: 1 }, id, f.scope);
+    await api.execute('update_capture', { captureId: id, expectedRevision: 1, selections: selected }, `select-${id}`, f.scope);
+    await api.execute('save_capture', { captureId: id, expectedRevision: 2 }, `save-${id}`, f.scope);
+  }
+  assert.equal((await api.read({ captureId: 'unfinished' })).state, 'preview');
+  assert.equal((await api.read({ captureId: 'saved-two' })).state, 'completed');
+  await assert.rejects(api.read({ captureId: 'saved-one' }), { code: 'capture_not_found' });
+  assert.equal(f.commits.length, 2);
+  assert.deepEqual(f.data['agentCaptureHistory:library-a'].map(item => item.id), ['saved-two']);
+});
+
+test('an auxiliary history cleanup failure must not turn a confirmed save into failure or enable repeating the save', async () => {
+  const f = fixture(); const api = createAgentCapturePreview({ ...f.options, budget: { maxAutomaticHistoryItems: 1 } });
+  f.options.storage.remove = async () => { throw new Error('storage removal unavailable'); };
+  for (const id of ['saved-one', 'saved-two']) {
+    await api.execute('prepare_capture', { tabId: 1 }, id, f.scope);
+    await api.execute('update_capture', { captureId: id, expectedRevision: 1, selections: selected }, `select-${id}`, f.scope);
+    assert.equal((await api.execute('save_capture', { captureId: id, expectedRevision: 2 }, `save-${id}`, f.scope)).state, 'completed');
+  }
+  assert.equal(f.commits.length, 2);
+  await assert.rejects(api.execute('save_capture', { captureId: 'saved-two', expectedRevision: 3 }, 'retry', f.scope), { code: 'capture_not_editable' });
+});

@@ -1,4 +1,7 @@
 import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
+import { createAgentCapturePreview } from './agent-capture-preview.js';
+import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
+import { runCaptureAssistant } from './capture-assistant.js';
 import { createCaseDedupeOperations } from './case-dedupe-operations.js';
 import { createCaptureSaveTasks, CAPTURE_SAVE_TASK_KEY, rebaseCaptureEntries } from './capture-save-tasks.js';
 import { jsonBytes, startPhase, timingEnabled } from "./perf-trace.js";
@@ -659,12 +662,29 @@ const agentTransfers = createAgentTransfers({
 });
 const skillWriter = createSkillWriter({ storage: libraryStorage, transfers: agentTransfers,
   readBlob: getMediaBlob, commit: commitLocalChanges, enqueue, cleanup: deleteUnreferencedMedia });
+const agentCapturePreview = createAgentCapturePreview({ storage: libraryStorage, chromeApi: chrome,
+  collect: collectPageCaptureTab, commit: commitPageCapture,
+  loadState: () => libraryStorage.get(STORAGE_KEYS.organizerState),
+  getLibraryId: async () => (await libraryIdentity.read()).libraryId });
+const captureAssistantControllers = new Map();
 const agentTasks = createAgentTasks({ storage: libraryStorage,
   getLibraryId: async () => (await libraryIdentity.read()).libraryId,
   // This browser library may adopt its receipts predating library IDs.
   allowLegacyTasks: true,
   execute: async (operation, input, requestId, scope) => {
     await scope.assertCurrent();
+    if (operation === 'capture_assist') {
+      const controller = new AbortController(); captureAssistantControllers.set(requestId, controller);
+      try {
+        return await runCaptureAssistant(input, { runtime: await getComposerAiRuntime(), signal: controller.signal,
+          call: async (name, args) => { await scope.assertCurrent(); return executeAgentOperation(name, args); },
+          onStatus: message => { void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId, message }).catch(() => {}); } });
+      } finally { captureAssistantControllers.delete(requestId); }
+    }
+    if (['prepare_capture', 'update_capture', 'save_capture'].includes(operation)) return enqueueCapture(async () => {
+      try { return await agentCapturePreview.execute(operation, input, requestId, scope); }
+      finally { activeCaptureAssetIds.clear(); }
+    });
     if (operation === "capture") return enqueueCapture(async () => {
       await scope.assertCurrent();
       try {
@@ -732,7 +752,7 @@ async function executeAgentOperation(operation, input) {
     case "status": return { ...(await agentConnection.snapshot()), protocolVersion: AGENT_PROTOCOL_VERSION,
       extensionVersion: chrome.runtime.getManifest().version, searchGuidance: { systemLanguage: chrome.i18n.getUILanguage(), languages: [...new Set([chrome.i18n.getUILanguage().split(/[-_]/u)[0], 'en'])], expansion: 'calling_agent', querySemantics: 'terms_and_alternatives_or', pluginApiCalls: false }, analysisResultVersion: 2, analysisResultFields: ANALYSIS_RESULT_FIELDS, skillPackageLimits: skillPackageLimits(),
       caseOperationFeatures: Object.fromEntries(CASE_OPERATION_SPECS.filter(spec => spec.name !== 'read_case_details').map(spec => [spec.name, spec.name === 'edit_case' ? Object.keys(spec.parameters.properties.patch.properties) : spec.parameters.properties.action.enum])),
-      workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [WORKSPACE_SCREENSHOT_SPEC.name, ...AGENT_CASE_ACTION_SPECS.map(spec => spec.name), ...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
+      workspaceSyncVersion: 6, sourceProtectionVersion: 1, capabilities: [...CAPTURE_OPERATION_SPECS.map(spec => spec.name), WORKSPACE_SCREENSHOT_SPEC.name, ...AGENT_CASE_ACTION_SPECS.map(spec => spec.name), ...WORKSPACE_OPERATION_SPECS.map(spec => spec.name), ...ANALYSIS_BATCH_SPECS.map(spec=>spec.name), "save_skill", "restore_skill", "list_skills", "read_skill", "read_skill_file", "read_projects", "create_project", "update_project", "describe_case_query", "search", "read_case", "read_media", "capture", "save_material", "get_task", "read_case_details", "edit_case", "organize_case", "read_workspace_context", "read_workspace_content", "resolve_reference", "show_case"], materialFields: ["projectRevision", "sourceReferences", "previousCreation", "creative", "customLabels", "classificationPathIds", "sourceFacts", "timeNotes"], workspaceContentParts: ["instruction", "reference", "selection"], workspaceProjectionVersion: 2, projectLookup: ["name", "path"], materialReceiptVersion: 2, taskWaitMaxMs: 15000, caseTextReadVersion: 2, caseQueryVersion: 1, searchFilters: Object.keys(CASE_SEARCH_PROPERTIES) };
     case "manage_analysis_batch":
     case "list_analysis_batches":
     case "read_analysis_batch":
@@ -764,16 +784,17 @@ async function executeAgentOperation(operation, input) {
     case "search": return agentLibrary.search(input);
     case "read_case": return agentLibrary.read(input);
     case "read_media": return agentLibrary.media(input);
+    case 'read_capture': return agentCapturePreview.read(input);
     case "capture":
+    case 'prepare_capture':
+    case 'update_capture':
+    case 'save_capture':
     case "save_material": {
       const { requestId, ...args } = input;
-      return agentTasks.submit(operation, args, requestId);
+      return agentTaskLinks(await agentTasks.submit(operation, args, requestId));
     }
     case "get_task": {
-      const receipt = await agentTasks.inspect(input.requestId, input);
-      if (receipt.result?.results) receipt.result.results = receipt.result.results.map(item => ({ ...item,
-        ...(item.entryId ? { openUrl: chrome.runtime.getURL(`library.html?case=${encodeURIComponent(item.entryId)}`) } : {}) }));
-      return receipt;
+      return agentTaskLinks(await agentTasks.inspect(input.requestId, input));
     }
     case "begin_transfer": return enqueue(() => agentTransfers.begin(input));
     case "append_transfer": return agentTransfers.append(input);
@@ -781,6 +802,12 @@ async function executeAgentOperation(operation, input) {
     case "abort_transfer": return agentTransfers.abort(input);
     default: throw agentError("unknown_operation", "连接器不支持这个业务操作。");
   }
+}
+
+function agentTaskLinks(receipt) {
+  if (receipt.result?.results) receipt.result.results = receipt.result.results.map(item => ({ ...item,
+    ...(item.entryId ? { openUrl: chrome.runtime.getURL(`library.html?case=${encodeURIComponent(item.entryId)}`) } : {}) }));
+  return receipt;
 }
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -923,6 +950,27 @@ async function handleMessage(message, interaction = {}) {
     case 'GET_LIBRARY_IDENTITY': {
       if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL(''))) throw new Error('资料库身份只能从插件工作空间读取');
       return { ok: true, identity: await libraryIdentity.read() };
+    }
+    case 'START_CAPTURE_ASSIST':
+    case 'GET_CAPTURE_ASSIST_TASK':
+    case 'CANCEL_CAPTURE_ASSIST':
+    case 'GET_CAPTURE_ASSIST_PREVIEW': {
+      if (interaction.sender?.id !== chrome.runtime.id || !interaction.sender?.url?.startsWith(chrome.runtime.getURL('collector.html'))) {
+        throw agentError('unauthorized', '采集助手只能从采集侧边栏操作');
+      }
+      if (message.type === 'START_CAPTURE_ASSIST') {
+        if (typeof message.input?.instruction !== 'string' || !message.input.instruction.trim() || !Number.isInteger(message.input.tabId)) throw new Error('请输入当前网页的采集要求');
+        if ((await chrome.tabs.get(message.input.tabId)).url !== message.input.sourceUrl) throw new Error('采集网页已改变，请重新开始当前网页的采集');
+        if (captureAssistantControllers.size) throw new Error('已有采集助手任务正在运行，请先等待或停止');
+        return { ok: true, task: await agentTasks.submit('capture_assist', message.input, message.requestId) };
+      }
+      if (message.type === 'GET_CAPTURE_ASSIST_PREVIEW') return agentCapturePreview.view(message.input);
+      let task;
+      try { task = await agentTasks.inspect(message.requestId, { waitMs: message.waitMs ?? 0 }); }
+      catch (error) { return { ok: false, code: error.code, message: userMessage(error) }; }
+      if (task.operation !== 'capture_assist') throw new Error('这不是采集助手任务');
+      if (message.type === 'CANCEL_CAPTURE_ASSIST') captureAssistantControllers.get(message.requestId)?.abort(new Error('采集助手已停止，已有预览保留'));
+      return { ok: true, task };
     }
     case "GET_REFERENCE_SELECTION":
     case "SET_REFERENCE_SELECTION": {
