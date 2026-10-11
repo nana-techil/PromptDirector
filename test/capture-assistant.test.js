@@ -15,7 +15,7 @@ test('new project creation uses the shared synchronous durable project receipt i
       const receipt = await toolRuntime.execute('create_project', { requestId: 'project-request', name: project.name });
       assert.equal(receipt.data.project.id, project.id); assert.equal(receipt.data.ok, true); return { text: '取得真实项目编号' };
     } });
-  assert.equal(result.ok, true); assert.deepEqual(calls, ['create_project']);
+  assert.equal(result.ok, true); assert.deepEqual(calls, ['read_capture', 'create_project']);
 });
 
 test('a newer preview-only request is not forced to save by an inherited task goal', async () => {
@@ -38,7 +38,7 @@ function fixture(execute, extras = {}) {
 test('asking how to capture or save can answer normally without scanning, selecting or saving the webpage', async () => {
   for (const instruction of ['这个怎么采集？', '怎么保存到项目？', 'How do I save this?']) {
     const f = fixture(async () => ({ text: 'Use the capture or save action.' }), { instruction });
-    assert.equal((await f.run()).ok, true); assert.deepEqual(f.calls, []);
+    assert.equal((await f.run()).ok, true); assert.deepEqual(f.calls, [{ operation: 'read_capture', args: { part: 'context', tabId: 1 } }]);
   }
 });
 
@@ -54,7 +54,7 @@ test('collector assistant uses shared MCP tools lazily, preserves the configured
     return { text: 'Preview prepared', model: 'observed-model' };
   });
   const result = await f.run(); assert.equal(result.ok, true); assert.equal(result.model, 'observed-model');
-  assert.deepEqual(f.calls.map(item => item.operation), ['prepare_capture', 'update_capture']);
+  assert.deepEqual(f.calls.map(item => item.operation), ['read_capture', 'prepare_capture', 'update_capture']);
 });
 
 test('unconfigured model makes no page reads or paid requests', async () => {

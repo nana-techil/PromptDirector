@@ -59,6 +59,27 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       return { ...summary(record), batch: record.batch };
     },
     async read(input) {
+      // A human can open a new dialog without changing the URL or an old preview.
+      // Observe that live scene without invoking adapters or copying the full page.
+      if (input.part === 'context') {
+        const record = input.captureId ? await own(input.captureId) : null;
+        if (record) version(record, input);
+        const tabId = record?.batch.tabId ?? input.tabId;
+        requireInteger(tabId);
+        const tab = await chromeApi.tabs.get(tabId);
+        if (record && tab.url !== record.batch.sourceUrl) throw agentError('page_changed', '采集网页已改变，请重新开始当前网页的采集');
+        await permission(tab.url);
+        const [observed] = await chromeApi.scripting.executeScript({ target: { tabId }, func: readCapturePageContext, args: [input.query || ''] });
+        if (!observed?.result?.ok) throw agentError('capture_page_unavailable', observed?.result?.message || '当前网页现场未取得');
+        if (observed.result.url !== tab.url || (await chromeApi.tabs.get(tabId)).url !== tab.url) throw agentError('page_changed', '读取期间网页已改变');
+        const offset = input.offset ?? 0, length = input.length ?? 12000;
+        requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
+        const text = JSON.stringify(observed.result);
+        if (offset) throw agentError('invalid_input', '当前现场请重新读取或按模块名称缩小范围');
+        if (text.length > length) throw agentError('capture_context_scope_required', '当前现场包含较多区域，请用模块名称查询或增加读取长度');
+        return { ...(record ? { captureId: record.id, revision: record.revision } : {}), part: 'context', sourceUrl: tab.url,
+          content: text, offset: 0, totalCharacters: text.length, nextOffset: null, untrustedContent: true };
+      }
       const record = await own(input.captureId);
       version(record, input);
       const part = input.part ?? 'summary';
@@ -185,6 +206,9 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           })) };
           const index = candidates.findIndex(item => item.id === value.id);
           const prior = candidates[index];
+          if (prior && patch.textSources?.length && value.title !== undefined && value.title !== prior.title) {
+            throw agentError('capture_source_changed', '单独模块请新建候选，不能重命名已有整页候选并混入它的正文');
+          }
           if (prior && prior.canonicalUrl !== requireWebUrl(value.canonicalUrl)) throw agentError('capture_source_changed', '已有候选的来源不能改为其他网页，请另建候选');
           for (const item of value.media ?? []) {
             const original = prior?.media.find(media => media.id === item.id);
@@ -227,7 +251,8 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         }
         record.batch = normalizePageCaptureBatch({ ...record.batch, candidates,
           selections: selections.map(item => ({ ...item, mediaDecision: 'confirmed' })),
-          saveMode: input.saveMode ?? record.batch.saveMode, combinedTitle: input.combinedTitle ?? record.batch.combinedTitle,
+          saveMode: candidates.length > 1 && selections.length === 1 && !['multiple', 'combined'].includes(input.saveMode ?? record.batch.saveMode)
+            ? 'multiple' : input.saveMode ?? record.batch.saveMode, combinedTitle: input.combinedTitle ?? record.batch.combinedTitle,
           captureMode: candidates.length > 1 ? 'list' : 'single' });
         if (input.candidates?.length) record.batch.error = '';
         if (record.batch.candidates.length !== candidates.length || record.batch.selections.length !== selections.length) {
@@ -347,12 +372,57 @@ export function readCapturePageEvidence(selector = '') {
     }
     return ['body', ...parts].join(' > ');
   };
-  const codeBlocks = [...root.querySelectorAll('pre')].map(element => ({ selector: path(element), characters: element.textContent.length, visible: isVisible(element) }));
+  const codeBlocks = [...root.querySelectorAll('pre')].map(element => ({ selector: path(element), characters: element.textContent.length, visible: isVisible(element) })).sort((a, b) => Number(b.visible) - Number(a.visible));
   const dialogs = [...root.querySelectorAll('dialog[open],[role="dialog"]')].filter(isVisible).map(element => ({ selector: path(element), title: element.getAttribute('aria-label') || element.querySelector('h1,h2,h3')?.textContent || '' }));
   const active = document.activeElement;
   const selection = active?.matches('input,textarea,select') ? '' : String(getSelection() || '');
   return { ok: true, url: location.href, title: document.title, selector, text: text.join('\n'), links, media,
     context: { selection, dialogs, codeBlocks },
+    untrustedContent: true };
+}
+
+// Injected in isolation; all helpers deliberately stay inside this function.
+export function readCapturePageContext(query = '') {
+  const excluded = 'script,style,noscript,input,textarea,select,[data-promptdirector-capture-ui]';
+  const visible = element => {
+    if (element.closest('[hidden],[aria-hidden="true"]')) return false;
+    for (let node = element; node; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || style.visibility === 'hidden') return false;
+    }
+    const r = element.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
+  };
+  const path = element => {
+    if (element.id && document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) return '#' + CSS.escape(element.id);
+    const parts = [];
+    while (element && element !== document.body) {
+      const siblings = [...(element.parentElement?.children || [])].filter(peer => peer.localName === element.localName);
+      parts.unshift(element.localName + (siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(element) + 1})` : ''));
+      element = element.parentElement;
+    }
+    return ['body', ...parts].join(' > ');
+  };
+  const titleSelector = 'h1,h2,h3,h4,h5,h6,[role="heading"],[class*="title"],[class*="name"]';
+  function owner(element) {
+    for (let node = element.parentElement; node && node !== document.body; node = node.parentElement) {
+      const title = [...node.querySelectorAll(titleSelector)].find(item => !item.closest('pre,code') && !item.matches(excluded) && item.textContent.trim());
+      if (title) return { selector: path(node), title: title.textContent.trim() };
+    }
+    return null;
+  }
+  const needle = query.trim().toLocaleLowerCase();
+  const codeBlocks = [...document.querySelectorAll('pre')].filter(element => !element.closest('[data-promptdirector-capture-ui]')).map(element => {
+    const module = owner(element), shown = visible(element);
+    return { selector: path(element), characters: element.textContent.length, visible: shown, module,
+      ...(shown ? { content: element.textContent } : {}),
+      language: element.getAttribute('data-lang') || element.querySelector('code')?.className || '' };
+  }).filter(item => needle ? item.module?.title.toLocaleLowerCase().includes(needle) : item.visible).sort((a, b) => Number(b.visible) - Number(a.visible));
+  const dialogs = [...document.querySelectorAll('dialog[open],[role="dialog"]')].filter(visible).map(element => ({ selector: path(element),
+    title: element.querySelector(titleSelector)?.textContent.trim() || element.getAttribute('aria-label') || '' }));
+  const active = document.activeElement;
+  return { ok: true, url: location.href, title: document.title, query,
+    selection: active?.matches('input,textarea,select') ? '' : String(getSelection() || ''), dialogs, codeBlocks,
     untrustedContent: true };
 }
 

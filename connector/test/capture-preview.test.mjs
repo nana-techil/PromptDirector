@@ -86,3 +86,14 @@ test('capture screenshot is exposed to external Agents as pixels with source met
     assert.equal(JSON.parse(response.content[0].text).dataUrl, undefined);
   } finally { await server.close(); }
 });
+
+test('external Agents can inspect the current dialog by tab and module title without creating a capture or calling a model', async () => {
+  const calls=[];
+  const server=createServer(async(operation,input)=>{calls.push({operation,input});return operation==='status'?{capabilities:['read_capture'],captureReadParts:['context']}:{part:'context',content:'current module selectors',nextOffset:null};});
+  try {
+    const tool=server._registeredTools.promptdirector_read_capture;
+    const input=tool.inputSchema.parse({part:'context',tabId:7,query:'Expanding Search'});
+    const result=await tool.handler(input);assert(!result.isError);assert.equal(JSON.parse(result.content[0].text).part,'context');
+    assert.deepEqual(calls.map(call=>call.operation),['status','read_capture']);assert.deepEqual(calls[1].input,input);
+  } finally {await server.close();}
+});

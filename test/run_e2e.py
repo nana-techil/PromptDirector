@@ -13,6 +13,8 @@ TEST_DIR = Path(__file__).resolve().parent
 SCRIPTS = [
     "capture_access_gate_e2e.py",
     "agent_capture_preview_e2e.py",
+    "capture_current_page_e2e.py",
+    "capture_native_sidepanel_e2e.py",
     "acceptance_feedback_e2e.py",
     "share_directory_e2e.py",
     "pinterest_metadata_e2e.py",

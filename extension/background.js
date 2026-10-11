@@ -211,7 +211,7 @@ import {
 } from "./local-media.js";
 import { tempReferenceAssetIds, unreadReferenceImageAssets } from "./temp-references.js";
 import { planTrashCleanup, retainedTrashCleanupAssets, TRASH_HISTORY_KEYS, TRASH_CLEANUP_KEY } from './trash-cleanup.js';
-import { createStagedMediaRegistry } from './staged-media.js';
+import { createStagedMediaRegistry, resolveStageDocument } from './staged-media.js';
 import {
   addStagedAsset,
   collectRetainedLocalAssetIds,
@@ -568,7 +568,7 @@ const undoConfirmations = createUndoConfirmations(libraryStorage);
 const caseEditor = createCaseEditor({ commitCase: (entryId, transform) => commitLocalChanges.updateCase(entryId, transform) });
 const stagedMedia = createStagedMediaRegistry({
   storage: libraryStorage,
-  activeDocuments: async () => (await chrome.runtime.getContexts({})).map(context => context.documentId),
+  activeDocuments: async () => (await chrome.runtime.getContexts({})).map(context => context.documentId || context.contextId),
   cleanup: async (assetIds, protectedIds, localReferenceIds) => {
     const retained = retainedTrashCleanupAssets(await readTrashCleanupState(),
       [...protectedIds, ...activeCaptureAssetIds, ...await agentTransfers.retainedIds()]);
@@ -967,10 +967,10 @@ async function handleMessage(message, interaction = {}) {
     case 'REGISTER_STAGED_MEDIA':
     case 'RELEASE_STAGED_MEDIA': {
       const sender = interaction.sender;
-      if (sender?.id !== chrome.runtime.id || !sender?.url?.startsWith(chrome.runtime.getURL('')) || !sender.documentId) throw new Error('文件准备只能从插件页面操作');
+      const documentId = await resolveStageDocument(chrome, sender, message.operationId, libraryStorage);
       return enqueue(async () => {
-        if (message.type === 'REGISTER_STAGED_MEDIA') await stagedMedia.register(message.operationId, sender.documentId, message.assetIds, message.localReferenceIds);
-        else await stagedMedia.release(message.operationId, sender.documentId);
+        if (message.type === 'REGISTER_STAGED_MEDIA') await stagedMedia.register(message.operationId, documentId, message.assetIds, message.localReferenceIds);
+        else await stagedMedia.release(message.operationId, documentId);
         return { ok: true };
       });
     }

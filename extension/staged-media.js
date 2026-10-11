@@ -37,6 +37,20 @@ export function createMediaStage(chromeApi = chrome) {
 
 export const STAGED_MEDIA_KEY = 'stagedMediaWrites';
 
+// MessageSender.documentId is optional. Side panels may omit it even though
+// getContexts can identify their live, browser-owned extension document.
+export async function resolveStageDocument(chromeApi, sender, operationId, storage) {
+  if (sender?.id !== chromeApi.runtime.id || !sender?.url?.startsWith(chromeApi.runtime.getURL(''))) throw new Error('文件准备只能从插件页面操作');
+  if (sender.documentId) return sender.documentId;
+  let contexts = (await chromeApi.runtime.getContexts({ documentUrls: [sender.url] }))
+    .filter(context => context.documentUrl === sender.url && ['SIDE_PANEL', 'TAB', 'POPUP'].includes(context.contextType));
+  if (!sender.tab && contexts.some(context => context.contextType === 'SIDE_PANEL')) contexts = contexts.filter(context => context.contextType === 'SIDE_PANEL');
+  const prior = (await storage.get(STAGED_MEDIA_KEY))[STAGED_MEDIA_KEY]?.[operationId];
+  const owned = prior ? contexts.filter(context => (context.documentId || context.contextId) === prior.documentId) : contexts;
+  if (owned.length !== 1) throw new Error('无法确认当前文件准备页面，请关闭重复面板后重试');
+  return owned[0].documentId || owned[0].contextId;
+}
+
 export function createStagedMediaRegistry({ storage, activeDocuments, cleanup }) {
   const read = async () => (await storage.get(STAGED_MEDIA_KEY))[STAGED_MEDIA_KEY] ?? {};
   async function sweep(onlyId) {

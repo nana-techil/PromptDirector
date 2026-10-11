@@ -220,3 +220,31 @@ test('reading a selected image returns actual original bytes, while missing orig
   const missing = createAgentCapturePreview(f.options);
   await assert.rejects(missing.read({ captureId: 'image', part: 'image', candidateId: 'original', mediaId: 'photo' }), { code: 'capture_page_unavailable' });
 });
+
+test('a whole-page candidate cannot be relabelled as a specific source-backed module while retaining unrelated original text', async () => {
+  const f=fixture(); await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+  const source=await f.api.read({captureId:'preview',part:'source',selector:'#module'});
+  const before=structuredClone(f.data);
+  await assert.rejects(f.api.execute('update_capture',{captureId:'preview',expectedRevision:source.revision,
+    candidates:[{id:'original',title:'Selected module',canonicalUrl:'https://example.test/work',contentText:'',media:[],textSources:[{selector:'#module',target:'text'}]}]},'wrong-module',f.scope),{code:'capture_source_changed'});
+  assert.deepEqual(f.data,before);assert.equal(f.commits.length,0);
+});
+
+test('live context is readable without adapter scanning and never returns truncated JSON or changes the preview', async () => {
+  const f=fixture();
+  const context=await f.api.read({part:'context',tabId:1});
+  assert.equal(context.nextOffset,null);assert.equal(JSON.parse(context.content).text,'complete observed page');
+  assert.deepEqual(f.data,{});assert.equal(f.commits.length,0);
+  await assert.rejects(f.api.read({part:'context',tabId:1,length:1}),{code:'capture_context_scope_required'});
+  await assert.rejects(f.api.read({part:'context',tabId:1,offset:1}),{code:'invalid_input'});
+  f.permission(false);await assert.rejects(f.api.read({part:'context',tabId:1}),{code:'site_permission_required'});
+});
+test('selecting a single independent module never asks for a multi-case save decision merely because other candidates exist', async () => {
+  const f=fixture();f.api=createAgentCapturePreview({ ...f.options, commit: async batch => { f.commits.push(batch); return { ok: true, results: applyPageCaptureSelections(batch).map(item => ({ candidateId: item.id, entryId: 'saved-'+item.id, status: 'saved' })) }; } });
+  await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+  const updated=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:1,
+    candidates:[{id:'module',title:'One module',canonicalUrl:'https://example.test/work',contentText:'Only the selected module',media:[]}],
+    selections:[{candidateId:'module',includeText:true,selectedMediaIds:[]}]},'only-one',f.scope);
+  const saved=await f.api.execute('save_capture',{captureId:'preview',expectedRevision:updated.revision},'save-one',f.scope);
+  assert.equal(saved.state,'completed');assert.deepEqual(applyPageCaptureSelections(f.commits[0]).map(item=>item.id),['module']);
+});
