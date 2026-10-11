@@ -28,7 +28,7 @@
 - **A library you browse by eye.** An image-first case wall with tags and projects. It's local-first and needs no account.
 - **Your Agent can use it.** Codex, Claude Code and WorkBuddy can search, read and save back to your library through local MCP.
 
-<p align="center"><strong>1,000+ curated cases, ready to import:</strong> <a href="https://wchao6891.github.io/PromptDirector-Curated/en/">Browse (English)</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/">浏览（中文）</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/en/guide.html">Quick start</a></p>
+<p align="center"><strong>1,000+ curated cases, ready to import:</strong> <a href="https://wchao6891.github.io/PromptDirector-Curated/en/">Browse (English)</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/?lang=zh-CN">浏览（中文）</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/en/guide.html">Quick start</a></p>
 
 <p align="center"><sub>Free & open source · Local first · No account · Chrome / Edge on Windows, macOS, Linux</sub></p>
 
@@ -100,7 +100,7 @@ Connect your library to **Codex, Claude Code or WorkBuddy**. Your Agent can sear
 >
 > “Save the approved prompt and generated images back to PromptDirector.”
 
-Other local MCP clients can use the generic configuration. Cloud-only workspaces can't use this local flow. [Agent setup guide →](connector/INSTALL.md)
+Other local MCP clients can use the generic configuration. Cloud-only workspaces can't use this local flow. [Agent setup guide →](connector/INSTALL.en.md)
 
 ## A library that grows with you
 
@@ -116,7 +116,7 @@ AI analysis is optional and uses your own service. Only selected or explicitly r
 
 ## Your library stays yours
 
-Cases, media, tags and settings are stored in your browser by default. No account, ads or usage analytics. AI features are opt-in and use your own keys. Read the [privacy policy](store/PRIVACY_POLICY.md).
+Cases, media, tags and settings are stored in your browser by default. No account, ads or usage analytics. AI features are opt-in and use your own keys. Read the [privacy policy](https://wchao6891.github.io/PromptDirector-Curated/en/privacy.html).
 
 ## Install
 

@@ -1,5 +1,7 @@
 # 提示词导演隐私政策
 
+[English](#promptdirector-privacy-policy) · [简体中文](#promptdirector-隐私政策)
+
 生效日期：2026 年 9 月 20 日
 
 提示词导演是一个本地优先的 Chrome 扩展，用于收藏、整理、检索、备份和分享个人创作资料。扩展不提供开发者服务器，不创建账号，不收集使用统计，不投放广告，也不出售用户数据。
@@ -126,4 +128,4 @@ PromptDirector complies with the Limited Use requirements of the Chrome Web Stor
 
 ## Contact
 
-Contact the maintainer through the [PromptDirector support page](https://wchao6891.github.io/PromptDirector-Curated/support.html).
+Contact the maintainer through the [PromptDirector support page](https://wchao6891.github.io/PromptDirector-Curated/en/support.html).
