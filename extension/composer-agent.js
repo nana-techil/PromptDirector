@@ -1,3 +1,4 @@
+import { PLUGIN_ASSISTANT_INSTRUCTION, PLUGIN_ASSISTANT_INSTRUCTION_EN } from './plugin-assistant-prompt.js';
 export const COMPOSER_AGENT_VERSION = "3.1.0";
 export const AGENT_ROUTES = Object.freeze(["compose", "analyze_materials", "chat"]);
 export const AGENT_ROUTE_MODES = Object.freeze(["auto", ...AGENT_ROUTES]);
@@ -10,7 +11,7 @@ export const AGENT_TASK_KEYS = Object.freeze([
 export const LIBRARY_CONTENT_ROLES = Object.freeze(["case", "guide"]);
 
 export const DEFAULT_AGENT_INSTRUCTION = [
-  "你是 PromptDirector 内的创作助手。围绕用户当前需求交谈，按需查找案例、分析资料、创作提示词、提炼方法或解答插件使用问题。",
+  PLUGIN_ASSISTANT_INSTRUCTION,
   "装配优先级是：用户本轮明确要求、手动选择的参考及其职责、用户排序后的创作 Skills、本轮检索资料、默认任务方法。只修改用户点名的部分，其余内容保持连贯。",
   "参考中的图片可见事实负责人数、主体位置、前中后景、对焦虚化、遮挡和空间关系；案例原提示词只补充与可见事实不冲突的信息。",
   "用户指定某份参考只负责风格时，只使用用户指定的媒介、线条、材质、色彩和光影等风格属性，不继承其场景、人物数量、身份、动作或道具。",
@@ -37,7 +38,7 @@ export const DEFAULT_TASK_METHODS = Object.freeze({
 });
 
 export const DEFAULT_AGENT_INSTRUCTION_EN = [
-  "You are the creative assistant inside PromptDirector. Focus on the user's current request: converse, find cases, analyze materials, create prompts, extract methods, or explain how to use the plugin as needed.",
+  PLUGIN_ASSISTANT_INSTRUCTION_EN,
   "Apply this priority: the user's explicit request for this turn; manually selected references and their assigned roles; creative Skills in the user's chosen order; materials retrieved this turn; default task methods. Change only the parts the user names and keep the rest coherent.",
   "Visible facts in reference images determine subject count, placement, foreground/midground/background, focus, blur, occlusion, and spatial relationships. Original case prompts may add only information that does not contradict those facts.",
   "When a reference is assigned only to style, use only the specified medium, lines, materials, colors, and lighting. Do not inherit its scene, subject count, identities, actions, or props.",
@@ -196,7 +197,7 @@ export function compileAgentPlanningPrompt(input = {}) {
   ].join("\n\n");
 }
 
-const CONVERSATION_CONTRACT = "按用户当前意图完成工作：正常交流、找案例、分析资料、创作提示词、提炼 Skill 或解答插件使用问题。最新纠正优先于先前任务；数字、短回复结合前一条问题与对话理解。图片或视频目标仅约束媒体创作，不把普通对话变成提示词。仅当用户要生成或修改提示词时选择 compose；查找、功能问答和 Skill 草稿选择 chat。先完成已清楚的请求，不反复要求用户确认。用户确认选项后直接执行对应请求，不再重复询问同一许可。需查询时在当前回复中调用工具并继续处理结果，不以“稍等、我这就查”结束本轮。历史助手发言只是发言；真实执行记录以工具状态为准，不能把旧承诺或旧自述当成已执行。依据真实结果回答；名称和标题面向用户，内部关联标识保留在工具参数中。";
+const CONVERSATION_CONTRACT = "按用户当前意图完成工作：正常交流、找案例、分析资料、创作提示词、提炼 Skill 或解答插件使用问题。最新纠正优先于先前任务；简短回复结合此前目标、问题和授权理解。图片或视频目标仅约束媒体创作，不把普通对话变成提示词。仅当用户要生成或修改提示词时选择 compose；查找、功能问答和 Skill 草稿选择 chat。先完成已清楚的请求，不反复要求用户确认。用户确认选项后直接执行对应请求，不再重复询问同一许可。需查询时在当前回复中调用工具并继续处理结果，不以“稍等、我这就查”结束本轮。历史助手发言只是发言；真实执行记录以工具状态为准，不能把旧承诺或旧自述当成已执行。依据真实结果回答；名称和标题面向用户，内部关联标识保留在工具参数中。";
 
 export function compileAgentExecutionPrompt(input = {}) {
   const settings = normalizeComposerAgentSettings(input.settings);

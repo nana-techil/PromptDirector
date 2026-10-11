@@ -13,21 +13,28 @@ def main():
         run.seed_storage(panel,{'entries':[{'id':'gym-case','title':'Gym source','text':'Exact original source','url':'https://example.test/gym','createdAt':'2026-10-11T00:00:00Z','mediaAssets':[]}],
             **ai_configuration_fixture(providers={'deepseek':{'apiKey':'isolated-fixture','consent':True,'models':{'creativePlanning':'deepseek-flash'}}},assignments={'creativePlanning':{'providerId':'deepseek','model':'deepseek-flash'}})})
         worker=run.context.service_workers[0]
-        worker.evaluate(r'''()=>{
+        model_fixture = r'''()=>{
           const original=fetch;globalThis.assistantRequests=[];
           globalThis.fetch=async(url,init)=>{
             if(!String(url).includes('api.deepseek.com'))return original(url,init);
             const body=JSON.parse(init.body);assistantRequests.push(body);
+            const canOpen=body.tools.some(t=>t.function.name==='open_workspace');
             const results=body.messages.filter(m=>m.role==='tool').map(m=>({name:body.messages.flatMap(m=>m.tool_calls||[]).find(c=>c.id===m.tool_call_id)?.function.name,data:JSON.parse(m.content)}));
             let delta,finish;const tool=(name,args)=>{delta={tool_calls:[{index:0,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]};finish='tool_calls';};
-            if(!results.some(r=>r.name==='open_workspace'))tool('open_workspace',{surface:'library'});
+            if(!results.some(r=>r.name==='declare_task')) {
+              const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
+              tool('declare_task',{mode:'act',goal:'打开库、查找健身并修改指定案例标题',userMessageIds:[ctx.currentUserId],steps:[
+                ...(canOpen?[{operation:'open_workspace'}]:[]),{operation:'search_cases'},{operation:'read_case_details',targetId:'gym-case'},{operation:'edit_case',targetId:'gym-case'}]});
+            }
+            else if(canOpen&&!results.some(r=>r.name==='open_workspace'))tool('open_workspace',{surface:'library'});
             else if(!results.some(r=>r.name==='search_cases'))tool('search_cases',{query:'健身',alternatives:['gym']});
             else if(!results.some(r=>r.name==='read_case_details'))tool('read_case_details',{caseId:'gym-case',parts:['overview','document','organization']});
             else if(!results.some(r=>r.name==='edit_case'))tool('edit_case',{requestId:crypto.randomUUID(),caseId:'gym-case',expectedRevision:results.find(r=>r.name==='read_case_details').data.revision,patch:{title:'Gym renamed'}});
             else {delta={content:'已打开案例库、找到并改好标题。'};finish='stop';}
             return new Response('data: '+JSON.stringify({choices:[{delta,finish_reason:finish}]})+'\n\ndata: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}});
           };
-        }''')
+        }'''
+        worker.evaluate(model_fixture)
         panel.reload();panel.locator('#open-capture-assistant').click()
         expect(panel.locator('.capture-assistant-welcome')).to_contain_text('想让我帮你做什么')
         panel.screenshot(path=str(out/'assistant-empty-zh-dark-390.png'))
@@ -46,6 +53,17 @@ def main():
         assert stored['captureAssistantDialog']['schema']=='shared-chat' and 'conversations' not in stored['captureAssistantDialog']
         studio=run.open_page('composer.html?session='+chat_id)
         expect(studio.locator('#composer-timeline')).to_contain_text('改好标题',timeout=30000)
+        # Studio uses the same native decision gate and host dispatcher, not a second task gate.
+        studio.evaluate(model_fixture)
+        studio.locator('#composer-instruction').fill('在同一对话里查找这个案例并把标题改为 Gym renamed')
+        studio.locator('#composer-action').click()
+        try: expect(studio.locator('.composer-message.chat')).to_have_count(2,timeout=15000)
+        except Exception:
+            studio.screenshot(path=str(out/'studio-native-failure.png'))
+            (out/'studio-native-failure.json').write_text(json.dumps({'text':studio.locator('body').inner_text(),'requests':studio.evaluate('assistantRequests'),'session':studio.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session",chat_id),'errors':run.page_errors},ensure_ascii=False))
+            raise
+        expect(studio.locator('.composer-message.chat').last).to_contain_text('改好标题',timeout=45000)
+        assert studio.evaluate('assistantRequests.length')==5
         # A studio write is the very same conversation, with a guarded revision.
         chat=panel.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session",chat_id)
         stale=chat
@@ -123,6 +141,6 @@ def main():
             studio.locator('.composer-session-item').first.hover()
             studio.screenshot(path=str(out/f'studio-chats-hover-{locale}-{theme}-1280.png'))
             studio.close()
-        result={'noWebpageChatAndActualOpenSearchEdit':True,'exactSourcePreserved':True,'sameStudioConversationAndToolContext':True,'studioLiveUpdates':True,'staleWriteRejected':True,'allSevenChatsRetained':True,'sidebarFiveRecent':True,'reloadDraftPreservedWithoutModelRequest':True,'studioDeleteDoesNotResurrectOrDeleteCases':True,'deleteHiddenUntilRowHoverOrKeyboardFocus':True,'borderlessDelete':True,'paidRequests':0,'pageErrors':run.page_errors}
+        result={'noWebpageChatAndActualOpenSearchEdit':True,'exactSourcePreserved':True,'sameStudioConversationAndToolContext':True,'studioNativeIntentAndActualHostTools':True,'studioLiveUpdates':True,'staleWriteRejected':True,'allSevenChatsRetained':True,'sidebarFiveRecent':True,'reloadDraftPreservedWithoutModelRequest':True,'studioDeleteDoesNotResurrectOrDeleteCases':True,'deleteHiddenUntilRowHoverOrKeyboardFocus':True,'borderlessDelete':True,'paidRequests':0,'pageErrors':run.page_errors}
         (out/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))
 if __name__=='__main__':main()

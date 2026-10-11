@@ -1,3 +1,5 @@
+import { withAssistantTaskRuntime } from './assistant-task.js';
+import { ASSISTANT_TASK_INSTRUCTION } from './plugin-assistant-prompt.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { getLibraryStorage } from './library-storage.js';
 import { createComposerWorkspaceTools } from './composer-workspace-tools.js';
@@ -19,6 +21,11 @@ const searchCache = createSearchIndexCache();
 
 // This loader runs only after an actual native tool call. Files and credentials never enter search results.
 export function createLocalComposerLibraryTools(options) {
+  const taskTools = tools => options.executionHost ? tools : withAssistantTaskRuntime({ ...tools,
+    instructions: [tools.instructions, ASSISTANT_TASK_INSTRUCTION].filter(Boolean).join('\n\n') }, {
+    messages: options.session.messages, instruction: options.session.messages.findLast(message => message.role === 'user')?.content || options.session.currentInstruction || '',
+    userMessageId: options.userMessageId, context: { surface: 'composer', model: { imageInput: options.vision === true } }
+  });
   const sendMessage = options.sendMessage ?? (message => chrome.runtime.sendMessage(message));
   const caseTools = createComposerLibraryTools({
     ...options,
@@ -83,23 +90,23 @@ export function createLocalComposerLibraryTools(options) {
       signal?.throwIfAborted();
       return response.data;
     };
-    return { ...tools, budget: options.budget,
+    return taskTools({ ...tools, budget: options.budget,
       execute: (name, args, context = {}) => invoke('execute', { name, args, callId: context.callId }, context.signal),
       loadContext: () => invoke('loadContext'),
       recordToolResult: input => invoke('recordToolResult', input),
       loadContinuation: input => invoke('loadContinuation', input),
       saveContinuation: input => invoke('saveContinuation', input),
       retainSkillVersions: input => invoke('retainSkillVersions', input),
-      clearContinuation: () => invoke('clearContinuation') };
+      clearContinuation: () => invoke('clearContinuation') });
   }
-  return { ...tools,
+  return taskTools({ ...tools,
     budget: options.budget,
     loadContext: () => taskProgress().loadContext(),
     recordToolResult: input => taskProgress().recordToolResult(input),
     loadContinuation: input => taskProgress().loadContinuation(input),
     saveContinuation: checkpoint => taskProgress().saveContinuation(checkpoint),
     retainSkillVersions: ids => taskProgress().retainSkillVersions(ids),
-    clearContinuation: () => taskProgress().clearContinuation() };
+    clearContinuation: () => taskProgress().clearContinuation() });
 }
 
 export async function handleComposerLibraryHost(message, storage = getLibraryStorage(), hostOptions = {}) {
@@ -111,7 +118,7 @@ export async function handleComposerLibraryHost(message, storage = getLibrarySto
     throw new Error('创作对话或用户要求已不存在，未执行工具动作');
   }
   const events = [];
-  const tools = createLocalComposerLibraryTools({ ...hostOptions, session, userMessageId: message.userMessageId,
+  const tools = createLocalComposerLibraryTools({ ...hostOptions, executionHost: true, session, userMessageId: message.userMessageId,
     vision: message.vision, onEvent: event => { events.push(event); } });
   const data = message.operation === 'execute'
     ? await tools.execute(message.input.name, message.input.args, { callId: message.input.callId })

@@ -47,6 +47,7 @@ export function appendAgentContext(body, protocol, records) {
 
 export function createAgentContextRuntime({ load, update, turnId }) {
   return {
+    turnId,
     loadContext: async () => (await load())?.toolContext || [],
     recordToolResult: observation => update(state => ({ ...state,
       toolContext: mergeAgentToolContext(state.toolContext, { ...observation, turnId }) })),

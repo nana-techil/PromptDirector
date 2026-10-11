@@ -1,7 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runCaptureAssistant } from '../extension/capture-assistant.js';
+import { runCaptureAssistant as executeCaptureAssistant } from '../extension/capture-assistant.js';
 import { CAPTURE_OPERATION_SPECS } from '../extension/capture-operation-specs.js';
+// These fixtures test business tool behavior. The native semantic protocol is
+// exercised separately through the actual provider loop in plugin-assistant-intent.
+async function runCaptureAssistant(input, dependencies) {
+  const execute = dependencies.execute;
+  return executeCaptureAssistant(input, { ...dependencies, execute: execute && (async (request, settings, images, options) => {
+    const context = await options.toolRuntime.context();
+    const steps = input.fixtureSteps || options.toolRuntime.specs.filter(spec => !['declare_task', 'settle_task'].includes(spec.name)).map(spec => ({ operation: spec.name }));
+    const declared = await options.toolRuntime.execute('declare_task', { mode: 'act', goal: input.instruction,
+      userMessageIds: [context.currentUserId], steps });
+    assert.equal(declared.data.ok, true);
+    return execute(request, settings, images, options);
+  }) });
+}
 const runtime = { aiTaskAssignments: { creativePlanning: { providerId: 'deepseek', model: 'deepseek-flash' } },
   aiSettings: { apiKey: 'isolated-fixture', consent: true } };
 const input = { tabId: 1, sourceUrl: 'https://example.test/', instruction: 'Collect the original prompt', locale: 'en' };
@@ -15,12 +28,12 @@ test('new project creation uses the shared synchronous durable project receipt i
       const receipt = await toolRuntime.execute('create_project', { requestId: 'project-request', name: project.name });
       assert.equal(receipt.data.project.id, project.id); assert.equal(receipt.data.ok, true); return { text: '取得真实项目编号' };
     } });
-  assert.equal(result.ok, true); assert.deepEqual(calls, ['read_capture', 'create_project']);
+  assert.equal(result.ok, true); assert.deepEqual(calls, ['create_project']);
 });
 
 test('a newer preview-only request is not forced to save by an inherited task goal', async () => {
   let current = { ...preview, selections: [{ candidateId: 'original' }], task: { outcome: 'save', candidateIds: ['original'], state: 'active' } };
-  const result = await runCaptureAssistant({ ...input, captureId: preview.captureId, instruction: '改一下选择，先不要保存' }, {
+  const result = await runCaptureAssistant({ ...input, captureId: preview.captureId, instruction: '改一下选择，先不要保存', fixtureSteps: [{ operation: 'update_capture' }] }, {
     runtime, signal: new AbortController().signal,
     call: async name => { assert(['read_capture', 'update_capture'].includes(name)); return name === 'read_capture' ? current : { state: 'completed', result: { ...current, revision: 2 } }; },
     execute: async (_request, _settings, _images, { toolRuntime }) => {
@@ -48,20 +61,20 @@ test('the plugin assistant can inspect any actual library case, not only this ch
       assert.equal(read.data.content,'Full actual prompt');return {text:'已核对实际保存的原文。'};
     }
   });
-  assert(result.ok);assert.deepEqual(calls,['read_capture','read_case_details','read_case_details']);
+  assert(result.ok);assert.deepEqual(calls,['read_case_details','read_case_details']);
 });
 
 test('asking how to capture or save can answer normally without scanning, selecting or saving the webpage', async () => {
   for (const instruction of ['这个怎么采集？', '怎么保存到项目？', 'How do I save this?']) {
     const f = fixture(async () => ({ text: 'Use the capture or save action.' }), { instruction });
-    assert.equal((await f.run()).ok, true); assert.deepEqual(f.calls, [{ operation: 'read_capture', args: { part: 'context', tabId: 1 } }]);
+    assert.equal((await f.run()).ok, true); assert.deepEqual(f.calls, []);
   }
 });
 
 test('collector assistant uses shared MCP tools lazily, preserves the configured model and rejects another page or preview', async () => {
   const f = fixture(async (request, _settings, _images, { toolRuntime }) => {
     assert.equal(request.session.aiProfile.model, 'deepseek-flash'); assert.equal(request.route, 'chat');
-    assert.deepEqual(toolRuntime.specs.slice(0, 4), CAPTURE_OPERATION_SPECS);
+    assert.deepEqual(toolRuntime.specs.slice(2, 6), CAPTURE_OPERATION_SPECS);
     assert(!toolRuntime.specs.some(spec => /delete|trash|generat/u.test(spec.name)));
     assert.equal((await toolRuntime.execute('prepare_capture', { tabId: 2 })).data.code, 'capture_scope_changed');
     await toolRuntime.execute('prepare_capture', { tabId: 1 });
@@ -70,7 +83,7 @@ test('collector assistant uses shared MCP tools lazily, preserves the configured
     return { text: 'Preview prepared', model: 'observed-model' };
   });
   const result = await f.run(); assert.equal(result.ok, true); assert.equal(result.model, 'observed-model');
-  assert.deepEqual(f.calls.map(item => item.operation), ['read_capture', 'prepare_capture', 'update_capture']);
+  assert.deepEqual(f.calls.map(item => item.operation), ['prepare_capture', 'update_capture']);
 });
 
 test('unconfigured model makes no page reads or paid requests', async () => {
@@ -87,7 +100,7 @@ test('an ordinary scan busy at submission does not deny capture tools after thei
     return { text: 'Preview prepared' };
   }, { collectorBusy: true });
   assert.equal((await f.run()).ok, true);
-  assert.deepEqual(f.calls.map(item => item.operation), ['read_capture', 'prepare_capture', 'update_capture']);
+  assert.deepEqual(f.calls.map(item => item.operation), ['prepare_capture', 'update_capture']);
 });
 
 test('stopping after a successful tool call retains capture identity and preview revision', async () => {

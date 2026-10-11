@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { captureContextReferences, runCaptureAssistant } from '../extension/capture-assistant.js';
 import { createAgentCapturePreview } from '../extension/agent-capture-preview.js';
 import { applyPageCaptureSelections } from '../extension/page-capture.js';
-import { captureCompletionCheck } from '../extension/capture-assistant.js';
+import { captureSourceSelectionCheck } from '../extension/capture-assistant.js';
 import { captureSceneForModel } from '../extension/agent-capture-preview.js';
 import { captureReceiptText } from '../extension/assistant-chat-session.js';
 
@@ -112,14 +112,14 @@ test('current scene remains a usable selector index when many long originals exc
   assert(index.excerptOnly && index.textModules[0].excerptOnly); assert.equal(scene.textModules[0].text, text);
 });
 
-test('runtime rejects fabricated save, unsupported completeness and zero-tool correction claims, while allowing ordinary guidance', () => {
-  assert(captureCompletionCheck('已保存。', [], { state: 'preview', revision: 1 }, null));
-  assert(captureCompletionCheck('已保存。', [], { state: 'completed', revision: 5 }, null), 'an old completed preview is not a receipt for this turn');
-  assert(captureCompletionCheck('已核对这条案例，我会补一次。', [], null, null));
+test('complete source selection is checked from tool facts regardless of assistant wording', () => {
   const read = { name: 'read_capture', args: { part: 'source', selector: '#comment' }, result: { data: { selector: '#comment', totalCharacters: 2700 } } };
-  assert(captureCompletionCheck('完整提示词已选中。', [read], { revision: 2, selections: [{ candidateId: 'post', includeText: true }], candidates: [{ id: 'post' }] }, null));
-  assert.equal(captureCompletionCheck('未取得完整提示词，原文仍被折叠。', [read], { revision: 2 }, null), undefined);
-  assert.equal(captureCompletionCheck('点保存案例即可入库。', [], null, null), undefined);
+  const task = { steps: [{ operation: 'save_capture' }] };
+  const preview = { revision: 2, selections: [{ candidateId: 'post', includeText: true }], candidates: [{ id: 'post' }] };
+  assert(captureSourceSelectionCheck([read], preview, task));
+  preview.candidates[0].textSources = [{ selector: '#comment', totalCharacters: 2700, completeness: 'complete' }];
+  assert.equal(captureSourceSelectionCheck([read], preview, task), undefined);
+  assert.equal(captureSourceSelectionCheck([read], preview, { steps: [{ operation: 'read_capture' }] }), undefined);
 });
 
 test('the shared studio transcript never turns duplicates or partial receipts into a saved status', () => {
@@ -128,10 +128,9 @@ test('the shared studio transcript never turns duplicates or partial receipts in
   assert.equal(captureReceiptText({ results: [{ entryId: 'case', status: 'saved' }] }), '已保存。');
 });
 
-test('a saved code preview does not prove that the effect was actually run', () => {
-  const edit={name:'edit_case',args:{patch:{codePreview:{html:'<button>Run</button>'}}},result:{data:{ok:true}}};
-  assert(captureCompletionCheck('Yes, it is saved — and the effect now works.',[edit],null,null));
-  assert.equal(captureCompletionCheck('交互预览已保存，请打开案例查看。',[edit],null,null),undefined);
+test('the assistant contract requires execution evidence for effect verification', async () => {
+  const { PLUGIN_ASSISTANT_INSTRUCTION } = await import('../extension/plugin-assistant-prompt.js');
+  assert(PLUGIN_ASSISTANT_INSTRUCTION.includes('写入HTML不证明效果正常'));
 });
 
 test('the first frozen X-comment correction reaches the strict provider and selects the full source without an empty tool_calls array', async()=>{
@@ -144,6 +143,9 @@ test('the first frozen X-comment correction reaches the strict provider and sele
     call:async (name,args)=>['prepare_capture','update_capture','save_capture'].includes(name)
       ?{state:'completed',result:await f.api.execute(name,args,args.requestId,f.scope)}:await f.api.read(args),
     execute:async (_request,_settings,_images,{toolRuntime})=>{
+      const context = await toolRuntime.context();
+      await toolRuntime.execute('declare_task', { mode:'act', goal:_request.instruction, userMessageIds:[context.currentUserId],
+        steps:[{operation:'prepare_capture'},{operation:'update_capture'}] });
       const response=await runComposerToolLoop({body:{model:'deepseek-flash',messages:[{role:'user',content:'采集评论提示词'}]},protocol:'chat_completions',runtime:toolRuntime,
         request:async body=>{
           wire.push(structuredClone(body));requests++;
@@ -153,7 +155,7 @@ test('the first frozen X-comment correction reaches the strict provider and sele
           if(requests===1)return tool('prepare_capture',{tabId:1});
           if(requests===2)return tool('read_capture',{captureId:current.captureId,expectedRevision:current.revision,part:'source',selector:'#comment'});
           if(requests===3)return sse({content:'完整提示词已选中。'});
-          if(requests===4){assert(body.messages.at(-1).content.includes('textSources'));return tool('update_capture',{requestId:'select',captureId:current.captureId,expectedRevision:current.revision,
+          if(requests===4){assert(body.messages.at(-1).content.includes('update_capture'));return tool('update_capture',{requestId:'select',captureId:current.captureId,expectedRevision:current.revision,
             candidates:[{id:'post',title:'Post',canonicalUrl:f.url,media:[],textSources:[{selector:'#comment',target:'prompt'}]}],selections:[{candidateId:'post',includeText:true,selectedMediaIds:[]}]});}
           return sse({content:'已取得评论全文，预览中可查看。'});
         }});
@@ -171,6 +173,9 @@ test('a first code-case save includes the interactive preview, frozen originals 
     runtime:{aiTaskAssignments:{creativePlanning:{providerId:'deepseek',model:'deepseek-flash'}},aiSettings:{apiKey:'fixture',consent:true}},signal:new AbortController().signal,
     call:async(name,args)=>['prepare_capture','update_capture','save_capture'].includes(name)?{state:'completed',result:await api.execute(name,args,args.requestId,f.scope)}:await api.read(args),
     execute:async(_req,_settings,_images,{toolRuntime})=>{
+      const context=await toolRuntime.context();
+      await toolRuntime.execute('declare_task',{mode:'act',goal:_req.instruction,userMessageIds:[context.currentUserId],contentTypeId:'content:code-case',
+        steps:[{operation:'prepare_capture'},{operation:'update_capture'},{operation:'save_capture'}]});
       const prepared=(await toolRuntime.execute('prepare_capture',{tabId:1})).data;
       const source=(await toolRuntime.execute('read_capture',{captureId:prepared.captureId,part:'source',selector:'#comment'})).data;
       const updated=(await toolRuntime.execute('update_capture',{captureId:prepared.captureId,expectedRevision:source.revision,
@@ -184,10 +189,18 @@ test('a first code-case save includes the interactive preview, frozen originals 
   assert(commits[0].batch.candidates[0].contentText.includes(html));assert(commits[0].batch.candidates[0].contentText.includes(f.original));
 });
 
-test('the diagnostic save commands authorize preparation and saving without a second permission question',()=>{
- for(const instruction of ['存一下','这个也给我存一下','save this']){
-  assert(captureCompletionCheck('要我先采集再保存吗？',[],null,null,instruction));
- }
- assert.equal(captureCompletionCheck('点保存即可。',[],null,null,'这个怎么保存？'),undefined);
- assert.equal(captureCompletionCheck('原件未取得。',[{result:{data:{ok:false}}}],null,null,'存一下'),undefined);
+test('task completion contains no classifier for diagnostic command phrases', async () => {
+  const fs = await import('node:fs/promises');
+  const source = await fs.readFile(new URL('../extension/capture-assistant.js', import.meta.url), 'utf8');
+  assert(!source.includes('directSave')); assert(!source.includes('requestsCodeCase'));
+});
+
+
+test('exploratory sources outside the registered target do not force unrelated content into a saved case', () => {
+  const reads = ['#wrong-module','#chosen-module'].map(selector => ({ name:'read_capture',args:{part:'source',selector},result:{data:{selector,totalCharacters:2700}} }));
+  const preview = { candidates:[{id:'chosen',textSources:[{selector:'#chosen-module',totalCharacters:2700,completeness:'complete'}]}],selections:[{candidateId:'chosen',includeText:true}] };
+  const task = {steps:[{operation:'read_capture',part:'source',selector:'#chosen-module'},{operation:'save_capture'}]};
+  assert.equal(captureSourceSelectionCheck(reads,preview,task),undefined);
+  preview.candidates[0].textSources=[];
+  assert.deepEqual(captureSourceSelectionCheck(reads,preview,task).missing,['#chosen-module']);
 });
