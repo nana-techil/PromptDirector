@@ -1,5 +1,6 @@
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { PROJECT_OPERATION_SPECS } from './project-operation-specs.js';
+import { CASE_OPERATION_SPECS } from './case-operation-specs.js';
 import { composerProfileForTaskAssignment, createComposerSession } from './composer.js';
 import { composerLibraryToolService, executeComposerTurnWithService } from './composer-service.js';
 import { captureDiagnosticValue } from './capture-assistant-diagnostics.js';
@@ -75,6 +76,11 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
       if (preview.tabId !== input.tabId || preview.sourceUrl !== input.sourceUrl) throw agentError('page_changed', '采集网页已改变，请重新开始当前网页的采集');
     }
     const priorContext = await sessionRuntime.loadContext?.() || [];
+    const savedCaseIds = new Set([
+      ...(input.messages || []).filter(message => message.role === 'result').flatMap(message => message.result?.results || []),
+      ...priorContext.filter(record => record.name === 'save_capture').flatMap(record => record.data?.results || []),
+      ...(preview?.results || [])
+    ].filter(item => ['saved', 'partial', 'duplicate'].includes(item.status) && item.entryId).map(item => item.entryId));
     diagnostic.context = captureDiagnosticValue(priorContext);
     let currentScene;
     try { currentScene = await call('read_capture', { part: 'context', tabId: input.tabId }); }
@@ -95,13 +101,18 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           message: missing.length ? `指定任务仍有${missing.length}项未选入预览，请按实际内容补齐。` : '当前目标是保存，但尚无全部指定案例的成功保存回执。请执行已授权保存，或明确记录实际阻塞；不要再给样张或声称完成。' };
       },
       specs: [...CAPTURE_OPERATION_SPECS, ...PROJECT_OPERATION_SPECS.filter(spec => ['read_projects', 'create_project'].includes(spec.name)),
+        ...CASE_OPERATION_SPECS.filter(spec => spec.name === 'read_case_details'),
         ...(attachmentIds.size ? [{ name: 'read_chat_attachment', description: '按对话附件的transferId重读用户实际上传的原文或图片。附件用于沟通，不默认保存；用户明确要保存文件时可在update_capture.media中指定localTransferId及实际kind，再明确选择保存。',
           parameters: { type: 'object', properties: { transferId: { type: 'string', enum: [...attachmentIds] } }, required: ['transferId'], additionalProperties: false } }] : [])],
       instructions: `你是PromptDirector采集侧栏中的正常对话助手。当前网页：${JSON.stringify({ tabId: input.tabId, url: input.sourceUrl, title: input.pageTitle })}。
 当前采集预览：${JSON.stringify(preview)}。
 当前人工预览：${JSON.stringify(input.initialBatch || null)}。
 本轮刚读取的网页现场（优先于历史页面观察）：${JSON.stringify(currentScene)}。
-当前保存项目：${JSON.stringify(input.project || '')}。可选新项目草稿：${JSON.stringify(input.newCollectionName || '')}。
+侧栏回复必须紧凑：默认最多3个短句、120个汉字或60个英文词。只说结果、缺失和必要的下一步；只问一个真正阻塞的问题。不要复述用户目标、页面背景、剧情、工具步骤、重复提醒、内部类型编号或自行扩展建议。详细原文/源码放采集预览，不贴在聊天；用户明确索要详细说明时才展开。保存有实际回执后只报结果，结果卡已经显示的标题/项目/素材不再重复。缺少项目不阻塞保存，可不归属项目；禁止反复催问项目。错误纠正须重新读取实际来源，不拿旧回复或图片短提示词推断长文缺失；无法核验就明确未核验，不宣称无法读取或已完整。
+本对话已有真实保存回执的案例编号：${JSON.stringify([...savedCaseIds])}。用户反馈入库缺失时用read_case_details(parts=[source,media,document])按需核对实际保存字段及分页，不拿聊天或旧预览替代读回。只能读取本对话实际保存的案例；没有回执不能猜编号。
+当前现场textModules提供可见正文/评论的真实selector；query也可按正文片段检索，不猜article:nth-of-type的序号。评论原提示词优先读取对应真实selector，用textSources.target=prompt保存完整来源。案例完整原词与图片附带原词分开保留，不把图片短字段说成案例全文。内容类型可在save_capture.contentTypeId指定，已有人工类型优先。代码案例可在update_capture.candidates[].codePreview.html提供自包含HTML交互复现，原始CSS/React/Prompt仍用textSources完整保留；复现不是原站原件。根据读到的源代码保留同等交互，不编造动效；不依赖外部CDN或在线React编译。库内预览隔离运行，不支持网络、外部库、账号或插件API；依赖未满足就明确只能存源码，不把缺少视频URL等同无法保存代码动效。只在用户要求代码效果保存时制作复现，普通视频或文字不生成代码。
+同模块多个源码页签用read_capture(part=source,selectors=[实际selector列表])在同一现场一次读取，完整原文同时冻结，只返回一个新revision；每段sources的nextOffset表示理解分页，必要时按单个selector续读。不要对同一旧revision连续发多个source读取而制造版本冲突。
+当前保存项目：${JSON.stringify(input.project || '')}。可选新项目草稿：${JSON.stringify(input.newCollectionName || '')}。当前内容类型：${JSON.stringify(input.captureMetadata?.contentTypeId || '')}，人工指定：${Boolean(input.captureMetadata?.contentTypeExplicit)}。保存卡项目菜单可选择内容类型或自动识别，人工选择优先。
 本对话可读附件：${JSON.stringify([...attachments, ...(input.messages || []).filter(message => message.role === 'user').flatMap(message => message.attachments || [])])}。纸夹、粘贴或拖入的附件是正常聊天资料，不自动成为案例原件；截图用于说明目标，不把截图当网页媒体。本轮图片只有成功发送实际图像后才声称看见；历史图片可read_chat_attachment按需重读。明确保存附件才将localTransferId列入候选media并选择；不要读取其他对话附件或猜编号。
 插件真实操作：页头“新对话”清空当前聊天，保留未保存预览和已保存案例；换网页自动切换会话，返回原网页继续原会话。当前网页标题旁“导出对话诊断”下载JSON，包含多轮会话及采集回执；不会清空资料。关闭侧栏不会清空对话，刷新也不是新建会话。绝不建议清空网站或插件存储；不要猜测不存在的按钮，不以网页截图定位插件侧栏控件。
 即使普通采集仍在进行，或待保存内容来自另一网页，用法问答也照常回答，不改这些已有任务或草稿。用户问怎么采集、如何保存时直接简短回答，不为教学强制扫描、选择或保存。直接采集可点插件采集按钮或说“帮我采集”，保存可用对话内保存按钮或明确说“保存到某项目”。不要求额外表单步骤。用户明确要求执行采集才prepare_capture、选择update_capture；如果普通扫描失败，保留草稿，用read_capture的page事实补漏，不重复报站点错误后停止。用户重试或页面刚加载时，用part=page,refresh=true读取新的事实，后续操作使用返回的新revision，不反复读取旧快照。用户询问网页具体内容或当前界面时可按需要读取；未取得截图不要声称看见了屏幕，文字与截图区分。${service.vision ? '需要理解图片可read_capture(part=image,candidateId,mediaId)读取原件，包括明确上传的图片；需要看网页界面可read_capture(part=screenshot)，只取得当前可见网页；不把封面当视频原件。' : '当前配置模型不支持图像输入，不能声称看过截图。'}
@@ -116,6 +127,10 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           if (name === 'read_chat_attachment') return await attachment(args.transferId);
           if (name === 'read_projects') return { data: await call(name, args) };
           if (name === 'create_project') return { data: await call(name, args) };
+          if (name === 'read_case_details') {
+            if (!savedCaseIds.has(args.caseId)) throw agentError('capture_scope_changed', '只能核对本对话实际保存的案例');
+            return { data: await call(name, args) };
+          }
           if (name === 'read_capture' && args.part === 'context') {
             if (args.tabId !== undefined && args.tabId !== input.tabId || args.captureId && args.captureId !== preview?.captureId) throw agentError('capture_scope_changed', '只能读取本轮采集网页');
             return { data: await call(name, { ...args, tabId: input.tabId }) };
@@ -155,6 +170,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
             if (input.newCollectionName && !args.project) throw agentError('capture_project_required', '请先新建正在填写的项目，再使用真实项目编号保存');
             onStatus('正在保存…');
             saveResult = await completed(name, { ...args, project: args.project ?? input.project ?? '', captureMetadata: input.captureMetadata, requestId: crypto.randomUUID() });
+            for (const item of saveResult.results || []) if (['saved', 'partial', 'duplicate'].includes(item.status) && item.entryId) savedCaseIds.add(item.entryId);
             remember(await call('read_capture', { captureId: preview.captureId }));
             return { data: saveResult };
           }
@@ -174,10 +190,13 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     };
     onStatus('正在回复…');
     const result = await execute({ session, userMessage: input.instruction, instruction: input.instruction, route: 'chat' }, settings, preparedImages, { signal, toolRuntime, onDelta });
+    // The save receipt, not a model's explanation, determines the final result.
+    const saved = saveResult?.results?.length && saveResult.results.every(item => ['saved', 'duplicate'].includes(item.status) && item.entryId);
+    const reply = saved ? (/^en/iu.test(input.locale || '') ? 'Saved.' : '已保存。') : result.text;
     return { ok: true, ...(preview ? { captureId: preview.captureId, revision: preview.revision, previewState: preview.state } : {}),
       outcome: preview?.state === 'completed' ? 'saved' : saveResult ? 'partial' : preview ? 'preview' : 'conversation',
-      ...(saveResult ? { saveResult } : {}), text: result.text, model: result.model || aiProfile.model, usage: result.usage, instruction: input.instruction,
-      diagnostic: { ...diagnostic, model: result.model || aiProfile.model, usage: result.usage, finishedAt: new Date().toISOString() } };
+      ...(saveResult ? { saveResult } : {}), text: reply, model: result.model || aiProfile.model, usage: result.usage, instruction: input.instruction,
+      diagnostic: { ...diagnostic, modelReply: result.text, model: result.model || aiProfile.model, usage: result.usage, finishedAt: new Date().toISOString() } };
   } catch (error) {
     return { ok: false, ...(preview ? { captureId: preview.captureId, revision: preview.revision } : {}), ...(saveResult ? { saveResult } : {}),
       message: signal.aborted ? signal.reason?.message || '采集助手已停止，已有预览保留' : error.message,

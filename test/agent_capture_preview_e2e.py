@@ -417,7 +417,29 @@ def main():
                             assert panel.locator(selector).evaluate('e=>{const r=e.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth}'),selector
                         assert panel.locator('#capture-assistant-send').evaluate('e=>{const r=e.getBoundingClientRect();return r.right<=innerWidth&&r.bottom<=innerHeight}')
                         panel.screenshot(path=str(out/f'capture-chat-{locale}-{theme}-{width}.png'))
-                results={'mcpPreviewAndSupplement':True,'exactOriginalBytesReadback':True,'saveRetryDoesNotDuplicate':True,
+                        panel.locator('.capture-assistant-project > summary').click()
+                        expect(panel.locator('#capture-assistant-content-type')).to_be_visible()
+                        assert panel.locator('.capture-assistant-project .detail-project-popover').evaluate('e=>{const r=e.getBoundingClientRect();return r.x>=0 && r.right<=innerWidth && r.y>=0 && r.bottom<=innerHeight}')
+                        assert panel.locator('.capture-assistant-project .detail-project-popover').evaluate('e=>e.scrollWidth<=e.clientWidth'), 'type and project controls must not clip horizontally'
+                        expect(panel.locator('.capture-assistant-project .detail-project-list')).to_be_visible()
+                        panel.screenshot(path=str(out/f'capture-type-menu-{locale}-{theme}-{width}.png'))
+                        panel.locator('.capture-assistant-project > summary').click()
+                # The save-card menu exposes the real shared classification draft.
+                panel.locator('.capture-assistant-project > summary').click()
+                expect(panel.locator('#capture-assistant-content-type')).to_be_visible()
+                assert panel.locator('#capture-assistant-content-type option[value="content:code-case"]').count()==1
+                panel.locator('#capture-assistant-content-type').select_option('content:reference')
+                expect(panel.locator('#capture-assistant-content-type')).to_have_value('content:reference')
+                panel.screenshot(path=str(out/'capture-type-selected-zh-dark-960.png'))
+                panel.locator('.capture-assistant-project > summary').click()
+                count=panel.locator('.capture-assistant-result').count()
+                panel.locator('#capture-assistant-save').click()
+                expect(panel.locator('.capture-assistant-result')).to_have_count(count+1,timeout=30000)
+                assert panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.some(entry=>entry.classification?.pathIds?.[0]==='content:reference' && entry.classification?.source==='manual')")
+                # Old verbose messages are compact by default; their full content
+                # remains available without another model request.
+                panel.evaluate("async()=>{const {compactCaptureReply}=await import('./capture-reply.js');const text='Long explanation. '.repeat(100);const projected=compactCaptureReply(text);if(Array.from(projected.brief).length>120||!projected.overflow)throw new Error('Reply must stay compact')}")
+                results={'manualContentTypeSaveReadback':True,'boundedSidebarReply':True,'mcpPreviewAndSupplement':True,'exactOriginalBytesReadback':True,'saveRetryDoesNotDuplicate':True,
                     'guidanceWithoutScanTools':True,'markdownAndStreamingWired':True,'inChatSaveAndOpenCase':True,
                     'closeContinuesAndReopenRestores':True,'explicitStopRetainsPreview':True,'changedPageDoesNotApplyOldPreview':True,'earlyFalseCompletionDoesNotRemainInChatOrWriteCases':True,
                     'sameSourceDoesNotDuplicateOrReplaceOriginalPrompt':True,'localFilesSurviveReloadAndExactBytes':True,'chatPasteDropRemoveWithoutLibraryWrites':True,'modelSelectionSendsActualImageWithoutChangingGlobalRoute':True,'naturalLanguageSaveToProject':True,'naturalLanguageCreateProjectAndSave':True,

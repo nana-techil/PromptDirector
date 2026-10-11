@@ -35,6 +35,22 @@ function fixture(execute, extras = {}) {
     call: async (operation, args) => { calls.push({ operation, args }); return operation === 'read_capture' ? preview : { state: 'completed', result: preview }; }, execute }) };
 }
 
+test('a missing-prompt complaint can read the actual saved case but cannot inspect an unrelated library case', async () => {
+  const calls = [];
+  const result = await runCaptureAssistant({ ...input, instruction: '提示词没存全',
+    messages: [{ role: 'result', result: { results: [{ status: 'saved', entryId: 'real-saved-case' }] } }] }, {
+    runtime, signal: new AbortController().signal,
+    call: async (name,args) => { calls.push(name); return name === 'read_case_details' ? { content: 'Full actual prompt', nextOffset: null } : { content: 'Current reply' }; },
+    execute: async (_request,_settings,_images,{toolRuntime}) => {
+      assert(toolRuntime.specs.some(spec => spec.name === 'read_case_details'));
+      assert.equal((await toolRuntime.execute('read_case_details',{caseId:'unrelated',parts:['source','media']})).data.code,'capture_scope_changed');
+      const read=await toolRuntime.execute('read_case_details',{caseId:'real-saved-case',parts:['source','media','document']});
+      assert.equal(read.data.content,'Full actual prompt');return {text:'已核对实际保存的原文。'};
+    }
+  });
+  assert(result.ok);assert.deepEqual(calls,['read_capture','read_case_details']);
+});
+
 test('asking how to capture or save can answer normally without scanning, selecting or saving the webpage', async () => {
   for (const instruction of ['这个怎么采集？', '怎么保存到项目？', 'How do I save this?']) {
     const f = fixture(async () => ({ text: 'Use the capture or save action.' }), { instruction });

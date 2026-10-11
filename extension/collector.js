@@ -103,6 +103,7 @@ let pageCaptureBatch = null;
 const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptureBatch,
   isBusy: () => Boolean(saving || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || smartVisualSession || regionCaptureState || draft?.targetCaseId),
   getCollections: () => collections, getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
+  getContentTypes: () => contentTypes, getSuggestedType: () => elements.contentType.value,
   changeProject: (...args) => updateCaptureMetadata(...args),
   save: () => savePageCapture(false), cancelSave: () => cancelCaptureSave(),
   switchBatch: batch => {

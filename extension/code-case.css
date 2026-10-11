@@ -1,0 +1,5 @@
+.code-case-frame { width: 100%; min-height: 340px; border: 1px solid var(--line); border-radius: var(--ui-container-radius); background: var(--card); }
+.code-case-status { font-size: 11px; color: var(--muted); margin: 6px 0 12px; }
+.code-case-view details { max-width: 100%; }
+.code-case-view .markdown-reader { min-width: 0; overflow-wrap: anywhere; }
+.code-case-view pre { overflow: auto; max-width: 100%; }

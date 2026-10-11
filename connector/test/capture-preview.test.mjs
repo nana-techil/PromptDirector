@@ -36,8 +36,8 @@ test('MCP uses the same capture schemas, waits for receipts and exposes no arbit
   });
   try {
     const inputs = { prepare_capture: { requestId: 'prepare', tabId: 5 }, read_capture: { captureId: 'preview' },
-      update_capture: { requestId: 'select', captureId: 'preview', expectedRevision: 1, selections: [] },
-      save_capture: { requestId: 'save', captureId: 'preview', expectedRevision: 2 } };
+      update_capture: { requestId: 'select', captureId: 'preview', expectedRevision: 1, selections: [], candidates: [{id:'code',title:'Code',canonicalUrl:'https://example.test/',contentText:'Original source',media:[],codePreview:{html:'<!doctype html><button>Demo</button>'}}] },
+      save_capture: { requestId: 'save', captureId: 'preview', expectedRevision: 2, contentTypeId:'content:code-case' } };
     for (const spec of CAPTURE_OPERATION_SPECS) {
       const tool = server._registeredTools[`promptdirector_${spec.name}`];
       assert.equal(tool.annotations.readOnlyHint, spec.name === 'read_capture');

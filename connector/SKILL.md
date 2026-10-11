@@ -67,3 +67,7 @@ submit返回ok不代表写回成功，必须查item.state及error；全批查看
 采集模块定位：read_capture(part=page)返回当前选区及可见代码/对话框的context事实；需要完整源码或长正文，read_capture(part=source,selector)取得实际区域并冻结完整原文，再update_capture(candidates[].textSources=[{selector,target:"text"或"prompt"}])直接保存原文，不让模型重写源码。分页只表示Agent读到的范围，不用前半页声称全文已读。status.captureReadParts用于确认当前后台读取能力，缺少source声明时不假定可用。批量执行用update_capture.task记录实际目标、candidateIds、outcome和active/waiting；有缺项不假报完成。新建项目用create_project的即时项目回执，不把它当get_task的异步任务。已准备好的本机文件可在媒体中用localTransferId沿同一采集管线选择保存；聊天附件不默认入库。外部宿主独立保存文件仍可save_material(files)，两者不需要再次调用插件内部模型。
 
 当前页面的弹窗/源码页签变化不以URL变化判断。read_capture(part=context,tabId)直接读可见代码及弹窗；query按目标模块标题查实际selector，再source读取并通过textSources保留完整原文。单模块创建独立候选，不重命名整页候选而混入其他正文。context是完整的小快照，较大范围用query聚焦或增加length，不拼接不同时间的现场分页。
+
+正文与评论可用context的textModules定位，query也匹配正文片段，使用返回的selector而非猜DOM序号。保存后的缺失核对用read_case_details按需读取真实source/media/document，区分案例完整原词与图片附带短词。save_capture.contentTypeId可指定库内真实内容类型，人工预览中的类型选择优先。用户要保留代码交互效果时，原CSS/React/Prompt用textSources完整保留，可另附candidates[].codePreview.html自包含HTML复现；与源代码分开，不能冒称原站原件或已验证运行。预览隔离且不联网，不依赖远程CDN/在线编译；缺依赖时说明源码已保留、预览未完成，不将没有视频URL等同无法保存代码效果。只按用户要求制作复现，不在普通采集中自动生成代码。
+
+同一模块多个源码区域可用read_capture(part=source,selectors=[真实selector列表])一次冻结完整原文，返回共同revision及sources。length在区域间分摊，sources[].nextOffset不是全文已读；理解时用对应单个selector续读，保存用已冻结textSources，不重写源码。不要按同一旧revision并行发多个单区域读取。

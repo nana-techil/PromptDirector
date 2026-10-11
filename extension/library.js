@@ -54,6 +54,7 @@ import { createDetailProjectSelector } from "./detail-project-selector.js";
 import { readImageDimensions, imageNeedsOriginalPlayback } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { mediaFormatLabel, usesArticleReader, usesPostReader } from "./case-presentation.js";
+import { createCodeCaseView } from './code-case.js';
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import {
   assertStorageCapacity,
@@ -224,7 +225,7 @@ import {
   createLibraryVisibilityReader
 } from "./organizer.js";
 import { visualAnalysisPromptReplacement } from "./image-prompt.js";
-import { detailPromptSources, sharedOriginalPrompt, originalMediaPrompt, caseOriginalPromptText } from "./prompt-sources.js";
+import { detailPromptSources, sharedOriginalPrompt, originalMediaPrompt, detailCaseOriginalPromptText } from "./prompt-sources.js";
 const promptTabByAsset = new Map();
 import { createPromptPanel, promptIconButton } from "./prompt-panel.js";
 import { preserveElementPosition, replaceDetailSection } from "./detail-position.js";
@@ -6413,6 +6414,15 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   const presentation = usesArticleReader(entry) ? "article" : usesPostReader(entry) ? "post" : "case";
   const mountedBody = elements.detailContent.querySelector(".detail-primary > .detail-body");
   const mountedArticle = mountedBody?.querySelector(":scope > .article-document-reader");
+  const mountedCode = mountedBody?.querySelector(':scope > .code-case-view');
+  if (!rebuildMedia && !resetScroll && contentRoleForEntry(entry) === CONTENT_ROLES.codeCase
+    && elements.detailDrawer.dataset.entryId === entry.id && mountedCode?.codeSourceText === entry.text
+    && mountedBody.dataset.mediaIdentity === mediaIdentity) {
+    const header = mountedBody.querySelector(':scope > .detail-header-section');
+    if (header) replaceDetailSection(header, createDetailHeader(entry));
+    mountedBody.querySelector(':scope > .detail-quick-organization')?.updateEntry?.(entry);
+    mountAuthoredNotes(mountedBody, entry, t); refreshLocalDiscovery(entry); return;
+  }
   if (!rebuildMedia && !resetScroll && usesArticleReader(entry) && elements.detailDrawer.dataset.entryId === entry.id
     && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation
     && (mountedArticle?.dataset.editing === "true" || mountedArticle?.dataset.articleIdentity === JSON.stringify(normalizeEntryMedia(entry).articleDocument))) {
@@ -6481,12 +6491,18 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     return;
   }
   const primary = el("div", "detail-primary");
+  const codeCase = contentRoleForEntry(entry) === CONTENT_ROLES.codeCase;
   if (hasPrimaryMedia && !hasArticleDocument && !capturedPost) primary.append(await createDetailMediaGallery(entry, {
     immersive: true
   }));
   else if (!entry.text?.trim() && !capturedPost) primary.append(textEl("div", "detail-placeholder", "这条案例还没有内容"));
   body.append(createDetailHeader(entry));
-  if (capturedPost) {
+  if (codeCase) {
+    const view = createCodeCaseView(entry, { onCopy: (button, text) => copyTextWithFeedback(button, text, '已复制', '浏览器未允许复制，请选中文本后复制') });
+    body.append(view);
+    const cleanup = () => { view.dispose?.(); detailControllerCleanups.delete(cleanup); };
+    detailControllerCleanups.add(cleanup);
+  } else if (capturedPost) {
     body.append(await createCapturedPostView(entry));
   } else if (hasArticleDocument) {
     body.append(await createArticleDocumentReader(entry));
@@ -6494,7 +6510,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     if (unplacedMedia) body.append(unplacedMedia);
   }
   if (isEntryPending(entry)) body.append(createPendingReviewPanel(entry));
-  const prompt = capturedPost ? null : createPromptSection(entry);
+  const prompt = capturedPost || codeCase ? null : createPromptSection(entry);
   if (prompt) body.append(prompt);
   const visualSetAnalyses = createVisualSetAnalyses(entry);
   if (visualSetAnalyses) body.append(visualSetAnalyses);
@@ -9908,7 +9924,7 @@ function createMediaPromptSection(entry, asset, options) {
   const tabKey = `${entry.id}:${asset.id}`;
   const sharedOriginal = sharedOriginalPrompt(entry);
   const multipleMedia = entryMediaAssets(entry).filter(item => ['image', 'video'].includes(item.kind) && item.usage !== 'poster').length > 1;
-  const caseOriginal = multipleMedia ? sharedOriginal || caseOriginalPromptText(entry) : source.original;
+  const caseOriginal = multipleMedia ? sharedOriginal || detailCaseOriginalPromptText(entry) : source.original;
   const originalIsMedia = !multipleMedia && Boolean(source.originalAssetId);
   const editableOriginal = Boolean(sharedOriginal || originalIsMedia);
   const mediaOriginal = String(originalMediaPrompt(entry, asset.id)?.text || '').trim();

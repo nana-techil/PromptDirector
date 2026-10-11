@@ -1,6 +1,16 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "多个区域请一次读取，续读使用单个selector": "Read multiple regions together. Continue a region with its individual selector.",
+  "只能核对本对话实际保存的案例": "Only cases saved in this conversation can be checked.",
+  "自动识别": "Auto-detect",
+  "代码案例": "Code case",
+  "交互预览": "Interactive preview",
+  "复现预览": "Reconstructed preview",
+  "预览运行失败，源码已保留": "Preview failed. Source code is preserved.",
+  "尚未保存可运行预览": "No runnable preview has been saved yet.",
+  "查看源码": "View source code",
+  "复制源码": "Copy source code",
   "添加附件": "Add attachments",
   "任务尚未完成且模型没有继续执行；已取得资料保留，未声称保存": "The task is unfinished and the model stopped making progress. Retrieved content is preserved; saving is not confirmed.",
   "附件尚未准备好，已有对话保留": "The attachment is not ready. Your conversation is preserved.",

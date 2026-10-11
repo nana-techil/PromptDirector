@@ -14,7 +14,8 @@ export const CONTENT_ROLES = Object.freeze({
   videoCase: "video_case",
   audio: "audio",
   sourceFile: "source_file",
-  reference: "reference"
+  reference: "reference",
+  codeCase: "code_case"
 });
 
 export const CONTENT_IDS = Object.freeze({
@@ -25,7 +26,8 @@ export const CONTENT_IDS = Object.freeze({
   videoCase: "content:video-case",
   audio: "content:audio",
   sourceFile: "content:source-file",
-  reference: "content:reference"
+  reference: "content:reference",
+  codeCase: "content:code-case"
 });
 
 const ROLE_BY_LEGACY_ID = Object.freeze({
@@ -36,7 +38,8 @@ const ROLE_BY_LEGACY_ID = Object.freeze({
   [CONTENT_IDS.videoCase]: CONTENT_ROLES.videoCase,
   [CONTENT_IDS.audio]: CONTENT_ROLES.audio,
   [CONTENT_IDS.sourceFile]: CONTENT_ROLES.sourceFile,
-  [CONTENT_IDS.reference]: CONTENT_ROLES.reference
+  [CONTENT_IDS.reference]: CONTENT_ROLES.reference,
+  [CONTENT_IDS.codeCase]: CONTENT_ROLES.codeCase
 });
 
 const DEFAULT_NODES = Object.freeze([
@@ -47,7 +50,8 @@ const DEFAULT_NODES = Object.freeze([
   { id: CONTENT_IDS.videoCase, name: "视频案例", role: CONTENT_ROLES.videoCase },
   { id: CONTENT_IDS.reference, name: "资料文档", role: CONTENT_ROLES.reference },
   { id: CONTENT_IDS.audio, name: "声音", role: CONTENT_ROLES.audio },
-  { id: CONTENT_IDS.sourceFile, name: "源文件", role: CONTENT_ROLES.sourceFile }
+  { id: CONTENT_IDS.sourceFile, name: "源文件", role: CONTENT_ROLES.sourceFile },
+  { id: CONTENT_IDS.codeCase, name: "代码案例", role: CONTENT_ROLES.codeCase }
 ].map((item, order) => ({
   ...item,
   axis: "content",
@@ -86,7 +90,7 @@ export function normalizeTaxonomy(value) {
       aliases: uniqueNames(item?.aliases)
     }];
   });
-  for (const requiredRole of [CONTENT_ROLES.videoCase, CONTENT_ROLES.reference, CONTENT_ROLES.audio, CONTENT_ROLES.sourceFile]) {
+  for (const requiredRole of [CONTENT_ROLES.videoCase, CONTENT_ROLES.reference, CONTENT_ROLES.audio, CONTENT_ROLES.sourceFile, CONTENT_ROLES.codeCase]) {
     if (nodes.some((item) => item.role === requiredRole)) continue;
     const defaultNode = DEFAULT_NODES.find((item) => item.role === requiredRole);
     const reserved = nodes.find((item) => item.id === defaultNode.id);

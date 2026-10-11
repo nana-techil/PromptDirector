@@ -563,6 +563,8 @@ export function normalizeSourceFacts(value = {}, canonicalUrl = "") {
     provider: clean(value.provider) || hostname(canonicalUrl),
     ...(value.description ? { description: normalizeText(value.description) } : {}),
     ...(typeof value.originalPromptAvailable === "boolean" ? { originalPromptAvailable: value.originalPromptAvailable } : {}),
+    ...(value.caseOriginalPromptAvailable === true ? { caseOriginalPromptAvailable: true } : {}),
+    ...(value.codePreviewAvailable === true ? { codePreviewAvailable: true } : {}),
     pageType: PAGE_TYPES.has(value.pageType) ? value.pageType : "generic",
     itemId: clean(value.itemId),
     authorUrl: safeUrl(value.authorUrl),

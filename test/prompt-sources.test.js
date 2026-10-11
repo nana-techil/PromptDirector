@@ -1,7 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detailPromptSources } from "../extension/prompt-sources.js";
+import { detailPromptSources, sharedOriginalPrompt, caseOriginalPromptText, detailCaseOriginalPromptText } from "../extension/prompt-sources.js";
 import { setEntryMediaPrompt } from "../extension/media.js";
+
+test('an explicitly captured full case prompt remains readable when a screenshot carries only its prefix', () => {
+  const complete = 'Create a cinematic scene, standing barefoot inside an apartment. No watermark.';
+  const entry = { text: complete, sourceFacts: { originalPromptAvailable: true },
+    mediaAssets: [{ id: 'video', kind: 'video' }, { id: 'screenshot', kind: 'image' }],
+    mediaPrompts: [{ assetId: 'screenshot', source: 'webpage', text: 'Create a cinematic scene, standing' }] };
+  const before = structuredClone(entry);
+  assert.equal(detailCaseOriginalPromptText(entry), complete);
+  assert.equal(sharedOriginalPrompt(entry), '', 'legacy display inference does not pollute shared prompt search');
+  assert(caseOriginalPromptText({ ...entry, sourceFacts: { ...entry.sourceFacts, caseOriginalPromptAvailable: true } }).includes(complete));
+  assert.deepEqual(entry, before, 'reading must preserve the screenshot original and existing library');
+});
 
 test("article body never becomes an image prompt; actual per-media prompts remain available", () => {
   const asset = { id: "image", kind: "image" };

@@ -41,6 +41,18 @@ try:
                 while task['state'] in ['queued','running']:task=call('get_task',{'requestId':args['requestId'],'waitMs':1000})
                 assert task['state']=='completed',task
                 return task['result']
+            if not os.environ.get('PD_CAPTURE_LIVE_URL'):
+                page.evaluate('''() => {
+                  const root=document.createElement('section');root.id='thread';
+                  root.innerHTML='<div><article><p>Main post</p></article></div><div><article><p>AI Video Prompt: standing barefoot inside an apartment. No watermark.</p><textarea>private draft</textarea></article></div>';
+                  document.body.prepend(root);
+                }''')
+                reply=json.loads(call('read_capture',{'part':'context','tabId':tab,'query':'AI Video Prompt'})['content'])
+                assert reply.get('textModules'), 'Visible reply must be discoverable without guessing article:nth-of-type(2)'
+                target=reply['textModules'][0]
+                assert 'standing barefoot' in target['text'] and 'private draft' not in target['text'], target
+                assert page.locator(target['selector']).count()==1
+                page.locator('#thread').evaluate('(node)=>node.remove()')
             before=json.loads(call('read_capture',{'part':'context','tabId':tab})['content'])
             if os.environ.get('PD_CAPTURE_LIVE_URL'):
                 card=page.locator('.card').filter(has=page.locator('.name',has_text='Expanding Search'));card.locator('.view-code').click()
@@ -63,10 +75,11 @@ try:
             dialog_selectors={d['selector'] for d in scene['dialogs']}
             template=[b for b in matches['codeBlocks'] if b['module']['selector'] not in dialog_selectors]
             assert len(template)==3,template
+            bundle=call('read_capture',{'captureId':prepared['captureId'],'expectedRevision':revision,'part':'source','selectors':[block['selector'] for block in template],'length':3})
+            assert bundle['revision']==revision+1, 'one scene read freezes every source under one revision'
+            revision=bundle['revision']
             for block in template:
-                src=call('read_capture',{'captureId':prepared['captureId'],'expectedRevision':revision,'part':'source','selector':block['selector'],'length':1})
-                revision=src['revision'];refs.append({'selector':block['selector'],'target':'prompt'})
-                texts.append(page.locator(block['selector']).text_content())
+                refs.append({'selector':block['selector'],'target':'prompt'});texts.append(page.locator(block['selector']).text_content())
             assert '.search' in texts[0] and 'width: 230px' in texts[0]
             module=template[0]['module']['selector']
             for selector in [module+' > .card-foot',module+' .card-param']:

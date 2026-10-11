@@ -48,6 +48,7 @@ body.capture-assistant-open .collector-header .product-brand-name { overflow: hi
 .capture-assistant-original .capture-assistant-preview-error { color: var(--danger); }
 .capture-assistant-save-row { display: flex; gap: 8px; align-items: center; padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
 .capture-assistant-project { flex: 1; min-width: 0; }
+.capture-assistant-project > .detail-project-popover { width: min(430px, calc(100vw - 28px)); grid-template-rows: auto auto minmax(80px, 1fr) auto; }
 .capture-assistant-save-row > button { flex: none; white-space: nowrap; }
 .capture-assistant-result > div + div { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .capture-assistant-result p { margin: 6px 0; }

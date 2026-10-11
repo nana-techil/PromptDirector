@@ -16,10 +16,11 @@ import { availableAiModelChoicesForTask } from './ai-provider-registry.js';
 import { composerProfileForTaskAssignment } from './composer.js';
 import { composerLibraryToolService } from './composer-service.js';
 import { getMediaBlob } from './media-store.js';
+import { compactCaptureReply } from './capture-reply.js';
 const storage = getLibraryStorage();
 const stateKey = 'captureAssistantDialog';
 
-export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = applyBatch, isBusy, getCollections, getDraft, getMetadata, changeProject, save, cancelSave }) {
+export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = applyBatch, isBusy, getCollections, getDraft, getMetadata, changeProject, save, cancelSave, getContentTypes, getSuggestedType }) {
   const panel = node('section', 'capture-assistant-panel'); panel.id = 'capture-assistant-panel'; panel.hidden = true;
   panel.setAttribute('aria-label', t('采集助手'));
   const contextRow = node('div', 'capture-assistant-context-row');
@@ -43,7 +44,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   const toggle = document.getElementById('open-capture-assistant'); toggle.setAttribute('aria-controls', panel.id);
   const fresh = button('新对话', 'quiet compact capture-assistant-new'); fresh.id = 'capture-assistant-new'; fresh.hidden = true; toggle.before(fresh);
   const project = node('details', 'detail-project-menu capture-assistant-project');
-  const projects = createCaptureProjectMenu({ menu: project, getCollections, getDraft, onChange: changeProject, onError: error => feedback(error.message, true) });
+  const projects = createCaptureProjectMenu({ menu: project, getCollections, getDraft, getContentTypes, getSuggestedType, onChange: changeProject, onError: error => feedback(error.message, true) });
   // Both collector project controls share one draft. Give this input its own DOM identity.
   project.querySelector('input').id = 'capture-assistant-new-project';
   let state = { messages: [], requestId: '', captureId: '' }, checking = false, opened = false, loaded = false;
@@ -80,7 +81,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   window.addEventListener('pagehide', () => { attachmentUrls.forEach(url => URL.revokeObjectURL(url)); attachmentUrls.clear(); });
   function persist() {
     if (state.sourceUrl) {
-      if (!switching) { const draft = getDraft() || {}; state.projectDraft = { collectionId: draft.collectionId || '', newCollectionName: draft.newCollectionName || '' }; }
+      if (!switching) state.projectDraft = organizationDraft();
       sessions.pages[state.sourceUrl] = state;
     }
     const snapshot = structuredClone(sessions);
@@ -90,6 +91,11 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   async function loadSessions() {
     if (loaded) return;
     sessions = restoreCaptureSessions((await storage.get(stateKey))[stateKey] || {}); loaded = true;
+  }
+  function organizationDraft() {
+    const draft = getDraft() || {};
+    return { collectionId: draft.collectionId || '', newCollectionName: draft.newCollectionName || '',
+      contentTypeId: draft.contentTypeId || '', contentTypeExplicit: Boolean(draft.contentTypeExplicit) };
   }
   function syncPage() {
     syncTail = syncTail.catch(() => {}).then(async () => {
@@ -106,7 +112,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       deferredPage = false;
       await projects.flush();
       const batch = getBatch();
-      if (state.sourceUrl) { const draft = getDraft() || {}; state.projectDraft = { collectionId: draft.collectionId || '', newCollectionName: draft.newCollectionName || '' }; }
+      if (state.sourceUrl) state.projectDraft = organizationDraft();
       if (state.sourceUrl) { if (!batch || batch.sourceUrl === state.sourceUrl) state.pendingBatch = batch; sessions.pages[state.sourceUrl] = state; }
       if (batch && batch.sourceUrl !== tab.url && !sessions.pages[batch.sourceUrl]) {
         sessions.pages[batch.sourceUrl] = { id: crypto.randomUUID(), sourceUrl: batch.sourceUrl, tabId: batch.tabId,
@@ -173,9 +179,20 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       if (message.attachments?.length) { const row = node('div', 'capture-assistant-attachments'); row.append(...message.attachments.map(item => attachmentView(item))); line.append(row); }
     } else {
       const speaker = node('div', 'capture-assistant-speaker'); speaker.append(createUiIcon('sparkles'), document.createTextNode(t('采集助手')));
-      line.append(speaker, renderMarkdownDocument(message.content || ''));
+      line.append(speaker, replyView(message.content || ''));
     }
     return line;
+  }
+  function replyView(text) {
+    const { brief, overflow } = compactCaptureReply(text);
+    const view = node('div'); view.append(renderMarkdownDocument(brief));
+    if (overflow) {
+      const details = node('details', 'capture-assistant-original'); const summary = node('summary'); summary.textContent = t('展开全文');
+      details.append(summary); details.addEventListener('toggle', () => {
+        if (details.open && details.childElementCount === 1) details.append(renderMarkdownDocument(text));
+      }); view.append(details);
+    }
+    return view;
   }
   function welcome() {
     const box = node('div', 'capture-assistant-welcome');
@@ -445,7 +462,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     if (typeof message.text === 'string' && opened) {
       const nearEnd = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 40;
       if (!stream) { stream = node('section', 'capture-assistant-message capture-assistant-assistant'); conversation.append(stream); }
-      stream.replaceChildren(renderMarkdownDocument(message.text)); if (nearEnd) conversation.scrollTop = conversation.scrollHeight;
+      stream.replaceChildren(replyView(message.text)); if (nearEnd) conversation.scrollTop = conversation.scrollHeight;
     }
   });
   return { panel,

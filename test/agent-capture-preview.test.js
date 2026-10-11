@@ -39,6 +39,20 @@ test('source-backed capture stores the full original code even when the model re
   assert(applyPageCaptureSelections(f.commits[0])[0].contentText.includes(original));
 });
 
+test('multiple source tabs share one revision and save every frozen original even after a tiny understanding read', async () => {
+  const f=fixture(); await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+  const sources=['css','react','prompt'].map(selector=>({ok:true,url:'https://example.test/work',selector,text:'Complete '+selector+' original',format:'code'}));
+  f.options.chromeApi.scripting.executeScript=async()=>[{result:{ok:true,url:'https://example.test/work',sources}}];
+  const read=await f.api.read({captureId:'preview',expectedRevision:1,part:'source',selectors:['css','react','prompt'],length:3});
+  assert.equal(read.revision,2);assert(read.sources.every(source=>source.content.length===1&&source.nextOffset===1));
+  const selected=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:read.revision,
+    candidates:[{id:'original',title:'Original',canonicalUrl:'https://example.test/work',contentText:'',media:[],textSources:sources.map(source=>({selector:source.selector,target:'prompt'}))}],
+    selections:[{candidateId:'original',includeText:true,selectedMediaIds:[]}]},'all-tabs',f.scope);
+  await f.api.execute('save_capture',{captureId:'preview',expectedRevision:selected.revision},'save-all-tabs',f.scope);
+  const candidate=applyPageCaptureSelections(f.commits[0])[0];assert(sources.every(source=>candidate.contentText.includes(source.text)));
+  assert.equal(candidate.sourceFacts.caseOriginalPromptAvailable,true);
+});
+
 test('a declared batch task cannot save only one of its explicitly requested cases', async () => {
   const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
   const added = await f.api.execute('update_capture', { captureId: 'preview', expectedRevision: 1,
