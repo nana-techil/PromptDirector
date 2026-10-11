@@ -2,7 +2,7 @@ body { min-width: 320px; }
 .collector-header-actions { display: flex; flex: none; align-items: center; gap: 6px; }
 /* The assistant is a view of the collector, not a blocking business dialog. */
 body.capture-assistant-open { overflow: hidden; }
-body.capture-assistant-open main { height: 100dvh; padding: 14px; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); gap: 12px; }
+body.capture-assistant-open main { height: 100dvh; padding: 12px; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); gap: 12px; }
 body.capture-assistant-open main > :not(.collector-header):not(.capture-assistant-panel):not(dialog) { display: none; }
 body.capture-assistant-open .library-entry { width: 36px; min-height: 36px; padding: 8px; }
 body.capture-assistant-open .library-entry strong,
@@ -54,6 +54,8 @@ body.capture-assistant-open .collector-header .product-brand-name { overflow: hi
 .capture-assistant-save-settings { display: flex; gap: 8px; margin-top: 10px; }
 .capture-assistant-save-settings > select { flex: 1; min-width: 0; font-size: 11px; }
 .collector-header .capture-assistant-mode-toggle { display: inline-flex; gap: 5px; align-items: center; width: auto; padding: 0 9px; font-size: 11px; white-space: nowrap; }
+.capture-assistant-mode-labels { display: grid; }
+.capture-assistant-mode-labels > span { grid-area: 1 / 1; }
 .capture-assistant-result > div + div { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .capture-assistant-result p { margin: 6px 0; }
 

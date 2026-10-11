@@ -262,3 +262,28 @@ test('selecting a single independent module never asks for a multi-case save dec
   const saved=await f.api.execute('save_capture',{captureId:'preview',expectedRevision:updated.revision},'save-one',f.scope);
   assert.equal(saved.state,'completed');assert.deepEqual(applyPageCaptureSelections(f.commits[0]).map(item=>item.id),['module']);
 });
+
+test('all registered adapters and the generic path expose shared capture and completeness operations',async()=>{
+ const {capturePlatformGuidance}=await import('../extension/agent-capture-preview.js');
+ const {PAGE_CAPTURE_ADAPTERS}=await import('../extension/page-capture-adapter-registry.js');
+ for(const adapter of PAGE_CAPTURE_ADAPTERS){
+  const facts=capturePlatformGuidance('https://'+adapter.hosts[0]+'/');
+  assert.equal(facts.adapter,adapter.id);assert.deepEqual(facts.fields,adapter.fields);
+  assert.equal(facts.capabilities.originals.frozen,true);assert.equal(facts.capabilities.save.readback,true);
+  assert.equal(facts.capabilities.prepare.selector,true);assert(facts.capabilities.supplements.discover);
+ }
+ assert.equal(capturePlatformGuidance('https://unknown.test/').capabilities.save.codePreview,true);
+});
+
+test('duplicate module supplementation reports its existing id and preserves the failed-update revision',async()=>{
+ const f=fixture();await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+ f.options.chromeApi.scripting.executeScript=async()=>[{result:{ok:true,url:'https://example.test/work',selector:'pre',text:'.button { color:red; }',format:'code'}}];
+ const source=await f.api.read({captureId:'preview',part:'source',selector:'pre'});
+ const selected=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:source.revision,
+ candidates:[{id:'original',title:'Original',canonicalUrl:'https://example.test/work',contentText:'',media:[],textSources:[{selector:'pre',target:'text'}]}]},'source-bind',f.scope);
+ assert.equal(selected.candidates[0].contentRole,'code_case');
+ await assert.rejects(f.api.execute('update_capture',{captureId:'preview',expectedRevision:selected.revision,
+  candidates:[{id:'original-final',title:'Original',canonicalUrl:'https://example.test/work',contentText:'',media:[],codePreview:{html:'<button>Run</button>'}}]},'append',f.scope),error=>error.code==='capture_candidate_exists' && error.message.includes('original'));
+ assert.equal((await f.api.read({captureId:'preview'})).revision,selected.revision);
+ assert.equal((await f.api.read({captureId:'preview'})).candidates.length,1);
+});

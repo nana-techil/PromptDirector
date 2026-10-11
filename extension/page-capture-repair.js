@@ -16,6 +16,22 @@ export function samePageCaptureSource(entry, candidate) {
   if (savedPostId || capturedPostId || entry.sourceFacts?.provider === "x" || candidate.sourceFacts?.provider === "x") {
     return Boolean(savedPostId && savedPostId === capturedPostId);
   }
+  // One URL can host many independently selected works. Page identity alone
+  // must never turn a new module into a repair of an unrelated saved case.
+  if (candidate.sourceFacts?.captureScope === 'selection' || entry.sourceFacts?.captureScope === 'selection'
+    || candidate.sourceFacts?.codePreviewAvailable || entry.sourceFacts?.codePreviewAvailable) {
+    if (!entry.url || entry.url !== candidate.canonicalUrl) return false;
+    const savedSelectors = entry.sourceFacts?.captureSourceSelectors;
+    const selectors = candidate.sourceFacts?.captureSourceSelectors;
+    if (savedSelectors?.length && selectors?.length
+      && JSON.stringify([...savedSelectors].sort()) !== JSON.stringify([...selectors].sort())) return false;
+    if (selectors?.length && !savedSelectors?.length && entry.sourceFacts?.captureScope !== 'selection'
+      && !entry.sourceFacts?.codePreviewAvailable) return false;
+    const originals = String(candidate.contentText || candidate.text || '').replace(/\r\n/gu, '\n')
+      .replace(/^(`{3,})promptdirector-preview-html[^\S\r\n]*\n[\s\S]*?\n\1(?=\n|$)/gmu, '').trim();
+    const savedText = String(entry.text || '').replace(/\r\n/gu, '\n');
+    return Boolean(originals && savedText.includes(originals));
+  }
   return candidate.sourceFacts?.itemId && entry.sourceFacts?.itemId && entry.sourceFacts.provider === candidate.sourceFacts.provider
     ? entry.sourceFacts.itemId === candidate.sourceFacts.itemId
     : Boolean(entry.url && entry.url === candidate.canonicalUrl);

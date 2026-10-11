@@ -565,6 +565,8 @@ export function normalizeSourceFacts(value = {}, canonicalUrl = "") {
     ...(typeof value.originalPromptAvailable === "boolean" ? { originalPromptAvailable: value.originalPromptAvailable } : {}),
     ...(value.caseOriginalPromptAvailable === true ? { caseOriginalPromptAvailable: true } : {}),
     ...(value.codePreviewAvailable === true ? { codePreviewAvailable: true } : {}),
+    ...(value.codeSourceAvailable === true ? { codeSourceAvailable: true } : {}),
+    ...(Array.isArray(value.captureSourceSelectors) ? { captureSourceSelectors: [...new Set(value.captureSourceSelectors.filter(item => typeof item === 'string' && item))] } : {}),
     pageType: PAGE_TYPES.has(value.pageType) ? value.pageType : "generic",
     itemId: clean(value.itemId),
     authorUrl: safeUrl(value.authorUrl),
@@ -3044,7 +3046,7 @@ function uniqueCandidates(values) {
   const seen = new Set();
   return (Array.isArray(values) ? values : []).flatMap((value) => {
     const candidate = normalizePageCaptureCandidate(value);
-    const key = candidate ? `${candidate.canonicalUrl}\n${candidate.sourceFacts.itemId}\n${candidate.title}\n${candidate.region?.id || ""}` : "";
+    const key = candidate ? `${candidate.canonicalUrl}\n${candidate.sourceFacts.itemId}\n${candidate.title}\n${candidate.region?.id || ""}\n${JSON.stringify(candidate.sourceFacts.captureSourceSelectors || [])}` : "";
     if (!candidate || seen.has(key)) return [];
     seen.add(key);
     return [candidate];

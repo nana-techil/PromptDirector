@@ -26,9 +26,17 @@ def main():
             for p in EXTENSION_DIR.iterdir():
                 if p.name not in ['manifest.json','background.js']:(ext/p.name).symlink_to(p,target_is_directory=p.is_dir())
             manifest=json.loads((EXTENSION_DIR/'manifest.json').read_text());manifest['host_permissions'].append(url.rsplit('/',1)[0]+'/*')
-            (ext/'manifest.json').write_text(json.dumps(manifest));(ext/'background.js').write_text((EXTENSION_DIR/'background.js').read_text()+'\nglobalThis.agentTestDispatch=dispatchAgentOperation;\n')
+            (ext/'manifest.json').write_text(json.dumps(manifest));(ext/'background.js').write_text((os.environ.get('PD_CODE_BACKGROUND') and Path(os.environ['PD_CODE_BACKGROUND']).read_text() or (EXTENSION_DIR/'background.js').read_text())+'\nglobalThis.agentTestDispatch=dispatchAgentOperation;\n')
             with extension_session('pd-code-case-',extension_dir=ext) as run:
                 panel=run.open_page('collector.html');run.seed_storage(panel,{'entries':[],'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-10-11T00:00:00Z','clipboardIncluded':False}})
+                catalog = panel.evaluate("async() => (await chrome.runtime.sendMessage({type:'GET_STATE'})).taxonomy")
+                catalog['nodes'] = [node for node in catalog['nodes'] if node['id'] != 'content:code-case']
+                catalog['nodes'][0]['name'] = 'My custom type'
+                panel.evaluate("async taxonomy=>{const {getLibraryStorage}=await import('./library-storage.js');await getLibraryStorage().set({taxonomy});}",catalog)
+                repaired = panel.evaluate("async() => await chrome.runtime.sendMessage({type:'GET_STATE'})")
+                assert any(node['id']=='content:code-case' for node in repaired['taxonomy']['nodes']), 'Same-schema library must gain Code case without a full case migration'
+                assert repaired['taxonomy']['nodes'][0]['name']=='My custom type'
+                assert repaired['entries']==[]
                 web=run.context.new_page();web.goto(url);worker=run.context.service_workers[0]
                 tab=panel.evaluate('async url=>(await chrome.tabs.query({})).find(t=>t.url===url).id',url)
                 def call(op,args):return worker.evaluate('([op,args])=>agentTestDispatch(op,args)',[op,args])
@@ -57,6 +65,21 @@ def main():
                 assert entry['text'].startswith(original_entry['text']) and entry.get('mediaAssets')==original_entry.get('mediaAssets')
                 assert ORIGINAL in entry['text'] and DEMO in entry['text'];assert entry['classification']['pathIds']==['content:code-case'],entry
                 run.context.add_init_script("window.clickEvents=[];document.addEventListener('click',e=>clickEvents.push({text:e.target.textContent,x:e.clientX,y:e.clientY,time:performance.now()}),true)")
+                magnetic_source = '.magnet-btn { transition: transform .15s ease-out; }'
+                web.evaluate('(text)=>document.querySelector("pre").textContent=text', magnetic_source)
+                prepared2=done('prepare_capture',{'requestId':'magnetic-preview','tabId':tab})
+                source2=call('read_capture',{'captureId':prepared2['captureId'],'part':'source','selector':'pre'})
+                selected2=done('update_capture',{'requestId':'magnetic-select','captureId':prepared2['captureId'],'expectedRevision':source2['revision'],
+                    'candidates':[{'id':'magnetic','title':'Magnetic Button','canonicalUrl':url,'contentText':'','media':[],
+                        'codePreview':{'html':'<!doctype html><html><body><button>Magnetic Button</button></body></html>'},
+                        'textSources':[{'selector':'pre','target':'text'}]}],
+                    'selections':[{'candidateId':'magnetic','includeText':True,'selectedMediaIds':[]}]})
+                saved2=done('save_capture',{'requestId':'magnetic-save','captureId':prepared2['captureId'],'expectedRevision':selected2['revision'],'contentTypeId':'content:code-case'})
+                assert saved2['results'][0]['status']=='saved' and saved2['results'][0]['title']=='Magnetic Button', saved2
+                assert saved2['results'][0]['entryId']!=entry['id'], 'New module must not reuse Tab Pill entry'
+                after=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
+                assert len(after)==2
+                assert next(item for item in after if item['id']==entry['id'])['text']==entry['text'], 'Old source and preview must remain unchanged'
                 library=run.open_page('library.html');library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
                 expect(library.locator('.code-case-frame')).to_be_visible()
                 preview=library.frame_locator('.code-case-frame').frame_locator('#preview')
@@ -78,7 +101,7 @@ def main():
                     preview.locator('.pill').evaluate("async node=>{await Promise.all(node.getAnimations().map(animation=>animation.finished))}")
                     library.screenshot(path=str(out/f'code-case-{width}.png'))
                 # Older saved previews can have the wrong type. Display the actual saved preview without rewriting originals.
-                panel.evaluate("async()=>{const {getLibraryStorage}=await import('./library-storage.js');const storage=getLibraryStorage();const {entries}=await storage.get('entries');entries[0].classification={pathIds:['content:reference'],status:'confirmed',source:'manual'};await storage.set({entries})}")
+                panel.evaluate("async()=>{const {getLibraryStorage}=await import('./library-storage.js');const storage=getLibraryStorage();const {entries}=await storage.get('entries');entries.find(item=>item.title==='Tab Pill Glide').classification={pathIds:['content:reference'],status:'confirmed',source:'manual'};await storage.set({entries})}")
                 library.reload();library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click();expect(library.locator('.code-case-frame')).to_be_visible()
                 expect(library.frame_locator('.code-case-frame').frame_locator('#preview').locator('#state')).to_have_text('Build')
                 with library.expect_navigation():

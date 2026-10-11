@@ -22,3 +22,21 @@ test('page bookkeeping does not alter canonical message identity or invalidate t
  assert.equal(assistantChatContent(saved),assistantChatContent(refreshed));
  assert.deepEqual(refreshed.toolContext,saved.toolContext);assert.equal(refreshed.messages[0].createdAt,saved.messages[0].createdAt);
 });
+
+test('typing does not freeze the conversation title at its first character',()=>{
+ let saved=assistantChatSession({id:'chat',draft:'c',messages:[]});
+ saved=assistantChatSession({id:'chat',draft:'capture this code',messages:[]},saved);
+ saved=assistantChatSession({id:'chat',draft:'',messages:[{role:'user',content:'capture this code'}]},saved);
+ assert.equal(saved.title,'capture this code');
+ const repaired=assistantChatSession({id:'chat',draft:'',messages:[{role:'user',content:'capture this code'}]}, {...saved,title:'c'});
+ assert.equal(repaired.title,'capture this code');
+});
+
+test('automatic titles follow confirmed results while a studio title edited by the user stays intact',()=>{
+ const messages=[{role:'user',content:'这个也存一下'}];
+ const initial=assistantChatSession({id:'chat',messages});
+ const completed=assistantChatSession({id:'chat',messages:[...messages,{role:'result',result:{results:[{status:'saved',title:'Magnetic Button'}]}}]},initial);
+ assert.equal(completed.title,'Magnetic Button');
+ const manual={...completed,title:'My named research chat'};
+ assert.equal(assistantChatSession({id:'chat',messages},manual).title,manual.title);
+});

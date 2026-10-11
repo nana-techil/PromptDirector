@@ -58,6 +58,9 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
   async function prepare(args = {}) {
     if (!hasPage && !args.url && args.tabId === undefined) throw agentError('capture_page_required', '采集需要打开目标网页，聊天和案例库操作可以继续');
     if (preview?.state === 'preview' && (!args.url || args.url === preview.sourceUrl)) return preview;
+    // A type choice belongs to the supplied preview, not to an unrelated
+    // capture prepared later in this conversation. Project choice persists.
+    input = { ...input, captureMetadata: { ...input.captureMetadata, contentTypeId: '', contentTypeExplicit: false } };
     onStatus('正在读取网页…');
     return remember(await completed('prepare_capture', { requestId: crypto.randomUUID(), ...(args.url ? { url: args.url } : { tabId: args.tabId ?? input.tabId }), mode: args.mode || 'loaded',
       ...(args.selector ? { selector: args.selector } : {}), ...(args.maxCandidates ? { maxCandidates: args.maxCandidates } : {}),
@@ -88,7 +91,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
       ...sessionRuntime,
       loadContext: async () => captureContextReferences(priorContext),
       finishTurn: async ({ content }) => {
-        const check = captureCompletionCheck(content, diagnostic.toolCalls, preview, saveResult);
+        const check = captureCompletionCheck(content, diagnostic.toolCalls, preview, saveResult, input.instruction);
         if (check) return { action: 'continue', state: check.state, message: check.message };
         const task = preview?.task;
         if (!taskChangedThisTurn || !task || task.state === 'waiting') return;
@@ -199,15 +202,18 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           }
           if (name === 'save_capture') {
             if (input.newCollectionName && !args.project) throw agentError('capture_project_required', '请先新建正在填写的项目，再使用真实项目编号保存');
-            if (requestsCodeCase || args.contentTypeId === CONTENT_IDS.codeCase) {
-              const selected = new Set(preview.selections?.map(item => item.candidateId));
+            const selected = new Set(preview.selections?.map(item => item.candidateId));
+            const selectedCode = preview.candidates?.some(item => selected.has(item.id) && (item.contentRole === CONTENT_ROLES.codeCase || item.codePreviewAvailable));
+            const codeCase = requestsCodeCase || args.contentTypeId === CONTENT_IDS.codeCase || selectedCode;
+            if (codeCase) {
               if (preview.candidates?.some(item => selected.has(item.id) && !item.codePreviewAvailable)) {
                 throw agentError('capture_code_preview_required', '代码案例还缺交互预览，源码已保留');
               }
             }
             onStatus('正在保存…');
             saveResult = await completed(name, { ...args, project: args.project ?? input.project ?? '',
-              captureMetadata: requestsCodeCase ? { ...input.captureMetadata, contentTypeId: CONTENT_IDS.codeCase, contentTypeExplicit: true } : input.captureMetadata,
+              captureMetadata: requestsCodeCase || selectedCode && !input.captureMetadata?.contentTypeExplicit
+                ? { ...input.captureMetadata, contentTypeId: CONTENT_IDS.codeCase, contentTypeExplicit: true } : input.captureMetadata,
               requestId: crypto.randomUUID() });
             remember(await call('read_capture', { captureId: preview.captureId }));
             return { data: saveResult };
@@ -285,9 +291,17 @@ export function captureContextReferences(records) {
 
 // Assertions of completed work must be backed by this turn's tools. The
 // shared loop permits one recovery per unchanged fact state, then stops honestly.
-export function captureCompletionCheck(content, calls, preview, saveResult) {
+export function captureCompletionCheck(content, calls, preview, saveResult, instruction = '') {
   const successful = calls.filter(call => call.result?.data && call.result.data.ok !== false);
   const saved = successful.some(call => ['save_capture','save_material','edit_case','organize_case'].includes(call.name));
+  const directSave = /^(?:(?:帮我|请|给我)\s*)?(?:存一下|存下来|保存(?:这个|这条|这些|它|案例)?)\s*[。！!]?$/u.test(instruction.trim())
+    || /^(?:这个|这条|这些|它).*(?:存一下|存下来|保存)[。！!]?$/u.test(instruction.trim())
+    || /^(?:please\s+)?save\s+(?:this|it|these)(?:\s+cases?)?[.!]?$/iu.test(instruction.trim());
+  if (directSave && !saved && !saveResult && preview?.task?.state !== 'waiting'
+    && !calls.some(call => call.result?.data?.ok === false || call.error)) {
+    return { state: ['authorized-save-unexecuted', preview?.revision],
+      message: '用户已明确要求保存，不需要再问是否先采集。若当前没有预览，直接prepare_capture，再按当前目标读取、选择并save_capture；有真实阻塞就用工具取得依据并简短说明。不要用操作说明代替执行。' };
+  }
   if (/(?:effect|preview)[^.!\n]*(?:now works|works now|working)|效果(?:现在)?(?:正常|生效|可用)|(?:代码|预览|效果)[^。\n]*已(?:验证|测试通过)/iu.test(content)) {
     return { state: ['preview-execution-unverified', preview?.revision], message: '当前工具没有网页交互运行验收，不能声称效果已验证或正常运行。成功写入只能说预览已保存；用户反馈仍不显示时读取真实案例及类型，修正实际缺失，不凭历史回复确认。' };
   }

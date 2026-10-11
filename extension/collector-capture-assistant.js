@@ -112,7 +112,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
           chat.chatRevision = chatRevisions.get(chat.id) ?? owner.chatRevision ?? chat.chatRevision;
           const response = await chrome.runtime.sendMessage({ type: 'UPSERT_ASSISTANT_CHAT', chat, activate:state.id === owner.id });
           if (!response?.ok) throw new Error(response?.message || t('无法保存创作草稿'));
-          owner.chatRevision = response.session.chatRevision; owner.updatedAt = response.session.updatedAt;
+          owner.chatRevision = response.session.chatRevision; owner.updatedAt = response.session.updatedAt; owner.title = response.session.title;
           chatRevisions.set(chat.id, response.session.chatRevision);
         }
         const dialog = JSON.stringify([snapshot.activeId, snapshot.activeUrl, snapshot.emptyChat]);
@@ -343,7 +343,13 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     opened = value; panel.hidden = !value; fresh.hidden = !value;
     document.body.classList.toggle('capture-assistant-open', value); toggle.setAttribute('aria-pressed', String(value));
     const label = t(value ? '采集工具' : '采集助手'); toggle.title = label; toggle.setAttribute('aria-label', label);
-    toggle.classList.add('capture-assistant-mode-toggle'); toggle.replaceChildren(createUiIcon(value ? 'layers' : 'sparkles'), document.createTextNode(t(value ? '工具' : '助手')));
+    toggle.classList.add('capture-assistant-mode-toggle');
+    const labels = document.createElement('span'); labels.className = 'capture-assistant-mode-labels';
+    for (const [text, active] of [['工具', value], ['助手', !value]]) {
+      const label = document.createElement('span'); label.textContent = t(text);
+      label.style.visibility = active ? 'visible' : 'hidden'; label.setAttribute('aria-hidden', String(!active)); labels.append(label);
+    }
+    toggle.replaceChildren(createUiIcon(value ? 'layers' : 'sparkles'), labels);
     if (!value) return;
     if (opening) return;
     opening = true; render();
@@ -463,6 +469,11 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     if (!preview?.ok) throw new Error(preview?.message || '无法读取采集预览');
     if (state !== owner) return;
     if (getBatch() !== baseBatch) { state.lastError = t('当前预览已变化，Agent 结果已保留'); feedback(state.lastError, true); return; }
+    if (preview.batch && preview.batch.id !== state.pendingBatch?.id) {
+      if (!await changeProject({ contentTypeId: '', contentTypeExplicit: false })) throw new Error(t('保存设置未更新，请重试'));
+      if (state !== owner || getBatch() !== baseBatch) return;
+      state.projectDraft = organizationDraft();
+    }
     state.pendingBatch = preview.state === 'completed' ? null : preview.batch;
     applyBatch(state.pendingBatch);
     baseBatch = getBatch(); previewBatch = baseBatch; state.pendingRevision = null; state.lastError = '';

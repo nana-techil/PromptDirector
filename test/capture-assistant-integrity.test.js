@@ -183,3 +183,11 @@ test('a first code-case save includes the interactive preview, frozen originals 
   assert.equal(commits[0].metadata.contentTypeId,'content:code-case');
   assert(commits[0].batch.candidates[0].contentText.includes(html));assert(commits[0].batch.candidates[0].contentText.includes(f.original));
 });
+
+test('the diagnostic save commands authorize preparation and saving without a second permission question',()=>{
+ for(const instruction of ['存一下','这个也给我存一下','save this']){
+  assert(captureCompletionCheck('要我先采集再保存吗？',[],null,null,instruction));
+ }
+ assert.equal(captureCompletionCheck('点保存即可。',[],null,null,'这个怎么保存？'),undefined);
+ assert.equal(captureCompletionCheck('原件未取得。',[{result:{data:{ok:false}}}],null,null,'存一下'),undefined);
+});

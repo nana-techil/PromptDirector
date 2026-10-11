@@ -4,10 +4,19 @@ import { createComposerSession } from './composer.js';
 // view/task metadata is additional; page previews remain in the capture store.
 export function assistantChatSession(chat, previous) {
   const { messages = [], pendingBatch, aiProfile, draft, id, chatRevision, ...view } = chat;
+  const firstRequest = messages.find(message => message.role === 'user')?.content?.trim();
+  const receiptTitle = messages.filter(message => message.role === 'result')
+    .flatMap(message => message.result?.results || []).filter(item => item.status === 'saved').at(-1)?.title;
+  const automaticTitle = receiptTitle || firstRequest || '新对话';
+  const oldTitle = previous?.title;
+  const generated = !oldTitle || oldTitle === '新对话' || oldTitle === 'New chat'
+    || oldTitle === previous?.assistantState?.automaticTitle
+    || (previous?.assistantState && (oldTitle.length === 1 || firstRequest?.startsWith(oldTitle)
+      || previous.currentInstruction?.startsWith(oldTitle)));
   return createComposerSession({ ...previous, id, aiProfile: aiProfile || previous?.aiProfile,
     chatRevision: chatRevision ?? previous?.chatRevision ?? 0, routeMode: 'chat',
-    title: previous?.title && previous.title !== '新对话' ? previous.title : messages.find(message => message.role === 'user')?.content || draft || '新对话',
-    currentInstruction: draft || '', assistantState: view,
+    title: generated ? automaticTitle : oldTitle,
+    currentInstruction: draft || '', assistantState: { ...view, automaticTitle },
     referenceSnapshots: [ ...(previous?.referenceSnapshots || []),
       ...[...(chat.attachments || []), ...messages.flatMap(message => message.attachments || [])]
         .filter((asset, index, list) => asset.assetId && list.findIndex(item => item.assetId === asset.assetId) === index

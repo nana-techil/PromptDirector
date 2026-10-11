@@ -50,6 +50,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       platform: capturePlatformGuidance(record.batch.sourceUrl),
       candidates: record.batch.candidates.map(item => ({ id: item.id, title: item.title,
         codePreviewAvailable: Boolean(item.sourceFacts?.codePreviewAvailable && codePreviewHtml(item.contentText)),
+        ...(item.sourceFacts?.codeSourceAvailable ? { contentRole: 'code_case' } : {}),
         canonicalUrl: item.canonicalUrl, completeness: item.completeness, adapter: item.adapter,
         textSources: (record.sourceBindings?.[item.id] || []).map(binding => ({ ...binding,
           totalCharacters: record.sources?.[binding.selector]?.text.length || 0,
@@ -253,6 +254,9 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           })) };
           const index = candidates.findIndex(item => item.id === value.id);
           const prior = candidates[index];
+          const sameModule = index < 0 && candidates.find(item => record.sourceBindings?.[item.id]?.length
+            && item.canonicalUrl === value.canonicalUrl && item.title === value.title);
+          if (sameModule) throw agentError('capture_candidate_exists', `该模块已有候选 ${sameModule.id}，请用这个编号补充预览和重新选择，不要为同一模块另建编号`);
           if (prior?.adapter === 'generic' && patch.textSources?.length && value.title !== undefined && value.title !== prior.title) {
             throw agentError('capture_source_changed', '单独模块请新建候选，不能重命名已有整页候选并混入它的正文');
           }
@@ -274,6 +278,8 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
             articleDocument: prior?.articleDocument && { ...prior.articleDocument,
               blocks: [...prior.articleDocument.blocks, ...(extraText ? [{ ...extraBlock, kind: 'paragraph', sourceOrder: prior.articleDocument.blocks.length }] : [])] },
             sourceFacts: { ...prior?.sourceFacts, ...(value.author ? { author: value.author } : {}),
+              ...(patch.textSources?.length ? { captureScope: 'selection', captureSourceSelectors: patch.textSources.map(source => source.selector),
+                codeSourceAvailable: patch.textSources.some(source => isInteractiveCodeSource(record.sources[source.selector])) } : {}),
               ...(patch.codePreview ? { codePreviewAvailable: true } : {}),
               ...(value.originalPrompt ? { originalPromptAvailable: true, caseOriginalPromptAvailable: true } : {}), status: 'partial' },
             media: [...(prior?.media || []), ...(value.media || [])],
@@ -298,15 +304,16 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (task && (!task.candidateIds?.length || task.candidateIds.some(id => !candidates.some(candidate => candidate.id === id)))) {
           throw agentError('invalid_selection', '采集任务须对应实际候选，不能用估计数量代表已取得案例');
         }
-        record.batch = normalizePageCaptureBatch({ ...record.batch, candidates,
+        const nextBatch = normalizePageCaptureBatch({ ...record.batch, candidates,
           selections: selections.map(item => ({ ...item, mediaDecision: 'confirmed' })),
           saveMode: candidates.length > 1 && selections.length === 1 && !['multiple', 'combined'].includes(input.saveMode ?? record.batch.saveMode)
             ? 'multiple' : input.saveMode ?? record.batch.saveMode, combinedTitle: input.combinedTitle ?? record.batch.combinedTitle,
           captureMode: candidates.length > 1 ? 'list' : 'single' });
-        if (input.candidates?.length) record.batch.error = '';
-        if (record.batch.candidates.length !== candidates.length || record.batch.selections.length !== selections.length) {
+        if (input.candidates?.length) nextBatch.error = '';
+        if (nextBatch.candidates.length !== candidates.length || nextBatch.selections.length !== selections.length) {
           throw agentError('invalid_selection', '候选重复或所选内容无效，预览未改变');
         }
+        record.batch = nextBatch;
         record.revision++;
         if (task) record.task = structuredClone(task);
         record.sourceBindings = bindings;
@@ -544,12 +551,25 @@ function sourceMaterialText(source) {
   return `${fence}\n${source.text}\n${fence}`;
 }
 
+function isInteractiveCodeSource(source) {
+  // A prompt can also live inside <pre>. Infer web code only from actual
+  // CSS declarations, JavaScript syntax or HTML, rather than its DOM tag.
+  return source?.format === 'code' && /(?:\{[^{}]*[\w-]+\s*:\s*[^{};]+;|\b(?:function\s+[\w$]+\s*\(|(?:const|let|var)\s+[\w$]+\s*=)|<(?:html|div|button|style|script)\b)/iu.test(source.text);
+}
+
 export function capturePlatformGuidance(url) {
   const adapter = resolvePageCaptureAdapter(url);
   return { adapter: adapter.id, label: adapter.label, support: adapter.support, cardSelectors: adapter.cardSelectors, fields: adapter.fields,
+    trustedMediaHosts: adapter.trustedMediaHosts,
+    capabilities: { prepare: { operation: 'prepare_capture', modes: ['whole', 'loaded'], selector: true },
+      locate: { operation: 'read_capture', part: 'context', query: true },
+      originals: { operation: 'read_capture', part: 'source', selectors: true, paging: true, frozen: true },
+      supplements: { operation: 'read_capture', part: 'supplement', discover: 'summary.candidates[].supplements' },
+      visual: { operation: 'read_capture', parts: ['screenshot', 'image'], requiresVisionModel: true },
+      save: { update: 'update_capture', operation: 'save_capture', exactSelection: true, readback: true, codePreview: true } },
     guidance: adapter.id === 'x'
       ? 'prepare_capture复用X正文、原视频及作者后续评论适配器。summary的supplements列出真实评论来源及partial；partial=true时read_capture(part=supplement,candidateId,supplementId)调用同一评论展开采集器。返回的selector可用于textSources.target=prompt，完整冻结原文入库。当前打开的其他评论可从context的真实selector读source。视频/图片附带短词不等于评论全文；先核对评论是否展开，未取得全文不能说完整。'
-      : 'prepare_capture使用该适配器和通用采集能力。context定位当前模块，source读取对应原文并检查completeness；用textSources保存冻结全文。partial表示仍有未取得内容，不能当作完整。代码模块按当前弹窗标题定位，不混入整页内容。' };
+      : 'prepare_capture使用当前适配器的cardSelectors、fields和媒体解析，再复用通用DOM、结构化数据、嵌套播放器和资源识别。support记录验证覆盖，不表示权限不足或不能采集。按用户目标用selector选择区域或loaded读取已加载列表；context/query定位模块、弹窗及代码，source分页读取完整冻结原文，textSources保存全文；summary.supplements发现可补采来源。partial或excerpts不能当完整，核对所选正文、原词、媒体及保存读回。适配未覆盖时用相同工具读取真实区域并update_capture补充，不让用户手工复制已有可读内容。代码模块须提供codePreview再保存，不混入整页或其他模块。' };
 }
 
 export function captureSceneForModel(scene, length) {

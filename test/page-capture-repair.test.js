@@ -109,3 +109,10 @@ test('retry recognizes already stored local supplement by content hash after its
   assert.equal(plan.pending.length,0);
   assert.equal(plan.assetIds.get('local'),'stored');
 });
+
+ test('different code modules on one page cannot repair each other or inherit the old case title', async () => {
+  const {samePageCaptureSource}=await import('../extension/page-capture-repair.js');
+  const saved={url:'https://example.test/demos',title:'Tab Pill Glide',text:'```\n.pill { left:0; }\n```',sourceFacts:{provider:'example.test',codePreviewAvailable:true}};
+  const next={id:'mod:magnetic-button',canonicalUrl:saved.url,title:'Magnetic Button',contentText:'```\n.magnet-btn { transform:translate(0,0); }\n```',sourceFacts:{provider:'example.test',captureScope:'selection'}};
+  assert.equal(samePageCaptureSource(saved,next),false);
+ });

@@ -189,10 +189,11 @@ test('a user-provided link can be captured from library chat through the same UR
   assert(result.ok);assert.equal(calls[0].args.url,remote.sourceUrl);assert.equal(calls[0].args.tabId,undefined);assert.equal(calls[1].args.tabId,88);
 });
 
-test('saving a requested code case cannot commit source-only content as a completed interactive case', async () => {
+test('source-only code cannot be called complete, including short save requests without repeating the case type', async () => {
+ for (const instruction of ['存一下这个代码案例','这个也存一下']) {
   let commits=0;
-  const current={...preview,candidates:[{id:'code',title:'Code module',codePreviewAvailable:false}],selections:[{candidateId:'code',includeText:true}]};
-  const result=await runCaptureAssistant({...input,captureId:'preview',instruction:'存一下这个代码案例',captureMetadata:{contentTypeId:'content:prompt:video',contentTypeExplicit:true}}, {
+  const current={...preview,candidates:[{id:'code',title:'Code module',codePreviewAvailable:false,contentRole:'code_case'}],selections:[{candidateId:'code',includeText:true}]};
+  const result=await runCaptureAssistant({...input,captureId:'preview',instruction,captureMetadata:{contentTypeId:'content:prompt:video',contentTypeExplicit:true}}, {
     runtime,signal:new AbortController().signal,call:async name=>{if(name==='save_capture')commits++;return current;},
     execute:async (_request,_settings,_images,{toolRuntime})=>{
       const missing=await toolRuntime.execute('save_capture',{captureId:'preview',expectedRevision:1});
@@ -200,6 +201,7 @@ test('saving a requested code case cannot commit source-only content as a comple
       return {text:'源码已保留，还缺交互预览。'};
     }});
   assert(result.ok);assert.notEqual(result.outcome,'saved');assert.equal(commits,0);
+ }
 });
 
 test('a code preview edit is checked against the committed case instead of repeating the model success claim', async()=>{

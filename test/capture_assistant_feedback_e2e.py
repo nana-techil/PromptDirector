@@ -53,6 +53,7 @@ def main():
         }''')
         page.locator('#open-capture-assistant').click()
         expect(page.locator('.capture-assistant-welcome')).to_be_visible()
+        page.locator('#capture-assistant-input').fill('c')
         page.locator('#capture-assistant-input').fill('保存这个案例')
         page.evaluate('''() => {
           const form=document.querySelector('.capture-assistant-composer');
@@ -66,14 +67,23 @@ def main():
         assert page.evaluate('fixture.earlyReads || 0') == 0, 'Focus events must not inspect a task before START has acknowledged it'
         expect(page.locator('.capture-assistant-user')).to_have_count(1)
         expect(page.locator('.capture-assistant-assistant')).to_have_count(1)
+        expect(page.locator('.capture-assistant-chats option:checked')).to_have_text('保存这个案例')
         summary = page.locator('.capture-assistant-assistant summary')
         box = summary.bounding_box()
         page.mouse.click(box['x'] + 3, box['y'] + box['height']/2, delay=140)
         expect(summary.locator('..')).to_have_attribute('open', '')
         page.keyboard.press('Escape')
         # The ordinary tools and conversation are reachable via the existing toggle.
+        assistant_header = page.locator('.collector-header').bounding_box()
+        assistant_toggle = page.locator('#open-capture-assistant').bounding_box()
+        page.screenshot(path=str(out / 'assistant-before-toggle.png'))
         page.locator('#open-capture-assistant').click()
         expect(page.locator('#capture-assistant-panel')).to_be_hidden()
+        tools_header = page.locator('.collector-header').bounding_box()
+        tools_toggle = page.locator('#open-capture-assistant').bounding_box()
+        page.screenshot(path=str(out / 'tools-after-toggle.png'))
+        assert all(abs(assistant_header[key]-tools_header[key])<1 for key in ('x','y','width','height')), (assistant_header,tools_header)
+        assert all(abs(assistant_toggle[key]-tools_toggle[key])<1 for key in ('x','y','width','height')), (assistant_toggle,tools_toggle)
         page.locator('#open-capture-assistant').click()
         expect(page.locator('.capture-assistant-user')).to_have_count(1)
         page.evaluate('''async()=>{
@@ -115,10 +125,14 @@ def main():
             page.reload()
             for width in [320,390,900]:
                 page.set_viewport_size({'width':width,'height':844})
+                tools_box = None
                 for opened in [False,True]:
                     if opened:page.locator('#open-capture-assistant').click()
                     button=page.locator('#open-capture-assistant')
                     expect(button).to_be_visible()
+                    bounds=button.bounding_box()
+                    if not opened:tools_box=bounds
+                    else:assert all(abs(bounds[key]-tools_box[key])<1 for key in ('x','y','width','height')), (tools_box,bounds)
                     geometry=button.evaluate("""node=>{const box=node.getBoundingClientRect(),header=node.closest('header').getBoundingClientRect();const text=node.lastChild;const range=document.createRange();range.selectNodeContents(text);const label=range.getBoundingClientRect();return {label:[label.left,label.right],box:[box.left,box.right],header:[header.left,header.right],brand:node.closest('header').querySelector('.brand').getBoundingClientRect().right}}""")
                     assert geometry['label'][0]>=geometry['box'][0] and geometry['label'][1]<=geometry['box'][1], geometry
                     assert geometry['box'][1]<=geometry['header'][1] and geometry['brand']<=geometry['box'][0],geometry

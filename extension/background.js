@@ -2663,7 +2663,7 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
       progress.signal?.throwIfAborted();
       const latest = await readState();
       entries = rebaseCaptureEntries(state.entries, entries, latest.entries, affectedIds,
-        (existing, entry) => samePageCaptureSource(existing, { canonicalUrl: entry.url, sourceFacts: entry.sourceFacts }));
+        (existing, entry) => samePageCaptureSource(existing, { canonicalUrl: entry.url, contentText: entry.text, sourceFacts: entry.sourceFacts }));
       if (captureMetadata.contentTypeExplicit && !isValidContentPath(latest.taxonomy, [captureMetadata.contentTypeId])) {
         throw new Error('分类在下载期间已变化，请重新选择');
       }
@@ -3840,6 +3840,13 @@ async function readState() {
     try { await stateMigration; }
     finally { stateMigration = null; }
     await libraryStorage.remove("tagCatalog");
+  }
+  // A new required content type can arrive within the same data schema. Repair
+  // only the small type catalog; do not remigrate cases or reset custom types.
+  const currentTaxonomy = normalizeTaxonomy(state.taxonomy);
+  if (JSON.stringify(currentTaxonomy) !== JSON.stringify(state.taxonomy)) {
+    state = { ...state, taxonomy: currentTaxonomy };
+    await commitLocalChanges({ [STORAGE_KEYS.taxonomy]: currentTaxonomy });
   }
   const recoveredVocabulary = recoverFullyArchivedFacets(state.facetCatalog);
   if (recoveredVocabulary.restoredFacetIds.length) {
