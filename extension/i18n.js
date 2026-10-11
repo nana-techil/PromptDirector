@@ -2,6 +2,13 @@ import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
   "添加附件": "Add attachments",
+  "任务尚未完成且模型没有继续执行；已取得资料保留，未声称保存": "The task is unfinished and the model stopped making progress. Retrieved content is preserved; saving is not confirmed.",
+  "附件尚未准备好，已有对话保留": "The attachment is not ready. Your conversation is preserved.",
+  "附件原件未取得，请重新附加": "The original attachment is unavailable. Please attach it again.",
+  "请读取本对话中实际附加的文件": "Use a file actually attached to this conversation.",
+  "只能选择本对话或当前人工预览实际提供的本机原件": "Choose a local original from this conversation or the current manual preview.",
+  "本机原件未准备好": "The local original is not ready.",
+  "附件类型与实际原件不符": "The attachment type does not match its original file.",
   "请查看附件": "Please review the attachments",
   "当前模型不能接收图片，请选择支持图像的已配置模型，附件已保留": "This model cannot receive images. Choose a configured vision model. Your attachments are preserved.",
   "查看原因": "View reason",
