@@ -25,7 +25,16 @@
 .composer-session-item strong, .composer-session-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-session-item strong { font-size: 12px; }
 .composer-session-item small { margin-top: 3px; color: var(--muted); font-size: 10px; }
-.composer-session-delete { width: 28px; min-height: 28px; margin-right: 4px; padding: 5px; }
+.composer-session-delete { width: 28px; min-width: 28px; min-height: 28px; margin-right: 4px; padding: 5px; border: 0; color: var(--muted); background: transparent; opacity: 0; pointer-events: none; }
+.composer-session-item:hover .composer-session-delete,
+.composer-session-item:has(:focus-visible) .composer-session-delete { opacity: 1; pointer-events: auto; }
+.composer-session-delete:hover:not(:disabled) { color: var(--ui-danger); }
+.composer-session-item:hover .composer-session-delete:disabled,
+.composer-session-item:has(:focus-visible) .composer-session-delete:disabled { opacity: .48; }
+@media (hover: none) {
+  .composer-session-delete { opacity: 1; pointer-events: auto; }
+  .composer-session-delete:disabled { opacity: .48; }
+}
 .composer-session-running { color: var(--accent-ink) !important; }
 
 .composer-chat { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: var(--card); }
