@@ -33,8 +33,8 @@ export function prepareCaseQuery(entries, input, options = {}) {
     const { caseId, method = 'prompt' } = textReference ? { caseId: Symbol('unsaved-prompt') } : input.similarTo;
     const reference = textReference ? { id: caseId } : entries.find(entry => entry.id === caseId);
     if (!reference) fail('参考案例不存在，请重新选择已知caseId。');
-    // Only the Agent's prompt query scopes mixed cases to the requested media.
-    // The library's exploratory local recommendation engine remains unchanged.
+    // Explicit Agent media filters scope the corpus; exploratory recommendations
+    // without a filter compare mixed and single-media cases together.
     const promptMode = method === 'prompt';
     const prompts = new Map();
     const promptData = entry => {
@@ -46,8 +46,8 @@ export function prepareCaseQuery(entries, input, options = {}) {
     const index = createSimilarityIndex(textReference ? [...entries, reference] : entries, options.facetCatalog, {
       // A supplied text has no media domain of its own. The existing search scope already
       // limits candidate media; use the same tokenizer/IDF/cosine across those candidates.
-      ...(textReference ? { domainForEntry: (entry, media) => entry === reference || !input.mediaKind
-        || media.some(asset => asset.kind === input.mediaKind) ? 'provided-prompt' : '' } : {}),
+      ...(textReference || input.mediaKind ? { domainForEntry: (entry, media) => entry === reference || !input.mediaKind
+        || media.some(asset => asset.kind === input.mediaKind) ? 'content' : '' } : {}),
       mediaForEntry: entry => entry === reference && textReference ? [] : entryMediaAssets(entry).filter(asset => !promptMode || !input.mediaKind || asset.kind === input.mediaKind),
       ...(promptMode ? { promptForEntry: entry => promptData(entry).text } : {}),
       visualForEntry: entry => entry === reference && textReference ? undefined : caseCoverAsset(entry)?.id,
@@ -67,7 +67,7 @@ export function prepareCaseQuery(entries, input, options = {}) {
     const domain = index.profiles.get(caseId)?.domain;
     const comparable = (index.domains.get(domain) ?? []).filter(profile => profile.entry.id !== caseId);
     similarityCoverage = { ...(textReference ? { referenceType: 'provided_text' } : { referenceCaseId: caseId }), method,
-      scope: textReference ? '当前库指定媒体范围的已存提示词与提供文字比较；参考文字未入库、未做视觉识别' : promptMode && input.mediaKind ? `当前库含${input.mediaKind}的案例，仅比较该类素材提示词；不包含参考自身，未做视觉识别` : '当前库同媒体域；不包含参考自身，未做视觉识别',
+      scope: textReference ? '当前库指定媒体范围的已存提示词与提供文字比较；参考文字未入库、未做视觉识别' : input.mediaKind ? `当前库含${input.mediaKind}的案例${promptMode ? '，仅比较该类素材提示词' : ''}；不包含参考自身，未做视觉识别` : '当前库跨案例类型比较；不包含参考自身，未做视觉识别',
       ...(promptMode ? { referencePrompt: promptData(reference).evidence } : {}),
       sameDomainCases: comparable.length, comparedCases: ranked.length, unknownExcluded: comparable.length - ranked.length,
       differentDomainCases: entries.length - comparable.length - (textReference ? 0 : 1),

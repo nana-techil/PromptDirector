@@ -44,12 +44,34 @@ test('personal tags, projects, filenames, timestamps and formats cannot influenc
  assert.deepEqual(after.map(x=>x.promptSimilarity),before.map(x=>x.promptSimilarity));
 });
 
-test('image and video results do not mix and a poster does not turn a video into an image case',()=>{
- const values=[entry('current','video',['#223344'],'robot city'),entry('video','video',['#223344'],'robot city'),entry('image','image',['#223344'],'robot city')];
- values[1].mediaAssets.push({kind:'image',usage:'poster'});
- assert.deepEqual(ids(rank(values)),['video']);
+test('mixed cases and single-media cases discover one another without treating posters as content',()=>{
+ const values=[entry('video','video',['#223344'],'robot city'),entry('image','image',['#223344'],'robot city')];
+ values[0].mediaAssets.push({kind:'image',usage:'poster'});
  const mixed=entry('mixed','video',['#223344'],'robot city');mixed.mediaAssets.push({kind:'image'});
- assert.deepEqual(ids(rank([...values,mixed])),['video']);
+ values.push(mixed);
+ const index=createSimilarityIndex(values);
+ assert.equal(index.profiles.get('image').video,false);
+ assert.equal(index.profiles.get('video').video,true);
+ for(const current of values) assert.deepEqual(new Set(ids(rankSimilarEntries(index,current.id))),new Set(values.filter(e=>e!==current).map(e=>e.id)));
+});
+
+test('mixed cases retain the full cross-type result set instead of a handful of mixed-only matches',()=>{
+ const mixed=entry('mixed','video',[],'robot city');mixed.mediaAssets.push({kind:'image'},{kind:'audio'});
+ const candidates=Array.from({length:1200},(_,i)=>entry(`case-${i}`,i%2?'image':'video',[],'robot city'));
+ const snapshot=structuredClone([mixed,...candidates]);
+ const result=rank([mixed,...candidates]);
+ assert.equal(result.length,1200);
+ assert.deepEqual(new Set(ids(result)),new Set(candidates.map(e=>e.id)));
+ assert.deepEqual([mixed,...candidates],snapshot);
+});
+
+test('text prompts can match mixed media, but titles and empty evidence do not manufacture results',()=>{
+ const mixed=entry('mixed','video',[],'robot city');mixed.mediaAssets.push({kind:'image'});
+ const text=entry('text','text',[],'robot city');
+ const empty=entry('empty','image');empty.title='robot city';
+ const unrelated=entry('unrelated','text',[],'ocean coral');
+ assert.deepEqual(ids(rank([mixed,text,empty,unrelated])),['text']);
+ assert.deepEqual(ids(rank([mixed,text,empty,unrelated],'text')),['mixed']);
 });
 
 test('word segmentation handles differently worded descriptions without a synonym list',()=>{
@@ -106,7 +128,7 @@ test('ranking is deterministic and does not truncate the full matching set',()=>
  assert.deepEqual(ids(rank(values.toReversed(),values[0].id)),ids(rank(values)));
 });
 
-test('index rebuild reflects prompt edits and other media do not skew term statistics',()=>{
+test('index rebuild reflects prompt edits and identical cross-media prompts stay fully matched',()=>{
  const values=[entry('current','video',[],'robot city'),entry('other','video',[],'robot city')];
  const before=rank(values)[0].promptSimilarity;
  assert.equal(rank([...values,entry('image','image',[],'robot city')])[0].promptSimilarity,before);
