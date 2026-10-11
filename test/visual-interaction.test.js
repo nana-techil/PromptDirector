@@ -67,19 +67,19 @@ test("composer and Skill selections avoid oversized green outer rings", async ()
   assert.doesNotMatch(skills, /box-shadow:\s*0 0 0 (?:2px|3px) color-mix\(in srgb, var\(--accent\)/);
 });
 
-test("composer session delete menu reuses the compact shared danger action", async () => {
+test("composer conversation close action uses the shared danger icon button", async () => {
   const [foundation, composer, runtime] = await Promise.all([
     readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
     readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8"),
     readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8")
   ]);
-  assert.match(runtime, /composer-session-delete quiet-danger/);
-  assert.match(rule(composer, ".composer-session-menu-panel"), /min-width:\s*84px/);
-  assert.match(rule(composer, ".composer-session-menu-panel .quiet-danger"), /min-height:\s*30px/);
+  assert.match(runtime, /icon-button composer-session-delete quiet-danger/);
+  assert.doesNotMatch(runtime, /composer-session-menu/);
+  assert.match(rule(composer, ".composer-session-delete"), /min-height:\s*28px/);
   assert.match(rule(foundation, ".quiet-danger"), /color:\s*var\(--ui-danger\)/);
   assert.match(rule(foundation, ".quiet-danger"), /background:\s*transparent/);
   assert.match(rule(foundation, ".quiet-danger:hover:not(:disabled)"), /var\(--ui-danger\) 10%/);
-  assert.match(rule(composer, ".composer-session-menu-panel button:disabled"), /color:\s*var\(--muted\)/);
+
 });
 
 test("collector highlights use the shared restrained interaction language", async () => {

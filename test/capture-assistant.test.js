@@ -35,7 +35,7 @@ function fixture(execute, extras = {}) {
     call: async (operation, args) => { calls.push({ operation, args }); return operation === 'read_capture' ? preview : { state: 'completed', result: preview }; }, execute }) };
 }
 
-test('a missing-prompt complaint can read the actual saved case but cannot inspect an unrelated library case', async () => {
+test('the plugin assistant can inspect any actual library case, not only this chat save receipts', async () => {
   const calls = [];
   const result = await runCaptureAssistant({ ...input, instruction: '提示词没存全',
     messages: [{ role: 'result', result: { results: [{ status: 'saved', entryId: 'real-saved-case' }] } }] }, {
@@ -43,12 +43,12 @@ test('a missing-prompt complaint can read the actual saved case but cannot inspe
     call: async (name,args) => { calls.push(name); return name === 'read_case_details' ? { content: 'Full actual prompt', nextOffset: null } : { content: 'Current reply' }; },
     execute: async (_request,_settings,_images,{toolRuntime}) => {
       assert(toolRuntime.specs.some(spec => spec.name === 'read_case_details'));
-      assert.equal((await toolRuntime.execute('read_case_details',{caseId:'unrelated',parts:['source','media']})).data.code,'capture_scope_changed');
+      assert.equal((await toolRuntime.execute('read_case_details',{caseId:'unrelated',parts:['source','media']})).data.content,'Full actual prompt');
       const read=await toolRuntime.execute('read_case_details',{caseId:'real-saved-case',parts:['source','media','document']});
       assert.equal(read.data.content,'Full actual prompt');return {text:'已核对实际保存的原文。'};
     }
   });
-  assert(result.ok);assert.deepEqual(calls,['read_capture','read_case_details']);
+  assert(result.ok);assert.deepEqual(calls,['read_capture','read_case_details','read_case_details']);
 });
 
 test('asking how to capture or save can answer normally without scanning, selecting or saving the webpage', async () => {
@@ -133,4 +133,46 @@ test('a real screenshot is passed as model image input with its source metadata,
       assert.equal(result.images[0].dataUrl, 'data:image/png;base64,eA=='); return { text: 'I can see the screenshot.' };
     } });
   assert.equal(result.ok, true);
+});
+
+test('the plugin assistant opens, searches and edits the library without a capture webpage', async () => {
+  const calls = [];
+  const result = await runCaptureAssistant({ instruction: '打开案例库，查找案例并改标题', sessionId: 'general', locale: 'zh-CN' }, {
+    runtime, signal: new AbortController().signal,
+    call: async (name,args) => { calls.push({name,args}); return {ok:true,state:'ready',revision:'case-version',content:'actual case'}; },
+    execute: async (_request,_settings,_images,{toolRuntime}) => {
+      for (const name of ['open_workspace','search_cases','read_case_details','edit_case','organize_case','control_workspace','read_projects','update_project','submit_analysis_result']) assert(toolRuntime.specs.some(spec=>spec.name===name),name+' must use the same plugin capability');
+      assert((await toolRuntime.execute('open_workspace',{surface:'library'})).data.ok);
+      assert((await toolRuntime.execute('search_cases',{query:'gym'})).data.ok);
+      assert((await toolRuntime.execute('read_case_details',{caseId:'existing',parts:['overview']})).data.ok);
+      assert((await toolRuntime.execute('edit_case',{requestId:'edit',caseId:'existing',expectedRevision:'case-version',patch:{title:'New title'}})).data.ok);
+      assert.equal((await toolRuntime.execute('prepare_capture',{tabId:9})).data.code,'capture_page_required');
+      assert.equal((await toolRuntime.execute('trash_case',{caseId:'existing'})).data.code,'unknown_operation');
+      return {text:'已打开并更新标题。'};
+    }
+  });
+  assert(result.ok);assert.deepEqual(calls.map(x=>x.name),['open_workspace','search','read_case_details','edit_case']);
+});
+
+test('duplicate capture does not falsely report a requested supplement as saved', async () => {
+  const result=await runCaptureAssistant({...input,instruction:'给旧案例追加效果'}, {runtime,signal:new AbortController().signal,
+    call:async name=>name==='save_capture'?{state:'completed',result:{results:[{entryId:'old',status:'duplicate'}]}}:name==='prepare_capture'?{state:'completed',result:preview}:preview,
+    execute:async (_request,_settings,_images,{toolRuntime})=>{await toolRuntime.execute('prepare_capture',{tabId:1});await toolRuntime.execute('save_capture',{requestId:'supplement',captureId:'preview',expectedRevision:1});return {text:'原案例未更新，补充失败。'};}
+  });
+  assert.equal(result.saveResult.results[0].status,'duplicate');assert.equal(result.text,'原案例未更新，补充失败。');
+});
+
+test('a user-provided link can be captured from library chat through the same URL service as MCP', async () => {
+  const calls=[];
+  const remote={...preview,tabId:88,sourceUrl:'https://example.com/linked'};
+  const result=await runCaptureAssistant({instruction:'采集这个链接 https://example.com/linked',sessionId:'library-link'}, {
+    runtime,signal:new AbortController().signal,
+    call:async(name,args)=>{calls.push({name,args});return name==='prepare_capture'?{state:'completed',result:remote}:{content:'actual linked page',revision:1};},
+    execute:async(_request,_settings,_images,{toolRuntime})=>{
+      assert.equal((await toolRuntime.execute('prepare_capture',{url:remote.sourceUrl})).data.tabId,88);
+      assert.equal((await toolRuntime.execute('read_capture',{captureId:remote.captureId,part:'context',tabId:88})).data.content,'actual linked page');
+      return {text:'已取得预览。'};
+    }
+  });
+  assert(result.ok);assert.equal(calls[0].args.url,remote.sourceUrl);assert.equal(calls[0].args.tabId,undefined);assert.equal(calls[1].args.tabId,88);
 });

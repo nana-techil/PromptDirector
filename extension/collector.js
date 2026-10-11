@@ -165,11 +165,10 @@ libraryStorage.subscribe((changes) => {
   refresh().catch(() => undefined);
 });
 
+elements.openLibrary.addEventListener("click", () => void openLibraryTab());
 await refresh();
 await tryAutoSelection();
 void refreshPageCapturePermissionState();
-
-elements.openLibrary.addEventListener("click", () => void openLibraryTab());
 window.addEventListener("focus", () => {
   void tryAutoSelection();
   void refreshPageCapturePermissionState();
@@ -349,11 +348,6 @@ async function openLibraryTab() {
   try {
     const tab = await chrome.tabs.create({ url: chrome.runtime.getURL("library.html"), active: false });
     if (Number.isInteger(tab?.id)) {
-      try {
-        await chrome.sidePanel?.setOptions?.({ tabId: tab.id, enabled: false });
-      } catch {
-        showFeedback("灵感库已打开，但未能为新标签关闭侧边栏", true);
-      }
       await chrome.tabs.update(tab.id, { active: true });
     }
   } catch (error) {

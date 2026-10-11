@@ -15,6 +15,7 @@ import { moveEntriesBetweenCollections } from './organizer.js';
 import { planCaseCopies } from './library-folder-ownership.js';
 import { agentError } from './agent-protocol.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
+import { updateCodePreviewText } from './code-case.js';
 import { caseAnalysisCoverage } from './analysis-coverage.js';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
@@ -104,6 +105,10 @@ export function editCaseEntry(entry, patch, now = new Date().toISOString()) {
     next = updateEntryText(next, patch.text, next.textRevision || 1);
   }
   if (patch.articlePatches) next = updateArticleText(next, patch.articlePatches, next.textRevision || 1);
+  if (patch.codePreview) {
+    next = markEntryTextChanged(next, updateCodePreviewText(next.text, patch.codePreview.html));
+    next.sourceFacts = { ...next.sourceFacts, codePreviewAvailable: true };
+  }
   if (patch.customLabels) next.customLabels = uniqueNames(patch.customLabels);
   for (const item of patch.mediaPrompts || []) {
     const updated = setEntryMediaPrompt(next, item.assetId, item.text, item.source, { preserveOtherSource: true });

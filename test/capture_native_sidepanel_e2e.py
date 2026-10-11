@@ -49,7 +49,17 @@ with tempfile.TemporaryDirectory(prefix='pd-native-sender-') as tmp:
   assert bytes(original)==png
   saved=evaluate("chrome.runtime.sendMessage({type:'GET_STATE'}).then(state=>state.entries.length)")
   assert saved==0
+  before=evaluate("chrome.storage.local.get('captureAssistantDialog').then(value=>value.captureAssistantDialog.activeId)")
+  evaluate("document.querySelector('.library-entry').click()")
+  for _ in range(200):
+   if evaluate("chrome.tabs.query({}).then(tabs=>tabs.some(tab=>tab.url?.endsWith('/library.html')))"):break
+   p.wait_for_timeout(50)
+  assert evaluate("chrome.tabs.query({}).then(tabs=>tabs.some(tab=>tab.url?.endsWith('/library.html')))") or any(t['url'].endswith('/library.html') for t in cdp.send('Target.getTargets')['targetInfos']), {'targets':cdp.send('Target.getTargets')['targetInfos'],'feedback':evaluate("document.querySelector('#feedback')?.textContent"),'errors':run.page_errors}
+  assert evaluate("chrome.runtime.getContexts({contextTypes:['SIDE_PANEL']}).then(contexts=>contexts.some(context=>context.documentUrl.endsWith('/collector.html')))")
+  assert evaluate("document.querySelector('#capture-assistant-panel').hidden") is False
+  assert evaluate("document.querySelector('.capture-assistant-composer .capture-assistant-attachments').textContent.includes('user-screenshot.png')")
+  assert evaluate("chrome.storage.local.get('captureAssistantDialog').then(value=>value.captureAssistantDialog.activeId)")==before
   out=Path(os.environ.get('PD_E2E_ARTIFACT_DIR','/tmp/pd-native-sidepanel'));out.mkdir(parents=True,exist_ok=True)
   shot=rpc('Page.captureScreenshot',{'format':'png'})['data'];(out/'native-sidepanel-attachment.png').write_bytes(base64.b64decode(shot))
-  result={'nativeSidePanel':True,'senderDocumentIdAbsent':True,'screenshotAttachmentPrepared':True,'noAutomaticIngest':True,'originalBytesReadback':True,'status':status,'paidRequests':0}
+  result={'nativeSidePanel':True,'samePanelAndConversationRemainInLibrary':True,'senderDocumentIdAbsent':True,'screenshotAttachmentPrepared':True,'noAutomaticIngest':True,'originalBytesReadback':True,'status':status,'paidRequests':0}
   (out/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result,ensure_ascii=False))

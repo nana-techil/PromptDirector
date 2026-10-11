@@ -41,15 +41,32 @@ def main():
                 source=call('read_capture',{'captureId':prepared['captureId'],'part':'source','selector':'pre'})
                 selected=done('update_capture',{'requestId':'code-select','captureId':prepared['captureId'],'expectedRevision':source['revision'],
                     'candidates':[{'id':'code','title':'Tab Pill Glide','canonicalUrl':url,'contentText':'','media':[],
-                        'textSources':[{'selector':'pre','target':'text'}],'codePreview':{'html':DEMO}}],
+                        'textSources':[{'selector':'pre','target':'text'}]}],
                     'selections':[{'candidateId':'code','includeText':True,'selectedMediaIds':[]}]})
                 saved=done('save_capture',{'requestId':'code-save','captureId':prepared['captureId'],'expectedRevision':selected['revision']})
                 entry=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries[0]")
+                original_entry=entry
+                assert ORIGINAL in entry['text'] and DEMO not in entry['text']
+                details=call('read_case_details',{'caseId':entry['id'],'parts':['document','organization']})
+                changed=call('edit_case',{'requestId':'append-existing-preview','caseId':entry['id'],'expectedRevision':details['revision'],
+                    'patch':{'codePreview':{'html':DEMO},'classificationPathIds':['content:code-case']}})
+                assert changed.get('ok',True),changed
+                entries=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
+                assert len(entries)==1 and entries[0]['id']==original_entry['id']
+                entry=entries[0]
+                assert entry['text'].startswith(original_entry['text']) and entry.get('mediaAssets')==original_entry.get('mediaAssets')
                 assert ORIGINAL in entry['text'] and DEMO in entry['text'];assert entry['classification']['pathIds']==['content:code-case'],entry
+                run.context.add_init_script("window.clickEvents=[];document.addEventListener('click',e=>clickEvents.push({text:e.target.textContent,x:e.clientX,y:e.clientY,time:performance.now()}),true)")
                 library=run.open_page('library.html');library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
                 expect(library.locator('.code-case-frame')).to_be_visible()
                 preview=library.frame_locator('.code-case-frame').frame_locator('#preview')
-                expect(preview.locator('#state')).to_have_text('Build');preview.get_by_role('button',name='Ship').click();expect(preview.locator('#state')).to_have_text('Ship')
+                expect(preview.locator('#state')).to_have_text('Build')
+                preview.get_by_role('button',name='Ship').click()
+                try: expect(preview.locator('#state')).to_have_text('Ship')
+                except Exception:
+                    library.screenshot(path=str(out/'failed-click.png'))
+                    (out/'failed-click.json').write_text(json.dumps({'html':preview.locator('body').evaluate('()=>document.body.innerHTML'),'events':[{'url':f.url,'clicks':f.evaluate('window.clickEvents')} for f in library.frames],'errors':run.page_errors}))
+                    raise
                 frame=next(f for f in library.frames if f.url=='about:srcdoc')
                 isolation=frame.evaluate('''async()=>{let access=false,network=false;try{parent.parent.document.body;access=true}catch{}try{await fetch('https://example.test/blocked');network=true}catch{}return {access,network,extensionAPI:typeof chrome?.runtime}}''')
                 assert not isolation['access'] and not isolation['network'] and isolation['extensionAPI']=='undefined',isolation
@@ -61,14 +78,15 @@ def main():
                     library.screenshot(path=str(out/f'code-case-{width}.png'))
                 library.reload();library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click();expect(library.locator('.code-case-frame')).to_be_visible()
                 expect(library.frame_locator('.code-case-frame').frame_locator('#preview').locator('#state')).to_have_text('Build')
-                library.evaluate("async()=>chrome.storage.local.set({uiPreferences:{locale:'en',theme:'light',motion:'reduced'}})")
-                library.reload();library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
+                with library.expect_navigation():
+                    library.evaluate("async()=>chrome.storage.local.set({uiPreferences:{locale:'en',theme:'light',motion:'reduced'}})")
+                library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
                 expect(library.get_by_text('Reconstructed preview',exact=True)).to_be_visible()
                 for width in [1280,390]:
                     library.set_viewport_size({'width':width,'height':844})
                     expect(library.frame_locator('.code-case-frame').frame_locator('#preview').get_by_role('button',name='Build')).to_be_in_viewport()
                     library.screenshot(path=str(out/f'code-case-en-light-{width}.png'))
-                result={'savedOriginalExact':True,'codeTypeSaved':True,'actualLibraryInteraction':True,'reloadRunsSavedPreview':True,'isolatedFromLibraryAndNetwork':True,'paidRequests':0,'pageErrors':run.page_errors}
+                result={'savedOriginalExact':True,'updatedSameCaseWithoutDuplicateOrSourceLoss':True,'codeTypeSaved':True,'actualLibraryInteraction':True,'reloadRunsSavedPreview':True,'isolatedFromLibraryAndNetwork':True,'paidRequests':0,'pageErrors':run.page_errors}
                 (out/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))
     finally:server.shutdown()
 if __name__=='__main__': main()

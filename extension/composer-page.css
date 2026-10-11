@@ -25,17 +25,7 @@
 .composer-session-item strong, .composer-session-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-session-item strong { font-size: 12px; }
 .composer-session-item small { margin-top: 3px; color: var(--muted); font-size: 10px; }
-.composer-session-menu { position: relative; margin-right: 4px; }
-.composer-session-menu > summary { display: grid; width: 28px; min-height: 28px; place-items: center; opacity: 0; border-radius: 6px; color: var(--muted); cursor: pointer; list-style: none; pointer-events: none; }
-.composer-session-menu > summary::-webkit-details-marker { display: none; }
-.composer-session-item:hover .composer-session-menu > summary,
-.composer-session-item:focus-within .composer-session-menu > summary,
-.composer-session-item[aria-current="true"] .composer-session-menu > summary,
-.composer-session-menu[open] > summary { opacity: 1; pointer-events: auto; }
-.composer-session-menu > summary:hover { color: var(--ink); background: var(--hover); }
-.composer-session-menu-panel { position: absolute; z-index: 18; top: calc(100% + 3px); right: 0; min-width: 84px; border: 1px solid var(--line); border-radius: 7px; padding: 3px; background: var(--card); box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 18%, transparent); }
-.composer-session-menu-panel .quiet-danger { width: 100%; min-height: 30px; border: 0; border-radius: 5px; padding: 5px 8px; text-align: left; }
-.composer-session-menu-panel button:disabled { color: var(--muted); }
+.composer-session-delete { width: 28px; min-height: 28px; margin-right: 4px; padding: 5px; }
 .composer-session-running { color: var(--accent-ink) !important; }
 
 .composer-chat { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: var(--card); }

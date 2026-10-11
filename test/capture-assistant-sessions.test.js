@@ -1,17 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { restoreCaptureSessions, captureSessionForPage, newCaptureConversation } from '../extension/capture-assistant-sessions.js';
+import { restoreCaptureSessions, captureSessionForPage, newCaptureConversation, recentCaptureConversations } from '../extension/capture-assistant-sessions.js';
 import { buildCaptureDiagnostic, captureDiagnosticValue } from '../extension/capture-assistant-diagnostics.js';
 
-test('changing webpages preserves the unfinished originals and exact selections on each page', () => {
+test('browsing keeps the user conversation while preserving unfinished originals by page', () => {
   const store = restoreCaptureSessions();
   const first = captureSessionForPage(store, { id: 1, url: 'https://example.com/a', title: 'A' });
   first.messages.push({ role: 'user', content: 'Capture this artwork' });
   first.pendingBatch = { sourceUrl: first.sourceUrl, candidates: [{ contentText: 'Exact original', media: [{ localAssetId: 'original' }] }], selections: [{ candidateId: 'chosen' }] };
+  const originalBatch = structuredClone(first.pendingBatch), originalUrl = first.sourceUrl;
   const second = captureSessionForPage(store, { id: 2, url: 'https://example.com/b', title: 'B' });
-  assert.deepEqual(second.messages, []); assert.equal(second.pendingBatch, undefined);
-  const reopened = captureSessionForPage(restoreCaptureSessions(structuredClone(store)), { id: 3, url: first.sourceUrl, title: 'A' });
-  assert.deepEqual(reopened.pendingBatch, first.pendingBatch); assert.deepEqual(reopened.messages, first.messages);
+  assert.equal(second.id, first.id); assert.equal(second.messages[0].content, 'Capture this artwork'); assert.equal(second.pendingBatch, null);
+  const reopened = captureSessionForPage(restoreCaptureSessions(structuredClone(store)), { id: 3, url: originalUrl, title: 'A' });
+  assert.deepEqual(reopened.pendingBatch, originalBatch); assert.deepEqual(reopened.messages, first.messages);
   assert.equal(reopened.tabId, 3);
 });
 
@@ -25,7 +26,7 @@ test('new chat clears visible history but retains preview and previous rounds fo
   assert.equal(diagnostic.schema, 'promptdirector-composer-diagnostic'); assert.equal(diagnostic.version, 2);
   assert.equal(diagnostic.capture.sessions.length, 2);
   assert.equal(diagnostic.capture.sessions[0].messages[0].content, 'How do I capture?');
-  assert.equal(diagnostic.capture.sessions[0].pendingBatch, null);
+  assert.deepEqual(diagnostic.capture.sessions[0].pendingBatch, first.pendingBatch);
 });
 
 test('legacy single-page sessions migrate without losing messages, pending tasks or attachments', () => {
@@ -50,4 +51,29 @@ test('the reported old-preview/new-page mismatch migrates to separate pages inst
   const current = captureSessionForPage(store, { id: 2, url: 'https://example.com/new' });
   assert.equal(current.pendingBatch, null); assert.equal(current.messages[0].content, 'Capture this page');
   assert.deepEqual(store.pages[pendingBatch.sourceUrl].pendingBatch, pendingBatch);
+});
+
+
+test('sidebar shows five recent chats while the sixth preserves all conversations and pending originals for studio management', () => {
+  const store = restoreCaptureSessions(); const first = captureSessionForPage(store, {id:1,url:'https://example.com/a'});
+  first.messages.push({role:'user',content:'first'}); first.pendingBatch={sourceUrl:first.sourceUrl,selections:['original']};
+  const id=first.id, sourceUrl=first.sourceUrl;
+  let current=first;
+  for(let i=0;i<5;i++){current=newCaptureConversation(store,current); current.messages.push({role:'user',content:String(i)});}
+  assert.equal(store.conversations.length,6); assert.equal(store.conversations.some(s=>s.id===id),true); assert.equal(recentCaptureConversations(store).length,5);
+  assert.deepEqual(store.pages[sourceUrl].pendingBatch.selections,['original']);
+  const restored=restoreCaptureSessions(structuredClone(store));
+  assert.equal(captureSessionForPage(restored,{}).id,current.id);
+  restored.activeId=restored.conversations[0].id;
+  assert.equal(captureSessionForPage(restored,{id:2,url:'chrome://newtab/'}).messages[0].content,'first');
+  assert.equal(restored.conversations.length,6);
+});
+
+test('no webpage is needed to persist chat and navigation cannot retarget an executing task', () => {
+  const store=restoreCaptureSessions(); const current=captureSessionForPage(store,{});
+  current.messages.push({role:'user',content:'Open my library'});
+  assert.deepEqual(captureSessionForPage(restoreCaptureSessions(structuredClone(store)),{}).messages,current.messages);
+  current.requestId='running'; current.tabId=4; current.sourceUrl='https://example.com/target';
+  captureSessionForPage(store,{id:9,url:'https://example.com/new'});
+  assert.equal(current.tabId,4); assert.equal(current.sourceUrl,'https://example.com/target');
 });

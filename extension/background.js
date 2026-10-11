@@ -2,7 +2,10 @@ import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
 import { createAgentCapturePreview } from './agent-capture-preview.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { runCaptureAssistant } from './capture-assistant.js';
-import { createAgentContextRuntime } from './agent-runtime-context.js';
+import { assistantChatSession, assistantChatView, assistantChatContent } from './assistant-chat-session.js';
+import { restoreCaptureSessions } from './capture-assistant-sessions.js';
+import { createComposerToolProgress } from './composer-tool-progress.js';
+import { readAssistantCaseMedia } from './assistant-case-media.js';
 import { captureChatAssetIds, readCaptureChatAttachment, resolveCaptureLocalMedia } from './capture-chat-attachments.js';
 import { createCaseDedupeOperations } from './case-dedupe-operations.js';
 import { createCaptureSaveTasks, CAPTURE_SAVE_TASK_KEY, rebaseCaptureEntries } from './capture-save-tasks.js';
@@ -682,15 +685,10 @@ const agentTasks = createAgentTasks({ storage: libraryStorage,
       const controller = captureAssistantControllers.get(requestId) || new AbortController(); captureAssistantControllers.set(requestId, controller);
       try {
         await scope.assertCurrent();
-        const runtimeKey = `captureAssistantRuntime:${scope.libraryId}:${input.sessionId || requestId}`;
-        const contextRuntime = createAgentContextRuntime({ turnId: requestId,
-          load: async () => (await libraryStorage.get(runtimeKey))[runtimeKey],
-          update: async transform => {
-            await scope.assertCurrent();
-            return libraryStorage.update(runtimeKey, stored => ({ [runtimeKey]: transform(stored[runtimeKey] || {}) }));
-          } });
+        const contextRuntime = createComposerToolProgress({ storage: libraryStorage, sessionId: input.sessionId, userMessageId: requestId });
         return await runCaptureAssistant(input, { runtime: await getComposerAiRuntime(), signal: controller.signal, sessionRuntime: contextRuntime,
           readAttachment: transferId => readCaptureChatAttachment(transferId, { transfers: agentTransfers, readBlob: getMediaBlob }),
+          readMedia: input => readAssistantCaseMedia(input, { loadState: readCaseLibraryState, readBlob: getMediaBlob }),
           call: async (name, args) => { await scope.assertCurrent(); return executeAgentOperation(name,
             name === 'save_capture' ? { ...args, captureAssistantRequestId: requestId } : args); },
           onDelta: (_delta, text) => { void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId, text }).catch(() => {}); },
@@ -989,8 +987,8 @@ async function handleMessage(message, interaction = {}) {
       }
       if (message.type === 'SHOW_CAPTURE_ASSIST_CASE') return { ok: true, ...await agentWorkspace.show({ caseId: message.caseId }) };
       if (message.type === 'START_CAPTURE_ASSIST') {
-        if (typeof message.input?.instruction !== 'string' || !message.input.instruction.trim() || !Number.isInteger(message.input.tabId)) throw new Error('请输入当前网页的采集要求');
-        if ((await chrome.tabs.get(message.input.tabId)).url !== message.input.sourceUrl) throw new Error('采集网页已改变，请重新开始当前网页的采集');
+        if (typeof message.input?.instruction !== 'string' || !message.input.instruction.trim()) throw new Error('请输入要求');
+        if (/^https?:/iu.test(message.input.sourceUrl || '') && (!Number.isInteger(message.input.tabId) || (await chrome.tabs.get(message.input.tabId)).url !== message.input.sourceUrl)) throw new Error('当前页面已改变，请重试');
         if (captureAssistantControllers.size) throw new Error('已有采集助手任务正在运行，请先等待或停止');
         const controller = new AbortController(); captureAssistantControllers.set(message.requestId, controller);
         try {
@@ -1409,6 +1407,13 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => getComposerAiRuntime());
     case "GET_COMPOSER_SESSION":
       return enqueue(async () => getComposerSession(message.sessionId));
+    case "GET_ASSISTANT_CHATS":
+      return enqueue(async () => getAssistantChats(message.activeId));
+    case "UPSERT_ASSISTANT_CHAT":
+      return enqueue(async () => {
+        const previous = (await getComposerSession(message.chat.id)).session;
+        return upsertComposerSession(assistantChatSession(message.chat, previous), {activate:message.activate});
+      });
     case "START_CREATIVE_JOB":
       return enqueue(async () => startCreativeJobAction(message.request, message.jobId));
     case "GET_CREATIVE_JOB":
@@ -3828,7 +3833,7 @@ async function readState() {
   }
   const composerSessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
   if (JSON.stringify(stored[STORAGE_KEYS.composerSessions] ?? []) !== JSON.stringify(composerSessions)) {
-    await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: composerSessions }, { markSyncDirty: false });
+    await libraryStorage.update('composerSessions', latest => ({ composerSessions: normalizeComposerSessions(latest.composerSessions) }));
   }
   const creativeRuns = normalizeCreativeRuns(stored[STORAGE_KEYS.creativeRuns]);
   const creativeJobs = normalizeCreativeJobsState(stored[STORAGE_KEYS.creativeJobs]);
@@ -3940,6 +3945,36 @@ async function getComposerSession(sessionId) {
   const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
   const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]).find((item) => item.id === sessionId);
   return session ? { ok: true, session } : { ok: false, message: "没有找到这份创作草稿" };
+}
+
+async function getAssistantChats(activeId) {
+  const stored = await libraryStorage.get(['composerSessions', 'captureAssistantDialog']);
+  let sessions = normalizeComposerSessions(stored.composerSessions);
+  if (stored.captureAssistantDialog?.schema !== 'shared-chat') {
+    const old = restoreCaptureSessions(stored.captureAssistantDialog || {});
+    const migrated = [...old.history,...old.conversations].map(chat => assistantChatSession(chat)).filter(isMeaningfulComposerSession);
+    if (migrated.length) {
+      const {libraryId} = await libraryIdentity.read();
+      const keys = migrated.map(session => `captureAssistantRuntime:${libraryId}:${session.id}`);
+      const contexts = await libraryStorage.get(keys);
+      migrated.forEach((session,index) => {
+        const context = contexts[keys[index]];
+        if (context) Object.assign(session,{toolContext:context.toolContext || [],toolContinuations:context.toolContinuations || {},toolSkillVersionIds:context.toolSkillVersionIds || []});
+        session.chatRevision = Math.max(1,session.chatRevision);
+      });
+    }
+    await libraryStorage.update(['composerSessions','captureAssistantDialog','syncMeta'], latest => {
+      sessions = normalizeComposerSessions(latest.composerSessions);
+      if (latest.captureAssistantDialog?.schema === 'shared-chat') return {};
+      sessions = normalizeComposerSessions([...sessions,...migrated.filter(session => !sessions.some(current => current.id === session.id))]);
+      return {composerSessions:sessions,captureAssistantDialog:{schema:'shared-chat',pages:old.pages,activeId:old.activeId,activeUrl:old.activeUrl},
+        ...(!syncApplyInProgress ? {syncMeta:markSyncMetaDirty(latest.syncMeta)} : {})};
+    });
+  }
+  const recent = sessions.slice(0, 5);
+  const active = sessions.find(session => session.id === activeId);
+  if (active && !recent.includes(active)) recent.splice(4, 1, active);
+  return { ok: true, chats: recent.map(assistantChatView) };
 }
 
 async function startCreativeJobAction(request, jobId) {
@@ -5238,37 +5273,51 @@ async function updateComposerSettings(message) {
   return { ok: true, message: responseMessage, composerSettings: settings };
 }
 
-async function upsertComposerSession(value) {
-  const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
-  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
-  const session = createComposerSession(value);
-  preserveSavedToolDrafts(session, sessions.find(item => item.id === session.id));
-  session.toolContinuations = sessions.find(item => item.id === session.id)?.toolContinuations || {};
-  session.toolContext = sessions.find(item => item.id === session.id)?.toolContext || session.toolContext;
-  session.toolSkillVersionIds = sessions.find(item => item.id === session.id)?.toolSkillVersionIds || [];
-  if (!isMeaningfulComposerSession(session)) return { ok: false, message: "空白新对话不会保存到历史" };
-  const next = normalizeComposerSessions([session, ...sessions.filter((item) => item.id !== session.id)]);
-  await commitLocalChanges({ [STORAGE_KEYS.composerSessions]: next });
-  return { ok: true, session, summaries: next.map(sessionSummary) };
+async function upsertComposerSession(value, {activate = false} = {}) {
+  let response;
+  await libraryStorage.update(['composerSessions', 'syncMeta', ...(activate ? ['captureAssistantDialog'] : [])], stored => {
+    const sessions = normalizeComposerSessions(stored.composerSessions);
+    const session = createComposerSession(value);
+    const previous = sessions.find(item => item.id === session.id);
+    if (!previous && session.assistantState && session.chatRevision > 0) {
+      response = {ok:false,code:'chat_deleted',message:'对话已删除，请新建对话继续'}; return {};
+    }
+    const chatChanged = previous && assistantChatContent(session) !== assistantChatContent(previous);
+    if ((session.assistantState || previous?.assistantState) && chatChanged && session.chatRevision !== previous.chatRevision) {
+      response = { ok: false, code: 'chat_conflict', message: '对话已在其他页面更新，请重新读取后继续' }; return {};
+    }
+    if (session.assistantState) session.chatRevision = (previous?.chatRevision || 0) + (!previous?.assistantState || chatChanged ? 1 : 0);
+    session.updatedAt = !previous || chatChanged ? new Date().toISOString() : previous.updatedAt;
+    preserveSavedToolDrafts(session, previous);
+    session.toolContinuations = previous?.toolContinuations || {};
+    session.toolContext = previous?.toolContext || session.toolContext;
+    session.toolSkillVersionIds = previous?.toolSkillVersionIds || [];
+    if (!isMeaningfulComposerSession(session)) { response = { ok: false, message: '空白新对话不会保存到历史' }; return {}; }
+    const next = normalizeComposerSessions([session, ...sessions.filter(item => item.id !== session.id)]);
+    response = { ok: true, session, summaries: next.map(sessionSummary) };
+    return { composerSessions: next, ...(activate ? {captureAssistantDialog:{...stored.captureAssistantDialog,schema:'shared-chat',activeId:session.id,emptyChat:null}} : {}), ...(!syncApplyInProgress ? {syncMeta:markSyncMetaDirty(stored.syncMeta)} : {}) };
+  });
+  return response;
 }
 
 async function deleteComposerSession(sessionId) {
-  const stored = await libraryStorage.get([
-    STORAGE_KEYS.composerSessions,
-    STORAGE_KEYS.activeCreativeResult
-  ]);
-  const sessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
-  const removedSession = sessions.find((item) => item.id === sessionId);
-  const next = sessions.filter((item) => item.id !== sessionId);
-  if (next.length === sessions.length) return { ok: false, message: "没有找到这份创作草稿" };
-  const active = normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]);
-  await commitLocalChanges({
-    [STORAGE_KEYS.composerSessions]: next,
-    ...(active?.sessionId === sessionId ? { [STORAGE_KEYS.activeCreativeResult]: null } : {})
+  let removedSession, response;
+  await libraryStorage.update(['composerSessions','activeCreativeResult','syncMeta'], stored => {
+    const sessions = normalizeComposerSessions(stored.composerSessions);
+    removedSession = sessions.find(item => item.id === sessionId);
+    if (!removedSession) { response = {ok:false,message:'没有找到这份创作草稿'}; return {}; }
+    if (removedSession.assistantState?.requestId && captureAssistantControllers.has(removedSession.assistantState.requestId)) {
+      response = {ok:false,message:'请先停止这个对话的任务，再删除'}; return {};
+    }
+    const next = sessions.filter(item => item.id !== sessionId);
+    const active = normalizeActiveCreativeResult(stored.activeCreativeResult);
+    response = {ok:true,message:'创作草稿已删除',summaries:next.map(sessionSummary)};
+    return {composerSessions:next,...(active?.sessionId === sessionId ? {activeCreativeResult:null} : {}),
+      ...(!syncApplyInProgress ? {syncMeta:markSyncMetaDirty(stored.syncMeta)} : {})};
   });
+  if (!response.ok) return response;
   await deleteUnreferencedMedia(temporaryAssetIdsFromSession(removedSession));
-  await discardComposerToolProgress(libraryStorage, sessionId);
-  return { ok: true, message: "创作草稿已删除", summaries: next.map(sessionSummary) };
+  return response;
 }
 
 async function saveComposerResult(message) {

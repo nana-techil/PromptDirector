@@ -110,7 +110,7 @@ import {
 
 await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".composer-options, .composer-session-menu, .composer-toolbar-menu");
+bindTransientMenus(document, ".composer-options, .composer-toolbar-menu");
 
 const elements = Object.fromEntries([
   "composer-shell", "composer-nav", "composer-nav-open", "composer-nav-close", "composer-new", "composer-session-list",
@@ -352,11 +352,20 @@ async function refreshCreativeResultState() {
   const nextPhysicalEntries = response.entries ?? physicalEntries;
   const nextCompoundCases = normalizeCompoundCases(response.compoundCases ?? compoundCases, nextPhysicalEntries);
   const nextEntries = materializeLogicalCases(nextPhysicalEntries, nextCompoundCases);
+  sessionSummaries = response.composerSessionSummaries ?? sessionSummaries;
   creativeRuns = response.creativeRuns ?? creativeRuns;
   creativeJobs = response.creativeJobs ?? creativeJobs;
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
   creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
   if (!await syncCreativeJobState(revision)) return;
+  if (composerSession?.assistantState && !activeOperation) {
+    const sessionId = composerSession.id;
+    const shared = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId });
+    if (revision !== creativeStateRefreshRevision) return;
+    if (shared?.ok && composerSession?.id === sessionId && shared.session.chatRevision > composerSession.chatRevision) {
+      composerSession = shared.session;
+    }
+  }
   renderActiveState();
   renderSlashSkillMenu();
 
@@ -814,8 +823,6 @@ async function selectSlashSkill(skill) {
 }
 
 function renderSessions() {
-  const openMenus = new Set([...elements.composerSessionList.querySelectorAll(".composer-session-menu[open]")]
-    .map(menu => menu.closest(".composer-session-item")?.dataset.sessionId));
   const summaries = new Map(sessionSummaries.map((summary) => [summary.id, summary]));
   const current = sessionSummaryFromCurrent();
   if (current) summaries.set(current.id, current);
@@ -833,13 +840,13 @@ function renderSessions() {
     section.dataset.sessionGroup = group.id;
     section.append(rawTextEl("h3", "composer-session-group-label", t(group.label)));
     const list = el("div", "composer-session-group-list");
-    list.append(...group.items.map(summary => renderSessionRow(summary, openMenus.has(summary.id))));
+    list.append(...group.items.map(summary => renderSessionRow(summary)));
     section.append(list);
     return section;
   }));
 }
 
-function renderSessionRow(summary, menuOpen = false) {
+function renderSessionRow(summary) {
     const row = el("div", "composer-session-item");
     row.dataset.sessionId = summary.id;
     row.setAttribute("aria-current", String(summary.id === composerSession?.id));
@@ -850,24 +857,17 @@ function renderSessionRow(summary, menuOpen = false) {
     load.append(rawTextEl("strong", "", summary.title));
     if (running) load.append(rawTextEl("small", "composer-session-running", operationLabel(activeOperation.phase)));
     load.addEventListener("click", safely(() => loadComposerSession(summary.id)));
-    const menu = el("details", "composer-session-menu");
-    menu.open = menuOpen;
-    const trigger = rawTextEl("summary", "", "…");
-    trigger.setAttribute("aria-label", t("更多操作：{title}", { title: summary.title }));
-    const panel = el("div", "composer-session-menu-panel");
-    panel.setAttribute("role", "menu");
-    const remove = rawTextEl("button", "composer-session-delete quiet-danger", t("删除"));
+    const remove = el("button", "icon-button composer-session-delete quiet-danger");
     remove.type = "button";
     remove.disabled = running;
-    remove.setAttribute("role", "menuitem");
+    remove.title = t("删除");
+    remove.setAttribute("aria-label", `${t("删除")}：${summary.title}`);
+    remove.append(createUiIcon("x"));
     remove.addEventListener("click", (event) => {
       event.stopPropagation();
-      menu.open = false;
       safely(() => deleteSession(summary.id))();
     });
-    panel.append(remove);
-    menu.append(trigger, panel);
-    row.append(load, menu);
+    row.append(load, remove);
     return row;
 }
 

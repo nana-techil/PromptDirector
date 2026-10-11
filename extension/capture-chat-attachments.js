@@ -1,7 +1,7 @@
 import { agentError, bytesToBase64 } from './agent-protocol.js';
 
 export function captureChatAssetIds(dialog = {}) {
-  return [...new Set([...(dialog.history || []), ...Object.values(dialog.pages || {})].flatMap(session =>
+  return [...new Set([...(dialog.history || []), ...(dialog.conversations || []), ...Object.values(dialog.pages || {})].flatMap(session =>
     [...(session.attachments || []), ...(session.messages || []).flatMap(message => message.attachments || [])].map(item => item.assetId).filter(Boolean)))];
 }
 

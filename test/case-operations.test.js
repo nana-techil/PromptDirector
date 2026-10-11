@@ -447,3 +447,15 @@ test('splitting retains a genuine shared prompt but does not assign article pros
   entry.sourceFacts={originalPromptAvailable:false};
   assert.equal(mediaSplitGroups(entry)[0].text,'');
 });
+
+test('adding a runnable preview updates the same case while preserving exact originals and project membership', async()=>{
+  const run=service(library());const before=structuredClone(run.data.entries.find(e=>e.id==='other'));
+  const current=await run.api.read({caseId:'other'});
+  const html='<button onclick="this.textContent=\'Ready\'">Run</button>';
+  const result=await run.api.execute('edit_case',{requestId:'append-code',caseId:'other',expectedRevision:current.revision,patch:{codePreview:{html}}});
+  assert(result.ok);assert.equal(run.data.entries.length,2);
+  const entry=run.data.entries.find(e=>e.id==='other');assert(entry.text.startsWith(before.text));assert(entry.text.includes(html));
+  assert.deepEqual(entry.mediaAssets,before.mediaAssets);assert(entry.sourceFacts.codePreviewAvailable);
+  assert.deepEqual(run.data.organizerState.collections[1].entryIds,['other']);
+  const reread=await run.api.read({caseId:'other',parts:['document','source','organization']});assert(reread.content.includes(html.replaceAll('"','\\"')));
+});

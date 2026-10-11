@@ -18,6 +18,11 @@ export function codePreviewHtml(text = '') {
   }
   return '';
 }
+export function updateCodePreviewText(text = '', html) {
+  // Replace only the generated preview block; source text keeps its exact bytes.
+  const block = /^(`{3,})promptdirector-preview-html[^\S\r\n]*\r?\n[\s\S]*?\r?\n\1(?=\r?\n|$)/mu;
+  return block.test(text) ? text.replace(block, () => codePreviewText(html)) : `${text}\n\n${codePreviewText(html)}`;
+}
 export function createCodeCaseView(entry, { onCopy } = {}) {
   const section = document.createElement('section'); section.className = 'detail-section code-case-view';
   section.codeSourceText = entry.text;

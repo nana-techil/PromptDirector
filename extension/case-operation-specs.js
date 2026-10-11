@@ -42,6 +42,7 @@ export const CASE_OPERATION_SPECS = [
   { name: 'edit_case', description: '在用户委托范围内编辑已有案例，先读取当前版本。原文、来源和原始提示词默认保护；仅用户明确要求修正时用sourceCorrection列明字段与原因。creative精准编辑自己的prompt/summary/notes/purpose/plan，不改原资料。classificationPathIds使用已读分类编号，mediaOrder提供全部媒体编号排列，不改原件或段落结构。仅修改 patch 提供的字段；sourceFacts 中 null 明确清除错误字段。coverVisualId设置已存在的图片为封面，null恢复自动封面，不替换视频原件。组合案例可改title/customLabels/coverVisualId，正文和媒体须指定成员。文章用 articlePatches 修改已读段落，不能用 text 覆盖结构化文章。媒体来源修改不改变原件；推断提示词使用 ai-suggestion，不冒称原始提示词。相同 requestId 重试返回原回执；版本冲突需重读，不能盲目覆盖。成功后返回真实修改版本。',
     parameters: object({ requestId, ...identity, sourceCorrection: object({ reason: id, fields: list({ enum: ['sourceUrl', 'sourceFacts', 'mediaSources', 'text', 'articlePatches', 'mediaPrompts'] }) }, ['reason', 'fields']), patch: object({ title: id, text,
       creative: object(CREATIVE_NOTE_PROPERTIES),
+      codePreview: object({ html: { type: 'string', minLength: 1, description: '用户要求保存的自包含HTML交互复现。在已有案例追加或替换复现块，完整原文、原件、项目关系保持；不以复现冒充原站源码。无需sourceCorrection。需要改为代码案例时同时提供已读代码案例分类编号。隔离执行不支持外部依赖、联网或插件API。' } }, ['html']),
       classificationPathIds: { ...list(id), minItems: 1, maxItems: 1 },
       mediaOrder: { ...list(id), uniqueItems: true },
       ...source, customLabels: list(text), primaryMediaId: id, coverVisualId: nullableText,
