@@ -11,9 +11,9 @@
 .composer-new { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; justify-content: flex-start; border: 1px solid color-mix(in srgb, var(--ink) 18%, var(--line)); border-radius: 10px; padding: 9px 12px; color: var(--ink); background: var(--card); }
 .composer-new:hover:not(:disabled) { background: var(--hover); }
 .composer-new span:first-child { color: var(--accent-ink); font-size: 19px; font-weight: 400; line-height: 1; }
-.composer-nav-section { min-height: 0; overflow: hidden; padding-top: 20px; }
+.composer-nav-section { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow: hidden; padding-top: 20px; }
 .composer-nav-heading { padding: 0 9px 8px; color: var(--muted); font-size: 11px; }
-.composer-session-list { display: grid; align-content: start; gap: 14px; max-height: 100%; overflow: auto; }
+.composer-session-list { display: grid; align-content: start; gap: 14px; min-height: 0; overflow: auto; }
 .composer-session-group { display: grid; gap: 3px; min-width: 0; }
 .composer-session-group-label { margin: 0; padding: 0 9px 4px; color: var(--muted); font-size: 10px; font-weight: 800; }
 .composer-session-group-list { display: grid; gap: 3px; min-width: 0; }

@@ -14,6 +14,7 @@ SCRIPTS = [
     "capture_access_gate_e2e.py",
     "agent_capture_preview_e2e.py",
     "plugin_assistant_e2e.py",
+    "scroll_content_reachability_e2e.py",
     "capture_current_page_e2e.py",
     "code_case_e2e.py",
     "capture_native_sidepanel_e2e.py",
