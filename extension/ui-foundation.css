@@ -694,3 +694,6 @@ input, textarea, [contenteditable]:not([contenteditable="false"]) {
 .ui-popover-menu label input { flex: none; width: 16px; min-height: 16px; margin: 2px 0 0; }
 .ui-popover-menu label span { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .ui-popover-menu > small { padding: 0 8px; color: var(--ui-muted); }
+
+/* Keep the native disclosure marker in the same hit area during pointer press. */
+summary:active { scale: 1; transform: none; }

@@ -3,13 +3,15 @@ import { validate } from './case-operation-specs.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { waitForAgentTab } from './agent-capture.js';
 import { normalizePageCaptureBatch, normalizePageCaptureCandidate } from './page-capture.js';
+import { readPageCaptureSupplement } from './capture-supplement.js';
+import { resolvePageCaptureAdapter } from './page-capture-adapter-registry.js';
 import { PAGE_CAPTURE_LIMITS } from './resource-limits.js';
 import { resolveAgentProject } from './agent-save.js';
 import { operationBudget } from './resource-policy.js';
 import { codePreviewText } from './code-case.js';
 
 const prefix = 'agentCapture:';
-export function createAgentCapturePreview({ storage, chromeApi, collect, commit, loadState, getLibraryId, budget, readImage, resolveLocalMedia }) {
+export function createAgentCapturePreview({ storage, chromeApi, collect, commit, loadState, getLibraryId, budget, readImage, resolveLocalMedia, readSavedText, readSupplement = readPageCaptureSupplement }) {
   const key = id => prefix + requireAgentId(id);
   async function own(id) {
     const record = (await storage.get(key(id)))[key(id)];
@@ -45,8 +47,13 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
   function summary(record) {
     return { ok: true, captureId: record.id, revision: record.revision, state: record.state,
       sourceUrl: record.batch.sourceUrl, tabId: record.batch.tabId,
+      platform: capturePlatformGuidance(record.batch.sourceUrl),
       candidates: record.batch.candidates.map(item => ({ id: item.id, title: item.title,
-        canonicalUrl: item.canonicalUrl, completeness: item.completeness,
+        canonicalUrl: item.canonicalUrl, completeness: item.completeness, adapter: item.adapter,
+        textSources: (record.sourceBindings?.[item.id] || []).map(binding => ({ ...binding,
+          totalCharacters: record.sources?.[binding.selector]?.text.length || 0,
+          completeness: record.sources?.[binding.selector]?.completeness || 'unverified' })),
+        supplements: item.supplements.map(({ id, sourceUrl, partial, text }) => ({ id, sourceUrl, partial, textCharacters: text.length })),
         textCharacters: item.contentText.length, media: item.media.map(({ id, kind, url }) => ({ id, kind, url })) })),
       selections: record.batch.selections, saveMode: record.batch.saveMode, combinedTitle: record.batch.combinedTitle,
       ...(record.task ? { task: record.task } : {}),
@@ -75,15 +82,37 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (observed.result.url !== tab.url || (await chromeApi.tabs.get(tabId)).url !== tab.url) throw agentError('page_changed', '读取期间网页已改变');
         const offset = input.offset ?? 0, length = input.length ?? 12000;
         requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
-        const text = JSON.stringify(observed.result);
+        const text = JSON.stringify(captureSceneForModel(observed.result, length));
         if (offset) throw agentError('invalid_input', '当前现场请重新读取或按模块名称缩小范围');
         if (text.length > length) throw agentError('capture_context_scope_required', '当前现场包含较多区域，请用模块名称查询或增加读取长度');
         return { ...(record ? { captureId: record.id, revision: record.revision } : {}), part: 'context', sourceUrl: tab.url,
-          content: text, offset: 0, totalCharacters: text.length, nextOffset: null, untrustedContent: true };
+          content: text, offset: 0, totalCharacters: text.length, nextOffset: null, platform: capturePlatformGuidance(tab.url), untrustedContent: true };
       }
       const record = await own(input.captureId);
       version(record, input);
       const part = input.part ?? 'summary';
+      if (part === 'supplement') {
+        const offset = input.offset ?? 0, length = input.length ?? 12000;
+        requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
+        const candidate = record.batch.candidates.find(item => item.id === input.candidateId);
+        const item = candidate?.supplements.find(item => item.id === input.supplementId);
+        if (!item) throw agentError('capture_candidate_not_found', '请读取候选中实际识别到的评论补充');
+        await permission(record.batch.sourceUrl);
+        if ((await chromeApi.tabs.get(record.batch.tabId)).url !== record.batch.sourceUrl) throw agentError('page_changed', '采集网页已改变，请重新开始当前网页的采集');
+        if (input.offset && input.expectedRevision === undefined) throw agentError('capture_revision_required', '续读请携带首屏revision');
+        if (input.offset && input.refresh) throw agentError('invalid_input', '重新读取评论须从首屏开始');
+        if (input.offset && !record.sources?.[item.id]) throw agentError('capture_source_required', '请先读取评论首屏');
+        const supplement = input.offset ? { ...item, text: record.sources[item.id].text, partial: record.sources[item.id].completeness === 'partial' }
+          : item.partial || input.refresh ? await readSupplement(item, chromeApi, { sourceTabId: record.batch.tabId, sourceUrl: record.batch.sourceUrl }) : item;
+        if ((await chromeApi.tabs.get(record.batch.tabId)).url !== record.batch.sourceUrl) throw agentError('page_changed', '读取期间网页已改变');
+        record.sources ||= {};
+        record.sources[item.id] = { text: supplement.text, selector: item.id, url: supplement.sourceUrl, format: 'text', completeness: supplement.partial ? 'partial' : 'complete' };
+        candidate.supplements = candidate.supplements.map(value => value.id === item.id ? supplement : value);
+        if (!input.offset) { record.revision++; await persist(record); }
+        return { captureId: record.id, revision: record.revision, part, selector: item.id, sourceUrl: supplement.sourceUrl,
+          content: supplement.text.slice(offset, offset + length), offset, totalCharacters: supplement.text.length,
+          nextOffset: offset + length < supplement.text.length ? offset + length : null, completeness: record.sources[item.id].completeness, untrustedContent: true };
+      }
       if (input.refresh) {
         if (part !== 'page' || input.offset) throw agentError('invalid_input', '重新读取网页须从正文首屏开始');
         await permission(record.batch.sourceUrl);
@@ -125,7 +154,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (!source) throw agentError('capture_source_required', '请先读取这段实际原文');
         return { captureId: record.id, revision: record.revision, part, selector: input.selector, sourceUrl: source.url,
           content: source.text.slice(offset, offset + length), offset, totalCharacters: source.text.length,
-          nextOffset: offset + length < source.text.length ? offset + length : null, untrustedContent: true };
+          nextOffset: offset + length < source.text.length ? offset + length : null, completeness: source.completeness || 'unverified', untrustedContent: true };
       }
       if (part === 'screenshot') return screenshot(record);
       if (part === 'image') {
@@ -193,9 +222,13 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         const schema = CAPTURE_OPERATION_SPECS.find(spec => spec.name === operation).parameters.properties;
         if (input.task !== undefined) validate(schema.task, input.task, 'task');
         const candidates = [...record.batch.candidates];
+        const bindings = { ...record.sourceBindings };
         const ids = new Set();
         for (const patch of input.candidates ?? []) {
           let value = patch;
+          if (patch.originalPrompt && !patch.textSources?.length && Object.values(record.sources || {}).some(source => source.text.length > patch.originalPrompt.length && source.text.startsWith(patch.originalPrompt))) {
+            throw agentError('capture_source_required', '已取得的原文比提交的提示词更长，请用textSources引用完整来源，不能用模型截短版本代替');
+          }
           if (patch.textSources !== undefined) validate(schema.candidates.items.properties.textSources, patch.textSources, 'textSources');
           if (patch.textSources?.length) {
             const sources = patch.textSources.map(reference => {
@@ -207,6 +240,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
             value = { ...fields,
               contentText: sources.filter(source => source.target === 'text').map(source => sourceMaterialText(source.source)).join('\n\n'),
               originalPrompt: sources.filter(source => source.target === 'prompt').map(source => sourceMaterialText(source.source)).join('\n\n') };
+            bindings[value.id] = patch.textSources;
           }
           if (!value?.id || ids.has(value.id)) throw agentError('invalid_input', '补充内容编号缺失或重复');
           ids.add(value.id);
@@ -218,7 +252,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           })) };
           const index = candidates.findIndex(item => item.id === value.id);
           const prior = candidates[index];
-          if (prior && patch.textSources?.length && value.title !== undefined && value.title !== prior.title) {
+          if (prior?.adapter === 'generic' && patch.textSources?.length && value.title !== undefined && value.title !== prior.title) {
             throw agentError('capture_source_changed', '单独模块请新建候选，不能重命名已有整页候选并混入它的正文');
           }
           if (prior && prior.canonicalUrl !== requireWebUrl(value.canonicalUrl)) throw agentError('capture_source_changed', '已有候选的来源不能改为其他网页，请另建候选');
@@ -274,6 +308,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         }
         record.revision++;
         if (task) record.task = structuredClone(task);
+        record.sourceBindings = bindings;
         await scope.assertCurrent(); await persist(record);
         return summary(record);
       }
@@ -281,6 +316,13 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       if (!record.batch.selections.length) throw agentError('capture_selection_required', '请先选择要保存的内容，不会自动全选');
       if (record.task?.outcome === 'save' && record.task.candidateIds.some(id => !record.batch.selections.some(selection => selection.candidateId === id))) {
         throw agentError('capture_task_incomplete', '仍有指定案例未选入保存范围，已有预览保留');
+      }
+      if (input.saveMode !== undefined) {
+        if (!['single', 'multiple', 'combined'].includes(input.saveMode)) throw agentError('invalid_input', '保存方式无效');
+        record.batch = normalizePageCaptureBatch({ ...record.batch, saveMode: input.saveMode });
+      }
+      if (record.batch.captureMode === 'list' && record.batch.selections.length === 1 && !['multiple', 'combined'].includes(record.batch.saveMode)) {
+        record.batch = normalizePageCaptureBatch({ ...record.batch, saveMode: 'multiple' });
       }
       if (record.batch.captureMode === 'list' && !['multiple', 'combined'].includes(record.batch.saveMode)) {
         throw agentError('capture_save_mode_required', '请选择分别保存或合并为一个案例');
@@ -290,10 +332,29 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       record.state = 'saving'; record.lastSaveRequestId = requestId;
       await persist(record);
       try {
-        const result = await commit(record.batch, { ...(input.contentTypeId ? { contentTypeId: input.contentTypeId, contentTypeExplicit: true } : {}), ...input.captureMetadata, collectionId,
+        const result = await commit(record.batch, { ...input.captureMetadata,
+          ...(!input.captureMetadata?.contentTypeExplicit && input.contentTypeId ? { contentTypeId: input.contentTypeId, contentTypeExplicit: true } : {}), collectionId,
           ...(input.generationPromptChoices ? { generationPromptChoices: input.generationPromptChoices } : {}) }, progress);
         await scope.assertCurrent();
         record.results = result.results || [];
+        // Read back only source-backed text selected in this save; never
+        // download media again or let a short model reply prove completeness.
+        for (const receipt of record.results.filter(item => item.entryId && ['saved', 'duplicate', 'partial'].includes(item.status))) {
+          const chosen = record.batch.selections.filter(selection => selection.includeText && (record.batch.saveMode === 'combined' || selection.candidateId === receipt.candidateId));
+          const sources = chosen.flatMap(selection => (record.sourceBindings?.[selection.candidateId] || []).map(binding => record.sources[binding.selector]));
+          if (!sources.length) continue;
+          const partial = sources.some(source => source.completeness === 'partial');
+          let matches = false;
+          if (readSavedText) {
+            try { const savedText = await readSavedText(receipt.entryId); matches = sources.every(source => savedText.includes(sourceMaterialText(source).trim())); }
+            catch (error) { receipt.warnings = [...(receipt.warnings || []), `保存读回未完成：${error.message}`]; }
+          }
+          receipt.originalVerification = { status: matches && !partial ? 'verified' : partial ? 'partial' : 'unverified', sourceCount: sources.length };
+          if (partial || readSavedText && !matches) {
+            receipt.status = 'partial'; receipt.warnings = [...new Set([...(receipt.warnings || []), partial ? '来源正文仍被折叠，尚未取得全文' : '已保存内容与完整来源不一致，请补采后核对'])];
+          }
+        }
+        await scope.assertCurrent();
         const expectedResults = record.batch.saveMode === 'combined' ? 1 : record.batch.selections.length;
         const actualIds = new Set(record.results.map(item => item.candidateId));
         const coversSelection = record.batch.saveMode === 'combined' || (actualIds.size === expectedResults && record.batch.selections.every(item => actualIds.has(item.candidateId)));
@@ -301,7 +362,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           && record.results.every(item => item.entryId && ['saved', 'duplicate'].includes(item.status)) ? 'completed' : 'preview';
         record.revision++;
         await persist(record);
-        return { ...result, captureId: record.id, revision: record.revision, state: record.state };
+        return { ...result, results: record.results, captureId: record.id, revision: record.revision, state: record.state };
       } catch (error) {
         await scope.assertCurrent(); record.state = 'preview'; record.revision++; await persist(record);
         throw error;
@@ -445,7 +506,8 @@ export function readCapturePageContext(query = '') {
   for (const element of textRoots) for (let parent = element.parentElement; parent; parent = parent.parentElement) parents.add(parent);
   const textModules = textRoots.filter(element => !parents.has(element)).map(element => {
     const clone = element.cloneNode(true); clone.querySelectorAll(excluded).forEach(node => node.remove());
-    return { selector: path(element), visible: visible(element), text: clone.textContent.trim() };
+    const truncated = Boolean(element.closest('article,[role="article"]')?.querySelector('[data-testid="tweet-text-show-more-link"]'));
+    return { selector: path(element), visible: visible(element), text: clone.textContent.trim(), completeness: truncated ? 'partial' : 'complete' };
   }).filter(item => item.text);
   return { ok: true, url: location.href, title: document.title, query,
     selection: active?.matches('input,textarea,select') ? '' : String(getSelection() || ''), dialogs, codeBlocks, textModules,
@@ -464,7 +526,9 @@ export function readCaptureSource(selector) {
   clone.querySelectorAll('script,style,noscript,input,textarea,select,[data-promptdirector-capture-ui]').forEach(node => node.remove());
   // Preserve code whitespace directly from the DOM. Model pagination is only
   // for understanding; a source-backed save uses this complete frozen original.
-  return { ok: true, url: location.href, selector, text: clone.textContent,
+  const post = element.closest('article,[role="article"]');
+  const truncated = Boolean(post?.querySelector('[data-testid="tweet-text-show-more-link"]'));
+  return { ok: true, url: location.href, selector, text: clone.textContent, completeness: truncated ? 'partial' : 'complete',
     format: element.matches('pre,code') ? 'code' : 'text', untrustedContent: true };
   }
   if (!Array.isArray(selector)) return read(selector);
@@ -477,4 +541,25 @@ function sourceMaterialText(source) {
   if (source.format !== 'code') return source.text;
   const fence = '`'.repeat(Math.max(3, ...(source.text.match(/`+/gu) || []).map(value => value.length + 1)));
   return `${fence}\n${source.text}\n${fence}`;
+}
+
+export function capturePlatformGuidance(url) {
+  const adapter = resolvePageCaptureAdapter(url);
+  return { adapter: adapter.id, label: adapter.label, support: adapter.support, cardSelectors: adapter.cardSelectors, fields: adapter.fields,
+    guidance: adapter.id === 'x'
+      ? 'prepare_capture复用X正文、原视频及作者后续评论适配器。summary的supplements列出真实评论来源及partial；partial=true时read_capture(part=supplement,candidateId,supplementId)调用同一评论展开采集器。返回的selector可用于textSources.target=prompt，完整冻结原文入库。当前打开的其他评论可从context的真实selector读source。视频/图片附带短词不等于评论全文；先核对评论是否展开，未取得全文不能说完整。'
+      : 'prepare_capture使用该适配器和通用采集能力。context定位当前模块，source读取对应原文并检查completeness；用textSources保存冻结全文。partial表示仍有未取得内容，不能当作完整。代码模块按当前弹窗标题定位，不混入整页内容。' };
+}
+
+export function captureSceneForModel(scene, length) {
+  if (JSON.stringify(scene).length <= length || !scene.textModules?.length && !scene.codeBlocks?.length) return scene;
+  const count = (scene.textModules?.length || 0) + (scene.codeBlocks?.length || 0);
+  let excerptLength = Math.floor(length / count);
+  for (;;) {
+    const index = { ...scene, excerptOnly: true, instruction: '这是当前区域索引，不是完整原文；按真实selector用source读取并冻结全文。query可按模块标题或正文片段定位。',
+      textModules: (scene.textModules || []).map(({ text, ...module }) => ({ ...module, totalCharacters: text.length, text: text.slice(0, excerptLength), excerptOnly: text.length > excerptLength })),
+      codeBlocks: (scene.codeBlocks || []).map(({ content, ...module }) => ({ ...module, ...(content ? { totalCharacters: content.length, content: content.slice(0, excerptLength), excerptOnly: content.length > excerptLength } : {}) })) };
+    if (JSON.stringify(index).length <= length || !excerptLength) return index;
+    excerptLength = Math.floor(excerptLength / 2);
+  }
 }

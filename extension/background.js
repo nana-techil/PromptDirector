@@ -57,7 +57,7 @@ import { reusableAgentFile } from './agent-transfer-reuse.js';
 import { discardComposerToolProgress } from './composer-tool-progress.js';
 import { saveAgentMaterial } from "./agent-save.js";
 import { captureAgentUrl } from "./agent-capture.js";
-import { agentError, AGENT_PROTOCOL_VERSION } from "./agent-protocol.js";
+import { agentError, AGENT_PROTOCOL_VERSION, AGENT_CHUNK_BYTES } from "./agent-protocol.js";
 import { collectFeishuDocument } from "./feishu-document-capture.js";
 import { saveComposerToolDraft, preserveSavedToolDrafts } from './composer-tool-drafts.js';
 import { renderPageCaptureRegionPreview, clearPageCapturePageState } from "./page-capture-highlight.js";
@@ -670,6 +670,14 @@ const skillWriter = createSkillWriter({ storage: libraryStorage, transfers: agen
   readBlob: getMediaBlob, commit: commitLocalChanges, enqueue, cleanup: deleteUnreferencedMedia });
 const agentCapturePreview = createAgentCapturePreview({ storage: libraryStorage, chromeApi: chrome,
   collect: collectPageCaptureTab, commit: commitPageCapture,
+  readSavedText: async caseId => {
+    let result = await agentLibrary.read({ caseId, part: 'body', length: AGENT_CHUNK_BYTES / 4 }), text = result.content;
+    while (result.nextOffset !== null) {
+      result = await agentLibrary.read({ caseId, part: 'body', length: AGENT_CHUNK_BYTES / 4, offset: result.nextOffset, expectedRevision: result.revision });
+      text += result.content;
+    }
+    return text;
+  },
   resolveLocalMedia: media => resolveCaptureLocalMedia(media, agentTransfers),
   readImage: async media => media.localAssetId ? await getMediaBlob(media.localAssetId) || await getScreenshotBlob(media.localAssetId)
     : fetchBoundedMedia(media.url, { kind: 'image', maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes, maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels }),
@@ -810,7 +818,12 @@ async function executeAgentOperation(operation, input) {
     case "search": return agentLibrary.search(input);
     case "read_case": return agentLibrary.read(input);
     case "read_media": return agentLibrary.media(input);
-    case 'read_capture': return agentCapturePreview.read(input);
+    case 'read_capture': {
+      // Freezing new originals changes the preview revision. Serialize those
+      // reads with selection/save; ordinary context and pagination stay read-only.
+      const freezesSource = ['source', 'supplement'].includes(input.part) && !input.offset || input.refresh;
+      return freezesSource ? enqueueCapture(() => agentCapturePreview.read(input)) : agentCapturePreview.read(input);
+    }
     case "capture":
     case 'prepare_capture':
     case 'update_capture':
@@ -989,8 +1002,12 @@ async function handleMessage(message, interaction = {}) {
       if (message.type === 'START_CAPTURE_ASSIST') {
         if (typeof message.input?.instruction !== 'string' || !message.input.instruction.trim()) throw new Error('请输入要求');
         if (/^https?:/iu.test(message.input.sourceUrl || '') && (!Number.isInteger(message.input.tabId) || (await chrome.tabs.get(message.input.tabId)).url !== message.input.sourceUrl)) throw new Error('当前页面已改变，请重试');
-        if (captureAssistantControllers.size) throw new Error('已有采集助手任务正在运行，请先等待或停止');
-        const controller = new AbortController(); captureAssistantControllers.set(message.requestId, controller);
+        if (captureAssistantControllers.size) {
+          const [requestId, active] = captureAssistantControllers.entries().next().value;
+          if (requestId === message.requestId) return { ok: true, task: await agentTasks.submit('capture_assist', message.input, requestId) };
+          return { ok: false, code: 'capture_busy', requestId, sessionId: active.sessionId, message: '已有采集助手任务正在运行，请先等待或停止' };
+        }
+        const controller = new AbortController(); controller.sessionId = message.input.sessionId; captureAssistantControllers.set(message.requestId, controller);
         try {
           const task = await agentTasks.submit('capture_assist', message.input, message.requestId);
           if (!['queued', 'running'].includes(task.state)) captureAssistantControllers.delete(message.requestId);

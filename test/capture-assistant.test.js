@@ -78,6 +78,18 @@ test('unconfigured model makes no page reads or paid requests', async () => {
     call: () => assert.fail('No read'), execute: () => assert.fail('No model request') }), { code: 'capture_model_required' });
 });
 
+test('an ordinary scan busy at submission does not deny capture tools after their shared queue becomes available', async () => {
+  const f = fixture(async (_request, _settings, _images, { toolRuntime }) => {
+    const prepared = await toolRuntime.execute('prepare_capture', { tabId: 1 });
+    assert.notEqual(prepared.data.code, 'capture_busy');
+    const selected = await toolRuntime.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: [] });
+    assert.notEqual(selected.data.code, 'capture_busy');
+    return { text: 'Preview prepared' };
+  }, { collectorBusy: true });
+  assert.equal((await f.run()).ok, true);
+  assert.deepEqual(f.calls.map(item => item.operation), ['read_capture', 'prepare_capture', 'update_capture']);
+});
+
 test('stopping after a successful tool call retains capture identity and preview revision', async () => {
   const controller = new AbortController();
   const result = await runCaptureAssistant(input, { runtime, signal: controller.signal,
@@ -159,7 +171,7 @@ test('duplicate capture does not falsely report a requested supplement as saved'
     call:async name=>name==='save_capture'?{state:'completed',result:{results:[{entryId:'old',status:'duplicate'}]}}:name==='prepare_capture'?{state:'completed',result:preview}:preview,
     execute:async (_request,_settings,_images,{toolRuntime})=>{await toolRuntime.execute('prepare_capture',{tabId:1});await toolRuntime.execute('save_capture',{requestId:'supplement',captureId:'preview',expectedRevision:1});return {text:'原案例未更新，补充失败。'};}
   });
-  assert.equal(result.saveResult.results[0].status,'duplicate');assert.equal(result.text,'原案例未更新，补充失败。');
+  assert.equal(result.saveResult.results[0].status,'duplicate');assert.equal(result.text,'Already in the library; no new captured content.');
 });
 
 test('a user-provided link can be captured from library chat through the same URL service as MCP', async () => {

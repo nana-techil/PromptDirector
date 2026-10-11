@@ -17,7 +17,7 @@ export function assistantChatSession(chat, previous) {
           assetRefs:[{assetId:asset.assetId,kind:asset.kind,mimeType:asset.mimeType,name:asset.name,byteSize:asset.byteSize || 0}],
           imageRefs:asset.kind === 'image' ? [{visualId:asset.assetId,mimeType:asset.mimeType}] : []})) ],
     messages: messages.map(message => message.role === 'result'
-      ? { ...previous?.messages?.find(item => item.id === message.id), ...message, role: 'assistant', type: 'status', content: '已保存。', captureReceipt: message.result }
+      ? { ...previous?.messages?.find(item => item.id === message.id), ...message, role: 'assistant', type: 'status', content: captureReceiptText(message.result), captureReceipt: message.result }
       : { ...previous?.messages?.find(item => item.id === message.id), ...message, type: message.role === 'assistant' ? 'chat' : 'request' }),
     updatedAt: new Date().toISOString() });
 }
@@ -32,4 +32,12 @@ export function assistantChatView(session) {
 export function assistantChatContent(session) {
   return JSON.stringify([session.messages,session.currentInstruction,session.title,session.aiProfile,
     session.referenceSnapshots,session.promptVersions,session.appliedSkills]);
+}
+
+export function captureReceiptText(result) {
+  const receipts = result?.results || [];
+  if (receipts.length && receipts.every(item => item.status === 'saved' && item.entryId)) return '已保存。';
+  if (receipts.length && receipts.every(item => item.status === 'duplicate' && item.entryId)) return '已有案例，未新增采集内容。';
+  if (receipts.some(item => item.entryId)) return '已部分保存，请查看缺失原因。';
+  return '未保存，已有内容保留';
 }

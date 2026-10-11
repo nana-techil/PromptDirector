@@ -266,6 +266,8 @@ npm run check
 
 ### 原文定位与批量采集任务
 
+采集完整性：summary.platform给出实际适配能力，candidates[].supplements列出评论来源与partial；用read_capture(part=supplement,candidateId,supplementId)调用插件评论展开采集器，按返回selector用textSources保存冻结全文。partial仍未完整，保存后的originalVerification是实际入库读回结果；duplicate不能证明新增全文已保存。
+
 `read_capture(part="page")`包含当前选区、可见代码区和对话框的定位事实。`read_capture(part="source", selector)`冻结指定网页区域的完整原文，返回新的revision；`update_capture`的候选可用`textSources:[{selector,target:"text"或"prompt"}]`直接采用原文，包括原始代码空白。Agent分页读取不意味着原文被截短，未读完不能称全文已读。旧后台的`status.captureReadParts`没有`source`时，不假定新能力可用。
 
 `update_capture.task`可登记`objective/outcome/candidateIds/state`，批量保存须选中全部声明的实际候选；缺少具体案例编号或对应保存回执时预览仍保留。`create_project`直接返回持久项目回执，不需要轮询`get_task`。媒体可提供网页`url`或已准备好原件的`localTransferId`，插件验证文件身份和类型；上传截图仅用于对话时不会自动保存。内部采集助手和外部MCP调用沿同一预览及入库规则执行。

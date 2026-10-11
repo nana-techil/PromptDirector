@@ -20,7 +20,7 @@ import { compactCaptureReply } from './capture-reply.js';
 const storage = getLibraryStorage();
 const stateKey = 'captureAssistantDialog';
 
-export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = applyBatch, isBusy, getCollections, getDraft, getMetadata, changeProject, save, cancelSave, getContentTypes, getSuggestedType }) {
+export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = applyBatch, isBusy, isAutomaticCapturing = () => false, getBatchEditVersion = () => 0, getCollections, getDraft, getMetadata, changeProject, save, cancelSave, getContentTypes, getSuggestedType }) {
   const panel = node('section', 'capture-assistant-panel'); panel.id = 'capture-assistant-panel'; panel.hidden = true;
   panel.setAttribute('aria-label', t('采集助手'));
   const contextRow = node('div', 'capture-assistant-context-row');
@@ -45,12 +45,20 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   const toggle = document.getElementById('open-capture-assistant'); toggle.setAttribute('aria-controls', panel.id);
   const fresh = button('新对话', 'quiet compact capture-assistant-new'); fresh.id = 'capture-assistant-new'; fresh.hidden = true; toggle.before(fresh);
   const project = node('details', 'detail-project-menu capture-assistant-project');
-  const projects = createCaptureProjectMenu({ menu: project, getCollections, getDraft, getContentTypes, getSuggestedType, onChange: changeProject, onError: error => feedback(error.message, true) });
+  const projects = createCaptureProjectMenu({ menu: project, getCollections, getDraft, onChange: changeProject, onError: error => feedback(error.message, true) });
+  const contentType = node('select', 'capture-assistant-type'); contentType.id = 'capture-assistant-content-type';
+  contentType.setAttribute('aria-label', t('内容类型')); contentType.title = t('内容类型');
   // Both collector project controls share one draft. Give this input its own DOM identity.
   project.querySelector('input').id = 'capture-assistant-new-project';
   let state = { messages: [], requestId: '', captureId: '' }, checking = false, opened = false, loaded = false;
   let baseBatch = null, previewBatch = null, renderedMessages = null, renderedBatch = undefined, resultPreview = null, stream = null, localSaving = false, preparingFiles = false;
-  let persistTail = Promise.resolve(), syncTail = Promise.resolve(), switching = false, deferredPage = false;
+  let persistTail = Promise.resolve(), syncTail = Promise.resolve(), switching = false, deferredPage = false, submitting = false, opening = false;
+  const pendingWrites = new Map(); let writing = false;
+  const persistedPages = new Map(); let persistedDialog = '';
+  function samePageWork(left, right) {
+    return left && left.pendingBatch === right.pendingBatch && left.tabId === right.tabId && left.captureId === right.captureId
+      && left.pendingRevision === right.pendingRevision && JSON.stringify(left.projectDraft) === JSON.stringify(right.projectDraft);
+  }
   let sessions = restoreCaptureSessions(), modelChoices = [], renderedAttachments = '', localEdits = 0;
   const modelLabels = new Map(), chatRevisions = new Map();
   const attachmentUrls = new Map();
@@ -85,25 +93,37 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     const index = sessions.conversations.findIndex(item => item.id === state.id);
     if (index >= 0) sessions.conversations[index] = state;
     if (state.sourceUrl) sessions.pages[state.sourceUrl] = pageWork(state);
-    const owner = state;
-    for (const message of owner.messages) message.id ||= crypto.randomUUID();
-    const chat = structuredClone(owner);
-    const snapshot = { schema: 'shared-chat', pages: structuredClone(sessions.pages), activeId: sessions.activeId, activeUrl: sessions.activeUrl,
-      emptyChat: !chat.messages.length && !chat.draft && !chat.attachments?.length
-        ? {id:chat.id,aiProfile:chat.aiProfile,messages:[],sourceUrl:chat.sourceUrl,tabId:chat.tabId,pageTitle:chat.pageTitle,projectDraft:chat.projectDraft} : null };
+    pendingWrites.set(state.id, state);
+    if (writing) return persistTail;
+    writing = true;
     persistTail = persistTail.catch(() => {}).then(async () => {
-      if (chat.userCreated || chat.messages.length || chat.draft || chat.attachments?.length) {
-        chat.chatRevision = chatRevisions.get(chat.id) ?? owner.chatRevision ?? chat.chatRevision;
-        const response = await chrome.runtime.sendMessage({ type: 'UPSERT_ASSISTANT_CHAT', chat, activate:state.id === owner.id });
-        if (!response?.ok) throw new Error(response?.message || t('无法保存创作草稿'));
-        owner.chatRevision = response.session.chatRevision; owner.updatedAt = response.session.updatedAt;
-        chatRevisions.set(chat.id, response.session.chatRevision);
+      while (pendingWrites.size) {
+        const [id, owner] = pendingWrites.entries().next().value; pendingWrites.delete(id);
+        for (const message of owner.messages) message.id ||= crypto.randomUUID();
+        // Page originals live in pageWork. Typing a chat draft must not copy
+        // every webpage's preview or send the same batch to the background again.
+        const { pendingBatch: _pendingBatch, ...view } = owner;
+        const chat = structuredClone(view);
+        const changedPages = Object.entries(sessions.pages).filter(([url, work]) => !samePageWork(persistedPages.get(url), work));
+        const snapshot = { schema: 'shared-chat', pages: Object.fromEntries(changedPages.map(([url, work]) => [url, structuredClone(work)])), activeId: sessions.activeId, activeUrl: sessions.activeUrl,
+          emptyChat: !chat.messages.length && !chat.draft && !chat.attachments?.length
+            ? {id:chat.id,aiProfile:chat.aiProfile,messages:[],sourceUrl:chat.sourceUrl,tabId:chat.tabId,pageTitle:chat.pageTitle,projectDraft:chat.projectDraft} : null };
+        if (chat.userCreated || chat.messages.length || chat.draft || chat.attachments?.length) {
+          chat.chatRevision = chatRevisions.get(chat.id) ?? owner.chatRevision ?? chat.chatRevision;
+          const response = await chrome.runtime.sendMessage({ type: 'UPSERT_ASSISTANT_CHAT', chat, activate:state.id === owner.id });
+          if (!response?.ok) throw new Error(response?.message || t('无法保存创作草稿'));
+          owner.chatRevision = response.session.chatRevision; owner.updatedAt = response.session.updatedAt;
+          chatRevisions.set(chat.id, response.session.chatRevision);
+        }
+        const dialog = JSON.stringify([snapshot.activeId, snapshot.activeUrl, snapshot.emptyChat]);
+        if (changedPages.length || dialog !== persistedDialog) await storage.update(stateKey, stored => ({[stateKey]: {
+          ...stored[stateKey], schema:'shared-chat', activeUrl:snapshot.activeUrl,
+          pages: { ...stored[stateKey]?.pages, ...snapshot.pages },
+          ...(state.id === owner.id ? {activeId:owner.id,emptyChat:snapshot.emptyChat} : {})
+        }}));
+        changedPages.forEach(([url, work]) => persistedPages.set(url, work)); persistedDialog = dialog;
       }
-      await storage.update(stateKey, stored => ({[stateKey]: {
-        ...stored[stateKey], schema:'shared-chat', pages:snapshot.pages, activeUrl:snapshot.activeUrl,
-        ...(state.id === owner.id ? {activeId:owner.id,emptyChat:snapshot.emptyChat} : {})
-      }}));
-    });
+    }).finally(() => { writing = false; });
     return persistTail;
   }
   async function loadSessions() {
@@ -114,6 +134,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     const latest = (await storage.get(stateKey))[stateKey] || stored;
     if (latest.emptyChat?.id === latest.activeId && !response.chats.some(chat => chat.id === latest.activeId)) response.chats.push(latest.emptyChat);
     sessions = restoreCaptureSessions({...latest, conversations:response.chats}); loaded = true;
+    Object.entries(sessions.pages).forEach(([url, work]) => persistedPages.set(url, work));
     sessions.conversations.forEach(chat => chatRevisions.set(chat.id, chat.chatRevision || 0));
   }
   function organizationDraft() {
@@ -133,7 +154,6 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       if (state.id) {
         state.projectDraft = organizationDraft();
         if (!batch || batch.sourceUrl === state.sourceUrl) state.pendingBatch = batch;
-        await persist();
       }
       if (batch && batch.sourceUrl !== tab?.url) sessions.pages[batch.sourceUrl] = {
         ...sessions.pages[batch.sourceUrl], sourceUrl: batch.sourceUrl, tabId: batch.tabId, pendingBatch: batch,
@@ -152,7 +172,8 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
         baseBatch = getBatch(); previewBatch = baseBatch; state.pendingBatch = baseBatch;
         field.value = state.draft || ''; feedback(state.lastError || '', Boolean(state.lastError));
       }
-      await persist(); render();
+      if (previousUrl !== state.sourceUrl || previousId !== state.id) await persist();
+      render();
     });
     return syncTail;
   }
@@ -163,7 +184,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   function feedback(text, error = false, pending = false) {
     setTaskFeedbackState(status, { pending, error }); status.textContent = translateUiMessage(text || '');
   }
-  function busy() { return Boolean(state.requestId || localSaving); }
+  function busy() { return Boolean(opening || submitting || state.requestId || localSaving); }
   function render() {
     toggle.disabled = false; fresh.disabled = busy();
     chats.disabled = busy();
@@ -174,11 +195,22 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       option.selected = session.id === state.id; return option;
     }));
     const remove = document.createElement('option'); remove.value = 'all'; remove.textContent = t('全部对话…'); chats.append(remove);
-    field.disabled = localSaving;
+    field.disabled = localSaving || opening;
     attach.disabled = busy() || isBusy();
-    send.disabled = busy(); stop.hidden = preparingFiles || !(state.requestId || localSaving);
+    send.disabled = busy(); stop.hidden = preparingFiles || submitting || !(state.requestId || localSaving);
     stop.disabled = Boolean(state.committing);
     projects.render(busy() || isBusy());
+    const draft = getDraft() || {};
+    const types = [{ id: '', name: t('自动识别'), customized: true }, ...(getContentTypes?.() || [])];
+    const typeOptions = JSON.stringify(types);
+    if (contentType.dataset.options !== typeOptions) {
+      contentType.replaceChildren(...types.map(item => { const option = document.createElement('option'); option.value = item.id;
+        option.textContent = item.customized ? item.name : t(item.name || item.label); return option; })); contentType.dataset.options = typeOptions;
+    }
+    contentType.value = draft.contentTypeExplicit ? draft.contentTypeId : getSuggestedType?.() || '';
+    contentType.disabled = busy() || isBusy();
+    const saveMode = conversation.querySelector('#capture-assistant-save-mode');
+    if (saveMode) saveMode.disabled = busy() || isBusy();
     renderModels();
     const attachmentKey = JSON.stringify([state.id, state.attachments || [], busy()]);
     if (attachmentKey !== renderedAttachments) {
@@ -268,6 +300,19 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       card.append(action('继续补采', () => submit(t('重新读取当前网页，补采缺失内容，先不要保存')), 'quiet compact'));
     }
     const adjust = action('调整选择', () => open(false), 'quiet compact'); card.append(adjust);
+    const settings = node('div', 'capture-assistant-save-settings'); settings.append(contentType);
+    if (batch.captureMode === 'list' && selected.length > 1) {
+      const mode = node('select'); mode.id = 'capture-assistant-save-mode'; mode.setAttribute('aria-label', t('保存方式'));
+      for (const [value, label] of [['', '请选择'], ['multiple', '分别保存多个案例'], ['combined', '合并为一个案例']]) {
+        const option = document.createElement('option'); option.value = value; option.textContent = t(label); mode.append(option);
+      }
+      mode.value = ['multiple', 'combined'].includes(batch.saveMode) ? batch.saveMode : '';
+      mode.disabled = busy(); mode.addEventListener('change', () => {
+        applyBatch({ ...getBatch(), saveMode: mode.value }); previewBatch = getBatch(); baseBatch = previewBatch;
+        state.pendingBatch = previewBatch; void persist(); render();
+      }); settings.append(mode);
+    }
+    card.append(settings);
     const row = node('div', 'capture-assistant-save-row'); row.append(project);
     const saveButton = action('保存案例', savePreview); saveButton.id = 'capture-assistant-save'; saveButton.disabled = !selected.length || busy(); row.append(saveButton); card.append(row);
     return card;
@@ -277,7 +322,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     for (const item of result.results || []) {
       const row = node('div');
       const title = node('strong'); title.textContent = item.title || t('案例'); row.append(title);
-      const info = node('p'); info.textContent = translateUiMessage(item.status === 'partial' ? t('已部分保存，缺失内容可继续补采') : ['saved', 'duplicate'].includes(item.status) && item.entryId ? t('已保存') : t('未保存，已有内容保留')); row.append(info);
+      const info = node('p'); info.textContent = translateUiMessage(item.status === 'partial' ? t('已部分保存，缺失内容可继续补采') : item.status === 'duplicate' && item.entryId ? t('已有案例，未新增采集内容。') : item.status === 'saved' && item.entryId ? t('已保存') : t('未保存，已有内容保留')); row.append(info);
       if (item.warnings?.length) {
         const details = node('details', 'capture-assistant-original'); const summary = node('summary'); summary.textContent = t('查看原因');
         const warning = node('p', 'capture-assistant-preview-error'); warning.textContent = item.warnings.map(translateUiMessage).join('；');
@@ -297,7 +342,11 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   async function open(value) {
     opened = value; panel.hidden = !value; fresh.hidden = !value;
     document.body.classList.toggle('capture-assistant-open', value); toggle.setAttribute('aria-pressed', String(value));
+    const label = t(value ? '采集工具' : '采集助手'); toggle.title = label; toggle.setAttribute('aria-label', label);
+    toggle.classList.add('capture-assistant-mode-toggle'); toggle.replaceChildren(createUiIcon(value ? 'layers' : 'sparkles'), document.createTextNode(label));
     if (!value) return;
+    if (opening) return;
+    opening = true; render();
     try {
       await syncPage();
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -321,18 +370,19 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       } else previewBatch = getBatch();
       field.value = state.draft || ''; render(); field.focus();
     } catch (error) { feedback(error.message, true); }
+    finally { opening = false; render(); }
   }
   async function submit(instruction) {
-    if (!instruction && !state.attachments?.length) return;
+    if (busy() || !instruction && !state.attachments?.length) return;
+    submitting = true; render(); feedback(t('正在回复…'), false, true);
     let owner;
     try {
       await syncPage();
-      if (busy()) return;
+      if (state.requestId || localSaving) return;
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const target = tab || {};
       const currentBatch = getBatch();
-      const blockedByOtherPage = Boolean(currentBatch?.candidates.length && (currentBatch.tabId !== target.id || currentBatch.sourceUrl !== target.url));
-      const reusableBatch = currentBatch?.candidates.length && currentBatch.tabId === target.id && currentBatch.sourceUrl === target.url;
+      const reusableBatch = currentBatch?.status === 'preview' && currentBatch.candidates.length && currentBatch.tabId === target.id && currentBatch.sourceUrl === target.url;
       if (currentBatch !== baseBatch) state.captureId = '';
       baseBatch = currentBatch;
       if (state.tabId !== target.id || state.sourceUrl !== target.url) state.captureId = '';
@@ -341,23 +391,30 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       const input = { instruction: instruction || t('请查看附件'), attachments, sessionId: state.id, aiProfile: state.aiProfile, messages: state.messages.map(message => message.role === 'result'
         ? { role: 'assistant', content: JSON.stringify({ saveReceipt: message.result }) } : message), ...(Number.isInteger(target.id) ? { tabId: target.id } : {}),
         sourceUrl: target.url || '', pageTitle: target.title || '', locale: currentLocale(), project: metadata.collectionId || '', newCollectionName: metadata.newCollectionName || '', captureMetadata: getMetadata(),
-        blockedByOtherPage, collectorBusy: isBusy(),
         ...(state.captureId ? { captureId: state.captureId } : reusableBatch ? { initialBatch: baseBatch } : {}) };
-      state = { ...state, requestId, committing: false, tabId: target.id, sourceUrl: target.url || '', pendingRevision: null, draft: '', attachments: [], lastError: '', messages: [...state.messages, { role: 'user', content: input.instruction, attachments }] };
+      state = { ...state, requestId, awaitingAutomaticPreview: isAutomaticCapturing(), previewEditVersion: getBatchEditVersion(), committing: false, tabId: target.id, sourceUrl: target.url || '', pendingRevision: null, draft: '', attachments: [], lastError: '', messages: [...state.messages, { role: 'user', content: input.instruction, attachments }] };
       owner = state;
       state.events = [...(state.events || []), { type: 'turn_started', requestId, tabId: target.id, sourceUrl: target.url || '', previewSourceUrl: currentBatch?.sourceUrl, at: new Date().toISOString() }];
-      field.value = ''; await persist();
-      if (state === owner) { render(); feedback(t('正在回复…'), false, true); conversation.scrollTop = conversation.scrollHeight; }
+      field.value = ''; render(); conversation.scrollTop = conversation.scrollHeight;
+      await persist();
       const response = await chrome.runtime.sendMessage({ type: 'START_CAPTURE_ASSIST', requestId, input });
-      if (!response?.ok) { owner.requestId = ''; throw new Error(response?.message || '采集助手未启动'); }
+      if (!response?.ok) {
+        owner.messages = owner.messages.slice(0, -1); owner.draft = input.instruction; owner.attachments = attachments;
+        owner.requestId = response?.code === 'capture_busy' && response.sessionId === owner.id ? response.requestId : '';
+        if (state === owner) { field.value = owner.draft; if (owner.requestId) void check(); }
+        throw new Error(response?.message || '采集助手未启动');
+      }
       if (state === owner) void check();
     } catch (error) {
+      if (owner && !owner.requestId) owner.committing = false;
       (owner || state).lastError = error.message; await persist();
       if (!owner || state === owner) { render(); feedback(error.message, true); }
-    }
+    } finally { submitting = false; render(); if (opened && state.requestId) void check(); }
   }
   async function check() {
-    if (checking || !state.requestId) return; checking = true;
+    // Page/focus events can request a resume while persistence and START are
+    // still pending. The durable task cannot be inspected until START returns.
+    if (submitting || checking || !state.requestId) return; checking = true;
     const owner = state, requestId = state.requestId;
     try {
       for (;;) {
@@ -392,7 +449,14 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
     const source = await chrome.tabs.get(state.tabId).catch(() => null);
     if (state !== owner) return;
+    // A completed automatic scan is not a newer human selection. Adopt that
+    // baseline before applying the explicitly requested assistant result.
+    if (state.awaitingAutomaticPreview && state.previewEditVersion === getBatchEditVersion() && getBatch()?.sourceUrl === state.sourceUrl) baseBatch = getBatch();
     if (!source || source.url !== state.sourceUrl || (/^https?:/iu.test(active?.url || '') && (active.id !== state.tabId || active.url !== state.sourceUrl)) || getBatch() !== baseBatch) {
+      state.events = [...(state.events || []), { type: 'preview_conflict', at: new Date().toISOString(), sourceUrl: state.sourceUrl,
+        sourceTabId: state.tabId, activeTabId: active?.id, activeUrl: active?.url, currentSourceUrl: source?.url,
+        baseBatchId: baseBatch?.id, currentBatchId: getBatch()?.id, currentBatchSourceUrl: getBatch()?.sourceUrl,
+        awaitingAutomaticPreview: state.awaitingAutomaticPreview, humanEdited: state.previewEditVersion !== getBatchEditVersion() }];
       state.lastError = t('当前预览已变化，Agent 结果已保留'); feedback(state.lastError, true); return;
     }
     const preview = await chrome.runtime.sendMessage({ type: 'GET_CAPTURE_ASSIST_PREVIEW', input: { captureId: state.captureId, expectedRevision: state.pendingRevision } });
@@ -410,6 +474,10 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     localSaving = true; render(); feedback(t('正在保存…'), false, true);
     try {
       if (!await projects.flush()) throw new Error(t('保存设置未更新，请重试'));
+      if (previewBatch.captureMode === 'list' && !['multiple', 'combined'].includes(previewBatch.saveMode)) {
+        if (previewBatch.selections.length > 1) throw new Error(t('请选择分别保存或合并为一个案例'));
+        applyBatch({ ...previewBatch, saveMode: 'multiple' }); previewBatch = getBatch(); baseBatch = previewBatch;
+      }
       const response = await save();
       if (response?.results?.length) {
         state.lastError = '';
@@ -437,6 +505,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     } catch (error) { feedback(error.message, true); }
   });
   const pageChanged = () => { void syncPage().then(() => opened ? resume() : undefined).catch(error => feedback(error.message, true)); };
+  void open(false);
   chrome.tabs.onActivated.addListener(pageChanged);
   chrome.tabs.onUpdated.addListener((_id, change, tab) => { if (tab.active && (change.url || change.title)) pageChanged(); });
   window.addEventListener('focus', pageChanged);
@@ -490,6 +559,11 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!busy()) void submit(field.value.trim()); } });
   field.addEventListener('input', () => { localEdits++; state.draft = field.value; void persist().catch(error => feedback(error.message,true)); });
   model.addEventListener('change', () => { localEdits++; state.aiProfile = JSON.parse(model.value); void persist().catch(error => feedback(error.message,true)); });
+  contentType.addEventListener('change', async () => {
+    localEdits++;
+    try { if (!await changeProject({ contentTypeId: contentType.value, contentTypeExplicit: Boolean(contentType.value) })) throw new Error(t('保存设置未更新，请重试')); await persist(); render(); }
+    catch (error) { render(); feedback(error.message, true); }
+  });
   stop.addEventListener('click', async () => {
     if (localSaving) { await cancelSave(); return; }
     const response = await chrome.runtime.sendMessage({ type: 'CANCEL_CAPTURE_ASSIST', requestId: state.requestId });

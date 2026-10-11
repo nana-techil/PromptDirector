@@ -205,7 +205,7 @@ def main():
                 # The Save action stays in the conversation and uses the actual
                 # collector permission / conflict / durable receipt path.
                 panel.locator('#capture-assistant-save').click()
-                expect(panel.locator('.capture-assistant-result')).to_contain_text('已保存',timeout=30000)
+                expect(panel.locator('.capture-assistant-result')).to_contain_text('已有案例，未新增采集内容',timeout=30000)
                 assert worker.evaluate('captureAI.requests.length')==request_count
                 entries=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
                 assert len(entries)==1 and entries[0]['id']==entry['id'] and 'Exact shadow prompt' in entries[0]['text'], entries
@@ -263,7 +263,7 @@ def main():
                 assert 'isolated-fixture' not in json.dumps(diagnostic) and 'base64,' not in json.dumps(diagnostic)
                 panel.locator('#capture-assistant-chats').select_option(prior_chat_id)
                 web.goto(origin+'/work')
-                expect(panel.locator('.capture-assistant-result')).to_contain_text('已保存',timeout=30000)
+                expect(panel.locator('.capture-assistant-result')).to_contain_text('已有案例，未新增采集内容',timeout=30000)
                 expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
                 expect(panel.locator('.capture-assistant-project summary')).to_contain_text('A-page-project')
                 current=panel.evaluate("async()=>(await (await import('./library-storage.js')).getLibraryStorage().get('captureAssistantDialog')).captureAssistantDialog.pages")
@@ -371,7 +371,7 @@ def main():
                 panel.locator('#capture-assistant-input').fill('新建镜头参考并保存')
                 panel.locator('#capture-assistant-send').click()
                 expect(panel.locator('#capture-assistant-save')).to_have_count(0,timeout=30000)
-                expect(panel.locator('.capture-assistant-result').last).to_contain_text('已保存',timeout=30000)
+                expect(panel.locator('.capture-assistant-result').last).to_contain_text('已有案例，未新增采集内容',timeout=30000)
                 state=panel.evaluate("async()=>chrome.runtime.sendMessage({type:'GET_STATE'})")
                 project=next(item for item in state['organizerState']['collections'] if item['name']=='镜头参考')
                 for _ in range(200):
@@ -404,6 +404,7 @@ def main():
                 try: expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
                 except AssertionError:
                     print(panel.locator('body').inner_text(),flush=True)
+                    print(panel.evaluate("async()=> (await chrome.runtime.sendMessage({type:'GET_ASSISTANT_CHATS'})).chats.map(c=>({id:c.id,events:c.events?.filter(e=>e.type==='preview_conflict')}))"),flush=True)
                     print(worker.evaluate("captureAI.requests.slice(-5).map(b=>b.messages.filter(m=>m.role==='tool'))"),flush=True)
                     raise
                 expect(panel.locator('.capture-assistant-preview')).to_contain_text('2 个媒体')

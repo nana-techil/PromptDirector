@@ -7,7 +7,7 @@ body.capture-assistant-open main > :not(.collector-header):not(.capture-assistan
 body.capture-assistant-open .library-entry { width: 36px; min-height: 36px; padding: 8px; }
 body.capture-assistant-open .library-entry strong,
 body.capture-assistant-open .library-entry > .ui-icon { display: none; }
-body.capture-assistant-open .collector-header .icon-button[aria-pressed="true"] { color: var(--accent); background: var(--selection); }
+body.capture-assistant-open .collector-header .icon-button[aria-pressed="true"] { color: var(--accent-ink); background: var(--selection); }
 .capture-assistant-panel { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 12px; }
 .capture-assistant-chats { font-size: 12px; }
 .capture-assistant-context-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -51,6 +51,9 @@ body.capture-assistant-open .collector-header .product-brand-name { overflow: hi
 .capture-assistant-project { flex: 1; min-width: 0; }
 .capture-assistant-project > .detail-project-popover { width: min(430px, calc(100vw - 28px)); grid-template-rows: auto auto minmax(80px, 1fr) auto; }
 .capture-assistant-save-row > button { flex: none; white-space: nowrap; }
+.capture-assistant-save-settings { display: flex; gap: 8px; margin-top: 10px; }
+.capture-assistant-save-settings > select { flex: 1; min-width: 0; font-size: 11px; }
+.collector-header .capture-assistant-mode-toggle { display: inline-flex; gap: 5px; align-items: center; width: auto; font-size: 11px; white-space: nowrap; }
 .capture-assistant-result > div + div { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .capture-assistant-result p { margin: 6px 0; }
 

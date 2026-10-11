@@ -37,7 +37,7 @@ test('MCP uses the same capture schemas, waits for receipts and exposes no arbit
   try {
     const inputs = { prepare_capture: { requestId: 'prepare', tabId: 5 }, read_capture: { captureId: 'preview' },
       update_capture: { requestId: 'select', captureId: 'preview', expectedRevision: 1, selections: [], candidates: [{id:'code',title:'Code',canonicalUrl:'https://example.test/',contentText:'Original source',media:[],codePreview:{html:'<!doctype html><button>Demo</button>'}}] },
-      save_capture: { requestId: 'save', captureId: 'preview', expectedRevision: 2, contentTypeId:'content:code-case' } };
+      save_capture: { requestId: 'save', captureId: 'preview', expectedRevision: 2, contentTypeId:'content:code-case', saveMode:'combined' } };
     for (const spec of CAPTURE_OPERATION_SPECS) {
       const tool = server._registeredTools[`promptdirector_${spec.name}`];
       assert.equal(tool.annotations.readOnlyHint, spec.name === 'read_capture');
@@ -49,6 +49,11 @@ test('MCP uses the same capture schemas, waits for receipts and exposes no arbit
     }
     assert.equal(calls.filter(item => item.operation === 'status').length, 1);
     assert.deepEqual(calls.filter(item => item.operation === 'get_task').map(item => item.input.requestId), ['prepare', 'select', 'save']);
+    const read = server._registeredTools.promptdirector_read_capture;
+    const supplement = read.inputSchema.parse({ captureId:'preview', part:'supplement', candidateId:'post', supplementId:'comment', expectedRevision:2 });
+    assert(!(await read.handler(supplement)).isError);
+    assert.deepEqual(calls.find(item=>item.input?.part === 'supplement').input, supplement);
+    assert.equal(calls.find(item=>item.operation === 'save_capture').input.saveMode,'combined');
   } finally { await server.close(); }
 });
 
