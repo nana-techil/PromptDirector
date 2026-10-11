@@ -343,7 +343,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     opened = value; panel.hidden = !value; fresh.hidden = !value;
     document.body.classList.toggle('capture-assistant-open', value); toggle.setAttribute('aria-pressed', String(value));
     const label = t(value ? '采集工具' : '采集助手'); toggle.title = label; toggle.setAttribute('aria-label', label);
-    toggle.classList.add('capture-assistant-mode-toggle'); toggle.replaceChildren(createUiIcon(value ? 'layers' : 'sparkles'), document.createTextNode(label));
+    toggle.classList.add('capture-assistant-mode-toggle'); toggle.replaceChildren(createUiIcon(value ? 'layers' : 'sparkles'), document.createTextNode(t(value ? '工具' : '助手')));
     if (!value) return;
     if (opening) return;
     opening = true; render();

@@ -8,7 +8,7 @@ import { resolvePageCaptureAdapter } from './page-capture-adapter-registry.js';
 import { PAGE_CAPTURE_LIMITS } from './resource-limits.js';
 import { resolveAgentProject } from './agent-save.js';
 import { operationBudget } from './resource-policy.js';
-import { codePreviewText } from './code-case.js';
+import { codePreviewText, codePreviewHtml } from './code-case.js';
 
 const prefix = 'agentCapture:';
 export function createAgentCapturePreview({ storage, chromeApi, collect, commit, loadState, getLibraryId, budget, readImage, resolveLocalMedia, readSavedText, readSupplement = readPageCaptureSupplement }) {
@@ -49,6 +49,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       sourceUrl: record.batch.sourceUrl, tabId: record.batch.tabId,
       platform: capturePlatformGuidance(record.batch.sourceUrl),
       candidates: record.batch.candidates.map(item => ({ id: item.id, title: item.title,
+        codePreviewAvailable: Boolean(item.sourceFacts?.codePreviewAvailable && codePreviewHtml(item.contentText)),
         canonicalUrl: item.canonicalUrl, completeness: item.completeness, adapter: item.adapter,
         textSources: (record.sourceBindings?.[item.id] || []).map(binding => ({ ...binding,
           totalCharacters: record.sources?.[binding.selector]?.text.length || 0,

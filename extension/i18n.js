@@ -1,6 +1,10 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "工具": "Tools",
+  "助手": "Assistant",
+  "加载预览…": "Loading preview…",
+  "代码案例还缺交互预览，源码已保留": "The code case still needs an interactive preview. Source code is preserved.",
   "多个区域请一次读取，续读使用单个selector": "Read multiple regions together. Continue a region with its individual selector.",
   "只能核对本对话实际保存的案例": "Only cases saved in this conversation can be checked.",
   "自动识别": "Auto-detect",

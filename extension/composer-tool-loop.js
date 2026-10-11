@@ -11,6 +11,12 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   const source = resumed?.body ?? body;
   if (workingBytes(source) > budget.workingBytes) throw resourceBudgetError("本次请求超过当前运行内存预算；完整资料保留，请分批处理", { workingBytes: budget.workingBytes });
   const current = structuredClone(source);
+  if (protocol !== 'responses') {
+    // Older corrective checkpoints may contain a text-only streamed response.
+    for (const message of current.messages) {
+      if (Array.isArray(message.tool_calls) && !message.tool_calls.length) delete message.tool_calls;
+    }
+  }
   if (!resumed) appendAgentContext(current, protocol, await runtime.loadContext?.() || []);
   const specs = runtime.specs;
   if (!resumed) {
@@ -245,6 +251,7 @@ export async function readToolResponse(response, protocol, onDelta = () => {}, s
 
 function normalizeResponse(payload, protocol, onDelta) {
   const message = payload.choices?.[0]?.message;
+  if (Array.isArray(message?.tool_calls) && !message.tool_calls.length) delete message.tool_calls;
   const finishReason = protocol === "responses" ? payload.status : payload.choices?.[0]?.finish_reason;
   if (payload.error || ["length", "content_filter", "incomplete", "failed"].includes(finishReason)) throw new Error("模型输出不完整，未执行工具调用");
   const items = payload.output ?? [];

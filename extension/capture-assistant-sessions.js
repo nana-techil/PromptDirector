@@ -39,7 +39,8 @@ export function captureSessionForPage(store, tab = {}) {
       if (session.sourceUrl) store.pages[session.sourceUrl] = pageWork(session);
       const pending = store.pages[tab.url] || {};
       Object.assign(session, { captureId: pending.captureId || '', pendingRevision: pending.pendingRevision || null,
-        pendingBatch: pending.pendingBatch || null, projectDraft: pending.projectDraft || session.projectDraft });
+        pendingBatch: pending.pendingBatch || null, projectDraft: pending.projectDraft || (session.projectDraft
+          ? { ...session.projectDraft, contentTypeId: '', contentTypeExplicit: false } : undefined) });
     }
     session.sourceUrl = tab.url || ''; session.pageTitle = tab.title || ''; session.tabId = tab.id;
   }

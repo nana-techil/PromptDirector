@@ -54,7 +54,7 @@ import { createDetailProjectSelector } from "./detail-project-selector.js";
 import { readImageDimensions, imageNeedsOriginalPlayback } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { mediaFormatLabel, usesArticleReader, usesPostReader } from "./case-presentation.js";
-import { createCodeCaseView } from './code-case.js';
+import { createCodeCaseView, codePreviewHtml } from './code-case.js';
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import {
   assertStorageCapacity,
@@ -6415,7 +6415,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   const mountedBody = elements.detailContent.querySelector(".detail-primary > .detail-body");
   const mountedArticle = mountedBody?.querySelector(":scope > .article-document-reader");
   const mountedCode = mountedBody?.querySelector(':scope > .code-case-view');
-  if (!rebuildMedia && !resetScroll && contentRoleForEntry(entry) === CONTENT_ROLES.codeCase
+  if (!rebuildMedia && !resetScroll && (contentRoleForEntry(entry) === CONTENT_ROLES.codeCase || entry.sourceFacts?.codePreviewAvailable && codePreviewHtml(entry.text))
     && elements.detailDrawer.dataset.entryId === entry.id && mountedCode?.codeSourceText === entry.text
     && mountedBody.dataset.mediaIdentity === mediaIdentity) {
     const header = mountedBody.querySelector(':scope > .detail-header-section');
@@ -6491,7 +6491,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     return;
   }
   const primary = el("div", "detail-primary");
-  const codeCase = contentRoleForEntry(entry) === CONTENT_ROLES.codeCase;
+  const codeCase = contentRoleForEntry(entry) === CONTENT_ROLES.codeCase || Boolean(entry.sourceFacts?.codePreviewAvailable && codePreviewHtml(entry.text));
   if (hasPrimaryMedia && !hasArticleDocument && !capturedPost) primary.append(await createDetailMediaGallery(entry, {
     immersive: true
   }));

@@ -77,3 +77,18 @@ test('no webpage is needed to persist chat and navigation cannot retarget an exe
   captureSessionForPage(store,{id:9,url:'https://example.com/new'});
   assert.equal(current.tabId,4); assert.equal(current.sourceUrl,'https://example.com/target');
 });
+
+test('a new webpage keeps the project and chat but does not inherit the previous page manual video type', () => {
+  const store=restoreCaptureSessions();const session=captureSessionForPage(store,{id:1,url:'https://example.test/video'});
+  session.projectDraft={collectionId:'chosen-project',contentTypeId:'content:prompt:video',contentTypeExplicit:true};
+  session.messages=[{role:'user',content:'Keep my conversation'}];
+  captureSessionForPage(store,{id:1,url:'https://example.test/code'});
+  assert.equal(session.projectDraft.collectionId,'chosen-project');
+  assert.equal(session.projectDraft.contentTypeId,'');assert.equal(session.projectDraft.contentTypeExplicit,false);
+  assert.equal(session.messages[0].content,'Keep my conversation');
+  session.projectDraft={...session.projectDraft,contentTypeId:'content:code-case',contentTypeExplicit:true};
+  captureSessionForPage(store,{id:1,url:'https://example.test/video'});
+  assert.equal(session.projectDraft.contentTypeId,'content:prompt:video');
+  captureSessionForPage(store,{id:1,url:'https://example.test/code'});
+  assert.equal(session.projectDraft.contentTypeId,'content:code-case');
+});

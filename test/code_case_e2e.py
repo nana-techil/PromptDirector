@@ -9,7 +9,7 @@ from playwright.sync_api import expect
 from e2e_support import EXTENSION_DIR, extension_session
 
 ORIGINAL = '.pill { transition: left .4s, width .4s; }'
-DEMO = '''<!doctype html><html><head><style>body{background:#141414;color:#eee;font-family:sans-serif;display:grid;place-items:center;height:100vh;margin:0}.tabs{display:flex;position:relative;gap:8px}button{border:0;padding:14px;background:transparent;color:white;position:relative;z-index:1}.pill{position:absolute;height:100%;background:#db671d;border-radius:25px;transition:left .4s,width .4s}</style></head><body><div class="tabs"><div class="pill"></div><button>Plan</button><button>Build</button><button>Ship</button></div><output id="state"></output><script>const pill=document.querySelector('.pill');const buttons=[...document.querySelectorAll('button')];function select(b){pill.style.left=b.offsetLeft+'px';pill.style.width=b.offsetWidth+'px';document.querySelector('#state').textContent=b.textContent}buttons.forEach(b=>b.onclick=()=>select(b));select(buttons[1]);</script></body></html>'''
+DEMO = '''<!doctype html><html><head><style>body{background:#141414;color:#eee;font-family:sans-serif;display:grid;place-items:center;height:100vh;margin:0}.tabs{display:flex;position:relative;gap:8px;width:460px;justify-content:space-between}button{border:0;padding:14px;background:transparent;color:white;position:relative;z-index:1}.pill{position:absolute;height:100%;background:#db671d;border-radius:25px;transition:left .4s,width .4s}</style></head><body><div class="tabs"><div class="pill"></div><button>Plan</button><button>Build</button><button>Ship</button></div><output id="state"></output><script>const pill=document.querySelector('.pill');const buttons=[...document.querySelectorAll('button')];function select(b){pill.style.left=b.offsetLeft+'px';pill.style.width=b.offsetWidth+'px';document.querySelector('#state').textContent=b.textContent}buttons.forEach(b=>b.onclick=()=>select(b));select(buttons[1]);</script></body></html>'''
 class Server(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers()
@@ -49,7 +49,7 @@ def main():
                 assert ORIGINAL in entry['text'] and DEMO not in entry['text']
                 details=call('read_case_details',{'caseId':entry['id'],'parts':['document','organization']})
                 changed=call('edit_case',{'requestId':'append-existing-preview','caseId':entry['id'],'expectedRevision':details['revision'],
-                    'patch':{'codePreview':{'html':DEMO},'classificationPathIds':['content:code-case']}})
+                    'patch':{'codePreview':{'html':DEMO}}})
                 assert changed.get('ok',True),changed
                 entries=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
                 assert len(entries)==1 and entries[0]['id']==original_entry['id']
@@ -61,6 +61,7 @@ def main():
                 expect(library.locator('.code-case-frame')).to_be_visible()
                 preview=library.frame_locator('.code-case-frame').frame_locator('#preview')
                 expect(preview.locator('#state')).to_have_text('Build')
+                expect(library.locator('.code-case-frame')).to_have_attribute('data-preview-ready','true')
                 preview.get_by_role('button',name='Ship').click()
                 try: expect(preview.locator('#state')).to_have_text('Ship')
                 except Exception:
@@ -72,10 +73,12 @@ def main():
                 assert not isolation['access'] and not isolation['network'] and isolation['extensionAPI']=='undefined',isolation
                 for width in [1280,390]:
                     library.set_viewport_size({'width':width,'height':844})
-                    expect(preview.get_by_role('button',name='Ship')).to_be_in_viewport()
+                    for label in ['Plan','Build','Ship']:expect(preview.get_by_role('button',name=label)).to_be_in_viewport()
                     expect(preview.locator('#state')).to_have_text('Ship')
                     preview.locator('.pill').evaluate("async node=>{await Promise.all(node.getAnimations().map(animation=>animation.finished))}")
                     library.screenshot(path=str(out/f'code-case-{width}.png'))
+                # Older saved previews can have the wrong type. Display the actual saved preview without rewriting originals.
+                panel.evaluate("async()=>{const {getLibraryStorage}=await import('./library-storage.js');const storage=getLibraryStorage();const {entries}=await storage.get('entries');entries[0].classification={pathIds:['content:reference'],status:'confirmed',source:'manual'};await storage.set({entries})}")
                 library.reload();library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click();expect(library.locator('.code-case-frame')).to_be_visible()
                 expect(library.frame_locator('.code-case-frame').frame_locator('#preview').locator('#state')).to_have_text('Build')
                 with library.expect_navigation():

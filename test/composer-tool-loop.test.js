@@ -181,3 +181,24 @@ test('native video bytes stay intact without consuming the text budget; retrieve
   }), /请求容量/);
   assert.equal(requests, 1, 'the original video must reach the provider before an oversized text result is rejected');
 });
+
+test('a streamed text reply corrected by the executor never sends an empty tool_calls array to the provider', async () => {
+  let requests = 0;
+  const result = await runComposerToolLoop({body:body(), protocol:'chat_completions',
+    request:async payload=>{
+      for(const message of payload.messages) if(Object.hasOwn(message,'tool_calls'))
+        assert(message.tool_calls.length > 0, "Invalid messages.tool_calls: empty array (DeepSeek rejects the corrective request)");
+      requests++;
+      return sse([{choices:[{delta:{content:requests===1?'Complete prompt is captured.':'Not selected yet.'},finish_reason:'stop'}]}]);
+    },runtime:{specs:[spec],execute:async()=>({data:{}}),finishTurn:()=>requests===1?{action:'continue',state:'source-not-selected',message:'Select the frozen comment before claiming completion.'}:undefined}});
+  assert.equal(requests,2);assert.equal(result.content,'Not selected yet.');
+});
+
+test('resuming an old corrective checkpoint removes empty calls without replaying completed tools', async () => {
+  const original=body();original.messages.push({role:'assistant',content:'Already read.',tool_calls:[]});
+  const checkpoint={protocol:'chat_completions',body:original,requestCount:1,pendingCalls:[]};
+  const result=await runComposerToolLoop({body:body(),protocol:'chat_completions',continuation:checkpoint,
+    request:async payload=>{assert(!Object.hasOwn(payload.messages[1],'tool_calls'));return chat({role:'assistant',content:'Continue.'});},
+    runtime:{specs:[spec],execute:()=>assert.fail('no previously completed read/write may replay')}});
+  assert.equal(result.content,'Continue.');assert.deepEqual(checkpoint.body.messages[1].tool_calls,[]);
+});

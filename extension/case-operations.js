@@ -1,6 +1,6 @@
 import { assertSourceCorrection } from './case-field-access.js';
 import { confirmClassification } from './classifier.js';
-import { isValidContentPath } from './taxonomy.js';
+import { isValidContentPath, CONTENT_ROLES, contentTypeForRole, contentRoleForEntry } from './taxonomy.js';
 import { removeCaseTags } from './case-tags.js';
 import { appendFacetUndo } from './facet-history.js';
 import { validateCaseOperation } from './case-operation-specs.js';
@@ -233,9 +233,11 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
     assertSourceCorrection(current, input.patch, input.sourceCorrection);
     let next = editCaseEntry(current, input.patch, now);
     if (input.patch.creative) next.creative = { ...current.creative, ...input.patch.creative };
-    if (input.patch.classificationPathIds) {
-      if (!isValidContentPath(state.taxonomy, input.patch.classificationPathIds)) fail('invalid_classification', '分类编号不在当前词库中');
-      next = confirmClassification(next, input.patch.classificationPathIds, state.taxonomy);
+    const classificationPathIds = input.patch.classificationPathIds || (input.patch.codePreview
+      ? [contentTypeForRole(state.taxonomy, CONTENT_ROLES.codeCase).id] : null);
+    if (classificationPathIds) {
+      if (!isValidContentPath(state.taxonomy, classificationPathIds)) fail('invalid_classification', '分类编号不在当前词库中');
+      next = confirmClassification(next, classificationPathIds, state.taxonomy);
     }
     if (input.patch.mediaOrder) {
       const assets = next.mediaAssets || [], ids = input.patch.mediaOrder;
@@ -354,7 +356,7 @@ export function createCaseOperations({ loadState, loadReadState = loadState, sto
           primaryMediaId: entry.primaryMediaId, coverVisualId: entry.coverVisualId, mediaCount: (entry.mediaAssets || []).length, savedAt: entry.savedAt, libraryUpdatedAt: entry.libraryUpdatedAt }),
         source: () => ({ url: entry.url || '', sourceFacts: entry.sourceFacts || {}, sourcePages: entry.sourcePages || [], provenance: entry.agentProvenance || null, corrections: entry.sourceCorrections || [] }),
         creative: () => entry.creative || {}, media: () => entry.mediaAssets || [], document: () => ({ text: entry.text || '', articleDocument: entry.articleDocument || null }),
-        annotations: () => ({ creative: entry.creative || {}, customLabels: entry.customLabels || [], classification: entry.classification, facetAssignments: entry.facetAssignments || [],
+        annotations: () => ({ creative: entry.creative || {}, customLabels: entry.customLabels || [], classification: entry.classification, contentRole: contentRoleForEntry(entry, state.taxonomy), facetAssignments: entry.facetAssignments || [],
           mediaPrompts: entry.mediaPrompts || [], timeNotes: entry.timeNotes || [], videoAnalyses: entry.videoAnalyses || [], visualSetAnalyses: entry.visualSetAnalyses || [] }),
         organization: () => memberships, analysis_coverage: () => caseAnalysisCoverage(entry)
       };

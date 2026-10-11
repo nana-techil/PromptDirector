@@ -29,14 +29,24 @@ export function createCodeCaseView(entry, { onCopy } = {}) {
   const html = codePreviewHtml(entry.text);
   if (html) {
     const frame = document.createElement('iframe'); frame.className = 'code-case-frame'; frame.title = t('交互预览');
+    frame.style.opacity = '0'; frame.style.pointerEvents = 'none';
     frame.setAttribute('sandbox', 'allow-scripts'); frame.src = chrome.runtime.getURL('code-preview-sandbox.html');
-    const status = document.createElement('p'); status.className = 'code-case-status'; status.textContent = t('复现预览'); status.setAttribute('role', 'status');
+    const status = document.createElement('p'); status.className = 'code-case-status'; status.textContent = t('加载预览…'); status.setAttribute('role', 'status');
     frame.addEventListener('load', () => frame.contentWindow.postMessage({ type: 'code-preview', html }, '*'), { once: true });
     // Only status text can return. A preview cannot ask the host to run tools.
     const receive = event => {
       if (!section.isConnected) { window.removeEventListener('message', receive); return; }
-      if (event.source !== frame.contentWindow || event.data?.type !== 'code-preview-error') return;
-      status.textContent = t('预览运行失败，源码已保留');
+      if (event.source !== frame.contentWindow) return;
+      if (event.data?.type === 'code-preview-ready' && frame.dataset.previewReady !== 'error') {
+        frame.style.opacity = '1';
+        // Enable interaction after the newly visible nested frame has painted.
+        requestAnimationFrame(() => {
+          if (!section.isConnected || frame.dataset.previewReady === 'error') return;
+          frame.style.pointerEvents = ''; frame.dataset.previewReady = 'true'; status.textContent = t('复现预览');
+        });
+      } else if (event.data?.type === 'code-preview-error') {
+        frame.dataset.previewReady = 'error'; status.textContent = t('预览运行失败，源码已保留');
+      }
     };
     window.addEventListener('message', receive);
     section.dispose = () => window.removeEventListener('message', receive);

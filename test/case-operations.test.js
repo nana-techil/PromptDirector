@@ -456,6 +456,7 @@ test('adding a runnable preview updates the same case while preserving exact ori
   assert(result.ok);assert.equal(run.data.entries.length,2);
   const entry=run.data.entries.find(e=>e.id==='other');assert(entry.text.startsWith(before.text));assert(entry.text.includes(html));
   assert.deepEqual(entry.mediaAssets,before.mediaAssets);assert(entry.sourceFacts.codePreviewAvailable);
+  assert.deepEqual(entry.classification.pathIds,['content:code-case'], 'a preview added without a separate type patch must appear as a code case');
   assert.deepEqual(run.data.organizerState.collections[1].entryIds,['other']);
   const reread=await run.api.read({caseId:'other',parts:['document','source','organization']});assert(reread.content.includes(html.replaceAll('"','\\"')));
 });

@@ -110,6 +110,21 @@ def main():
             page.locator('#capture-assistant-send').click()
             expect(page.locator('#capture-assistant-send')).to_be_enabled(timeout=20000)
             assert page.evaluate('fixture.batch.id') == ('assistant-result' if scenario=='automatic' else 'automatic-base'), f'{scenario}: only a completed automatic scan may be adopted; newer human edits must remain intact'
+        for locale,theme in [('en','dark'),('en','light'),('zh-CN','dark')]:
+            page.evaluate("async prefs=>chrome.storage.local.set({uiPreferences:prefs})",{'locale':locale,'theme':theme,'motion':'reduced'})
+            page.reload()
+            for width in [320,390,900]:
+                page.set_viewport_size({'width':width,'height':844})
+                for opened in [False,True]:
+                    if opened:page.locator('#open-capture-assistant').click()
+                    button=page.locator('#open-capture-assistant')
+                    expect(button).to_be_visible()
+                    geometry=button.evaluate("""node=>{const box=node.getBoundingClientRect(),header=node.closest('header').getBoundingClientRect();const text=node.lastChild;const range=document.createRange();range.selectNodeContents(text);const label=range.getBoundingClientRect();return {label:[label.left,label.right],box:[box.left,box.right],header:[header.left,header.right],brand:node.closest('header').querySelector('.brand').getBoundingClientRect().right}}""")
+                    assert geometry['label'][0]>=geometry['box'][0] and geometry['label'][1]<=geometry['box'][1], geometry
+                    assert geometry['box'][1]<=geometry['header'][1] and geometry['brand']<=geometry['box'][0],geometry
+                    expect(page.locator('#open-library')).to_be_in_viewport()
+                    page.screenshot(path=str(out/f'header-{locale}-{theme}-{width}-{opened}.png'))
+                page.locator('#open-capture-assistant').click()
         print('PASS: immediate send gate, one task/message, marker click, mode continuity, visible type and save mode')
 
 if __name__ == '__main__':

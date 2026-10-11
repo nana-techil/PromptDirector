@@ -127,3 +127,59 @@ test('the shared studio transcript never turns duplicates or partial receipts in
   assert.equal(captureReceiptText({ results: [{ entryId: 'case', status: 'partial' }] }), '已部分保存，请查看缺失原因。');
   assert.equal(captureReceiptText({ results: [{ entryId: 'case', status: 'saved' }] }), '已保存。');
 });
+
+test('a saved code preview does not prove that the effect was actually run', () => {
+  const edit={name:'edit_case',args:{patch:{codePreview:{html:'<button>Run</button>'}}},result:{data:{ok:true}}};
+  assert(captureCompletionCheck('Yes, it is saved — and the effect now works.',[edit],null,null));
+  assert.equal(captureCompletionCheck('交互预览已保存，请打开案例查看。',[edit],null,null),undefined);
+});
+
+test('the first frozen X-comment correction reaches the strict provider and selects the full source without an empty tool_calls array', async()=>{
+  const {runComposerToolLoop}=await import('../extension/composer-tool-loop.js');
+  const f=fixture();let requests=0;const wire=[];
+  const sse=message=>new Response('data: '+JSON.stringify({choices:[{delta:message,finish_reason:message.tool_calls?'tool_calls':'stop'}]})+'\n\ndata: [DONE]\n\n',{headers:{'content-type':'text/event-stream'}});
+  const tool=(name,args)=>sse({tool_calls:[{index:0,id:'call-'+requests,type:'function',function:{name,arguments:JSON.stringify(args)}}]});
+  const result=await runCaptureAssistant({tabId:1,sourceUrl:f.url,instruction:'采集评论提示词',locale:'zh-CN'}, {
+    runtime:{aiTaskAssignments:{creativePlanning:{providerId:'deepseek',model:'deepseek-flash'}},aiSettings:{apiKey:'fixture',consent:true}},signal:new AbortController().signal,
+    call:async (name,args)=>['prepare_capture','update_capture','save_capture'].includes(name)
+      ?{state:'completed',result:await f.api.execute(name,args,args.requestId,f.scope)}:await f.api.read(args),
+    execute:async (_request,_settings,_images,{toolRuntime})=>{
+      const response=await runComposerToolLoop({body:{model:'deepseek-flash',messages:[{role:'user',content:'采集评论提示词'}]},protocol:'chat_completions',runtime:toolRuntime,
+        request:async body=>{
+          wire.push(structuredClone(body));requests++;
+          for(const message of body.messages) if(Object.hasOwn(message,'tool_calls'))assert(message.tool_calls.length>0,'first X-comment correction must satisfy the provider schema');
+          const outputs=body.messages.filter(message=>message.role==='tool').map(message=>JSON.parse(message.content));
+          const current=outputs.at(-1);
+          if(requests===1)return tool('prepare_capture',{tabId:1});
+          if(requests===2)return tool('read_capture',{captureId:current.captureId,expectedRevision:current.revision,part:'source',selector:'#comment'});
+          if(requests===3)return sse({content:'完整提示词已选中。'});
+          if(requests===4){assert(body.messages.at(-1).content.includes('textSources'));return tool('update_capture',{requestId:'select',captureId:current.captureId,expectedRevision:current.revision,
+            candidates:[{id:'post',title:'Post',canonicalUrl:f.url,media:[],textSources:[{selector:'#comment',target:'prompt'}]}],selections:[{candidateId:'post',includeText:true,selectedMediaIds:[]}]});}
+          return sse({content:'已取得评论全文，预览中可查看。'});
+        }});
+      return {text:response.content};
+    }});
+  assert(result.ok,result.message);assert.equal(requests,5);assert.equal(wire[3].messages.at(-2).content,'完整提示词已选中。');
+  assert((await f.api.view({captureId:result.captureId})).batch.candidates[0].contentText.includes('FINAL ORIGINAL WORDS'));
+  assert.equal(f.commits.length,0,'collect-only authorization must not silently save');
+});
+
+test('a first code-case save includes the interactive preview, frozen originals and current natural-language type choice', async()=>{
+  const f=fixture();const commits=[];const html='<button onclick="this.textContent=\'Active\'">Tab</button>';
+  const api=createAgentCapturePreview({...f.options,commit:async(batch,metadata)=>{commits.push({batch,metadata});return {ok:true,results:[{candidateId:'post',entryId:'code-saved',status:'saved'}]};}});
+  const result=await runCaptureAssistant({tabId:1,sourceUrl:f.url,instruction:'存一下这个代码案例',locale:'en',captureMetadata:{contentTypeId:'content:prompt:video',contentTypeExplicit:true}}, {
+    runtime:{aiTaskAssignments:{creativePlanning:{providerId:'deepseek',model:'deepseek-flash'}},aiSettings:{apiKey:'fixture',consent:true}},signal:new AbortController().signal,
+    call:async(name,args)=>['prepare_capture','update_capture','save_capture'].includes(name)?{state:'completed',result:await api.execute(name,args,args.requestId,f.scope)}:await api.read(args),
+    execute:async(_req,_settings,_images,{toolRuntime})=>{
+      const prepared=(await toolRuntime.execute('prepare_capture',{tabId:1})).data;
+      const source=(await toolRuntime.execute('read_capture',{captureId:prepared.captureId,part:'source',selector:'#comment'})).data;
+      const updated=(await toolRuntime.execute('update_capture',{captureId:prepared.captureId,expectedRevision:source.revision,
+        candidates:[{id:'post',title:'Code demo',canonicalUrl:f.url,codePreview:{html},textSources:[{selector:'#comment',target:'text'}],media:[]}],selections:[{candidateId:'post',includeText:true,selectedMediaIds:[]}]})).data;
+      assert.equal(updated.candidates[0].codePreviewAvailable,true);
+      const saved=(await toolRuntime.execute('save_capture',{captureId:prepared.captureId,expectedRevision:updated.revision})).data;
+      assert.equal(saved.results[0].entryId,'code-saved');return {text:'已保存。'};
+    }});
+  assert.equal(result.outcome,'saved');assert.equal(result.text,'已保存。');assert.equal(commits.length,1);
+  assert.equal(commits[0].metadata.contentTypeId,'content:code-case');
+  assert(commits[0].batch.candidates[0].contentText.includes(html));assert(commits[0].batch.candidates[0].contentText.includes(f.original));
+});

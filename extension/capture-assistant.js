@@ -3,8 +3,10 @@ import { ASSISTANT_LIBRARY_SPECS, assistantOperationName } from './assistant-lib
 import { composerProfileForTaskAssignment, createComposerSession } from './composer.js';
 import { composerLibraryToolService, executeComposerTurnWithService } from './composer-service.js';
 import { captureDiagnosticValue } from './capture-assistant-diagnostics.js';
-import { agentError } from './agent-protocol.js';
+import { agentError, AGENT_CHUNK_BYTES } from './agent-protocol.js';
 import { capturePlatformGuidance } from './agent-capture-preview.js';
+import { CONTENT_IDS, CONTENT_ROLES } from './taxonomy.js';
+import { codePreviewHtml } from './code-case.js';
 
 // Page reads and mutations are lazy: asking how to use the collector must not
 // depend on a successful site adapter. The tool loop can recover a failed scan
@@ -13,13 +15,14 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
   const aiProfile = input.aiProfile || composerProfileForTaskAssignment(runtime.aiTaskAssignments?.creativePlanning);
   if (aiProfile.serviceId === 'unassigned') throw agentError('capture_model_required', '创作规划未配置，请在 AI 服务的任务路由中选择模型');
   const session = createComposerSession({ id: input.sessionId, aiProfile, routeMode: 'chat', imageReferenceMode: 'conditioned', videoReferenceMode: 'text_only',
-    outputLanguage: input.locale, messages: input.messages, currentInstruction: input.instruction });
+    outputLanguage: 'auto', messages: input.messages, currentInstruction: input.instruction });
   const settings = { ai: runtime.aiSettings, vision: runtime.visionSettings };
   const service = composerLibraryToolService(session, settings.ai, settings.vision);
   if (!service.nativeTools) throw agentError('capture_tools_unsupported', '当前模型不支持采集工具调用，请在设置中选择支持工具的模型');
   const hasPage = Number.isInteger(input.tabId) && /^https?:/iu.test(input.sourceUrl || '');
   let preview = null, saveResult = null;
   let taskChangedThisTurn = false;
+  const requestsCodeCase = /代码案例|\bcode[ -]case\b/iu.test(input.instruction);
   const attachments = input.attachments || [];
   const attachmentIds = new Set([...attachments, ...(input.messages || []).filter(message => message.role === 'user').flatMap(message => message.attachments || [])].map(item => item.transferId));
   const captureFileIds = new Set([...attachmentIds, ...(input.initialBatch?.candidates || []).flatMap(candidate => candidate.media || []).map(media => media.localTransferId).filter(Boolean)]);
@@ -107,9 +110,10 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
 当前平台的共用采集能力：${JSON.stringify(hasPage ? capturePlatformGuidance(input.sourceUrl) : null)}。评论先核对summary.supplements的partial；用read_capture(supplement)调用插件原有评论展开与全文采集，返回selector可直接textSources.target=prompt保存。内部助手与外部MCP用同一工具，不拿图片的短词当评论全文。
 侧栏回复必须紧凑：默认最多3个短句、120个汉字或60个英文词。只说结果、缺失和必要的下一步；只问一个真正阻塞的问题。不要复述用户目标、页面背景、剧情、工具步骤、重复提醒、内部类型编号或自行扩展建议。详细原文/源码放采集预览，不贴在聊天；用户明确索要详细说明时才展开。保存有实际回执后只报结果，结果卡已经显示的标题/项目/素材不再重复。缺少项目不阻塞保存，可不归属项目；禁止反复催问项目。错误纠正须重新读取实际来源，不拿旧回复或图片短提示词推断长文缺失；无法核验就明确未核验，不宣称无法读取或已完整。
 案例库工具与外部MCP共用：用户说打开案例库，直接open_workspace(surface=library)；打开具体案例用show_case。查找用search_cases，读取用read_case/read_case_details，编辑用edit_case，整理用organize_case，项目用read_projects/create_project/update_project；分析采用当前模型实际读到的资料，可用共享分析结果批次写回。没有网页也能聊天和做上述操作，不要求打开创作台。不把已开放的工具说成没有权限，也不编造不存在的侧栏案例列表。普通插件用法直接简短回答；用户委托执行才改变案例。删除、永久清空、设置凭据与外发不属于这些工具。
-用户说“这个案例”时，必要时read_live_workspace核对当前浏览/选择的真实对象，不只看采集回执。用户纠正内容不完整时，主动重读实际来源并更新预览，不重复询问已经明确的修正。已有明确同意的任务承接短回复，不再询问“要我做吗”。修改已有案例先read_case_details读取版本，用edit_case精准修改；不能用重新采集并去重跳过替代修改。补充代码交互用edit_case.patch.codePreview，保留原始正文和素材；写入后用read_case_details(document/source/organization)核对实际预览及类型，不凭模型文字宣称完成。重复跳过只表示已有案例，不证明新补充已进入。
+用户反馈案例不显示、未保存或内容不完整时，先读真实案例与当前现场再判断；已明确委托的任务应直接修正，不再问“要我制作吗”。没有交互运行证据只报告已保存预览，不声称效果正常。用户说“这个案例”时，必要时read_live_workspace核对当前浏览/选择的真实对象，不只看采集回执。用户纠正内容不完整时，主动重读实际来源并更新预览，不重复询问已经明确的修正。已有明确同意的任务承接短回复，不再询问“要我做吗”。修改已有案例先read_case_details读取版本，用edit_case精准修改；不能用重新采集并去重跳过替代修改。补充代码交互用edit_case.patch.codePreview，保留原始正文和素材；写入后用read_case_details(document/source/organization)核对实际预览及类型，不凭模型文字宣称完成。重复跳过只表示已有案例，不证明新补充已进入。
 多语言搜索至少覆盖当前系统语言及英语，使用alternatives合并同义表达，复用本轮模型理解，不额外调用翻译API。
-当前现场textModules提供可见正文/评论的真实selector；query也可按正文片段检索，不猜article:nth-of-type的序号。评论原提示词优先读取对应真实selector，用textSources.target=prompt保存完整来源。案例完整原词与图片附带原词分开保留，不把图片短字段说成案例全文。内容类型可在save_capture.contentTypeId指定，已有人工类型优先。代码案例可在update_capture.candidates[].codePreview.html提供自包含HTML交互复现，原始CSS/React/Prompt仍用textSources完整保留；复现不是原站原件。根据读到的源代码保留同等交互，不编造动效；不依赖外部CDN或在线React编译。库内预览隔离运行，不支持网络、外部库、账号或插件API；依赖未满足就明确只能存源码，不把缺少视频URL等同无法保存代码动效。只在用户要求代码效果保存时制作复现，普通视频或文字不生成代码。
+回复优先使用用户最新消息的语言，网页原词语言与界面语言不决定聊天语言。简短的“对”“继续”承接上一条用户语言。
+当前现场textModules提供可见正文/评论的真实selector；query也可按正文片段检索，不猜article:nth-of-type的序号。评论原提示词优先读取对应真实selector，用textSources.target=prompt保存完整来源。案例完整原词与图片附带原词分开保留，不把图片短字段说成案例全文。内容类型可在save_capture.contentTypeId指定，已有人工类型优先。用户要求“代码案例”包含可操作效果，首次保存前须在update_capture.candidates[].codePreview.html提供自包含HTML交互复现，并指定代码案例类型；只保留源码不等于完成。原始CSS/React/Prompt仍用textSources完整保留；复现不是原站原件。根据读到的源代码保留同等交互，不编造动效；不依赖外部CDN或在线React编译。库内预览隔离运行，不支持网络、外部库、账号或插件API；依赖未满足就明确只能存源码，不把缺少视频URL等同无法保存代码动效。没有真实运行检查时，只能说已保存预览，不声称“效果正常”“now works”。无法制作时简短说明具体依赖，保留源码和草稿。普通视频或文字不生成代码。
 同模块多个源码页签用read_capture(part=source,selectors=[实际selector列表])在同一现场一次读取，完整原文同时冻结，只返回一个新revision；每段sources的nextOffset表示理解分页，必要时按单个selector续读。不要对同一旧revision连续发多个source读取而制造版本冲突。
 当前保存项目：${JSON.stringify(input.project || '')}。可选新项目草稿：${JSON.stringify(input.newCollectionName || '')}。当前内容类型：${JSON.stringify(input.captureMetadata?.contentTypeId || '')}，人工指定：${Boolean(input.captureMetadata?.contentTypeExplicit)}。保存卡直接选择内容类型或自动识别，人工选择优先。
 本对话可读附件：${JSON.stringify([...attachments, ...(input.messages || []).filter(message => message.role === 'user').flatMap(message => message.attachments || [])])}。纸夹、粘贴或拖入的附件是正常聊天资料，不自动成为案例原件；截图用于说明目标，不把截图当网页媒体。本轮图片只有成功发送实际图像后才声称看见；历史图片可read_chat_attachment按需重读。明确保存附件才将localTransferId列入候选media并选择；不要读取其他对话附件或猜编号。
@@ -133,6 +137,25 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
             }
             if (name === 'capture_workspace' && !service.vision) throw agentError('capture_vision_unsupported', '当前模型不支持图像输入，可继续读文字并管理案例');
             const data = name === 'save_material' ? await completed(name, args) : await call(assistantOperationName(name), args);
+            if (name === 'edit_case' && args.patch?.codePreview && data.ok !== false) {
+              try {
+                // Check the committed document, not just the model's patch.
+                let content = '', read, offset = 0, revision;
+                do {
+                  read = await call('read_case_details', { caseId: args.caseId, parts: ['document', 'annotations'],
+                    length: AGENT_CHUNK_BYTES / 4, offset, ...(revision ? { expectedRevision: revision } : {}) });
+                  revision ||= read.revision; content += read.content || ''; offset = read.nextOffset;
+                } while (offset != null && read.ok !== false);
+                const entry = JSON.parse(content);
+                const verified = codePreviewHtml(entry.document?.text) === args.patch.codePreview.html.replace(/\r\n?/gu, '\n')
+                  && entry.annotations?.contentRole === CONTENT_ROLES.codeCase;
+                return { data: { ...data, ok: verified, codePreviewVerification: { status: verified ? 'saved' : 'unverified', execution: 'not_tested' },
+                  ...(!verified ? { message: '交互预览尚未核对，已提交内容保留' } : {}) } };
+              } catch (error) {
+                return { data: { ...data, ok: false, writeCommitted: true, code: error.code || 'code_preview_unverified',
+                  message: `交互预览已提交，读回未完成：${error.message}`, codePreviewVerification: { status: 'unverified', execution: 'not_tested' } } };
+              }
+            }
             if (data.dataUrl) { const { dataUrl, ...facts } = data; return { data: facts, images: [{ label: '插件当前可见截图', dataUrl }] }; }
             return { data };
           }
@@ -176,8 +199,16 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           }
           if (name === 'save_capture') {
             if (input.newCollectionName && !args.project) throw agentError('capture_project_required', '请先新建正在填写的项目，再使用真实项目编号保存');
+            if (requestsCodeCase || args.contentTypeId === CONTENT_IDS.codeCase) {
+              const selected = new Set(preview.selections?.map(item => item.candidateId));
+              if (preview.candidates?.some(item => selected.has(item.id) && !item.codePreviewAvailable)) {
+                throw agentError('capture_code_preview_required', '代码案例还缺交互预览，源码已保留');
+              }
+            }
             onStatus('正在保存…');
-            saveResult = await completed(name, { ...args, project: args.project ?? input.project ?? '', captureMetadata: input.captureMetadata, requestId: crypto.randomUUID() });
+            saveResult = await completed(name, { ...args, project: args.project ?? input.project ?? '',
+              captureMetadata: requestsCodeCase ? { ...input.captureMetadata, contentTypeId: CONTENT_IDS.codeCase, contentTypeExplicit: true } : input.captureMetadata,
+              requestId: crypto.randomUUID() });
             remember(await call('read_capture', { captureId: preview.captureId }));
             return { data: saveResult };
           }
@@ -199,10 +230,13 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     const result = await execute({ session, userMessage: input.instruction, instruction: input.instruction, route: 'chat' }, settings, preparedImages, { signal, toolRuntime, onDelta });
     // The save receipt, not a model's explanation, determines the final result.
     const saved = saveResult?.results?.length && saveResult.results.every(item => item.status === 'saved' && item.entryId);
-    const english = /^en/iu.test(input.locale || '');
+    const english = /^en/iu.test(input.locale || '') && !/\p{Script=Han}/u.test(input.instruction || '');
+    const codeEdited = diagnostic.toolCalls.some(call => call.name === 'edit_case' && call.result?.data?.ok
+      && call.result.data.codePreviewVerification?.status === 'saved');
     const reply = saved ? (english ? 'Saved.' : '已保存。') : saveResult?.results?.length
       ? (saveResult.results.every(item => item.status === 'duplicate') ? (english ? 'Already in the library; no new captured content.' : '已有案例，未新增采集内容。')
-        : (english ? 'Partially saved. See the result for missing content.' : '已部分保存，请查看缺失原因。')) : result.text;
+        : (english ? 'Partially saved. See the result for missing content.' : '已部分保存，请查看缺失原因。'))
+      : codeEdited ? (english ? 'Preview saved. Open the case to view it.' : '交互预览已保存，请打开案例查看。') : result.text;
     return { ok: true, ...(preview ? { captureId: preview.captureId, revision: preview.revision, previewState: preview.state } : {}),
       outcome: saved ? 'saved' : saveResult ? 'partial' : preview?.state === 'preview' ? 'preview' : 'conversation',
       ...(saveResult ? { saveResult } : {}), text: reply, model: result.model || aiProfile.model, usage: result.usage, instruction: input.instruction,
@@ -254,6 +288,9 @@ export function captureContextReferences(records) {
 export function captureCompletionCheck(content, calls, preview, saveResult) {
   const successful = calls.filter(call => call.result?.data && call.result.data.ok !== false);
   const saved = successful.some(call => ['save_capture','save_material','edit_case','organize_case'].includes(call.name));
+  if (/(?:effect|preview)[^.!\n]*(?:now works|works now|working)|效果(?:现在)?(?:正常|生效|可用)|(?:代码|预览|效果)[^。\n]*已(?:验证|测试通过)/iu.test(content)) {
+    return { state: ['preview-execution-unverified', preview?.revision], message: '当前工具没有网页交互运行验收，不能声称效果已验证或正常运行。成功写入只能说预览已保存；用户反馈仍不显示时读取真实案例及类型，修正实际缺失，不凭历史回复确认。' };
+  }
   if (!saveResult && !saved && /^(?:已(?:保存|入库)|saved[.!\s])/imu.test(content)) {
     return { state: ['save-unconfirmed', preview?.revision], message: '本轮没有成功保存或编辑回执，不能声称已保存。只执行用户已经授权的保存；若没有保存授权或实际受阻，请明确说明尚未保存。' };
   }

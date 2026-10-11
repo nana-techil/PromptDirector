@@ -171,7 +171,7 @@ test('duplicate capture does not falsely report a requested supplement as saved'
     call:async name=>name==='save_capture'?{state:'completed',result:{results:[{entryId:'old',status:'duplicate'}]}}:name==='prepare_capture'?{state:'completed',result:preview}:preview,
     execute:async (_request,_settings,_images,{toolRuntime})=>{await toolRuntime.execute('prepare_capture',{tabId:1});await toolRuntime.execute('save_capture',{requestId:'supplement',captureId:'preview',expectedRevision:1});return {text:'原案例未更新，补充失败。'};}
   });
-  assert.equal(result.saveResult.results[0].status,'duplicate');assert.equal(result.text,'Already in the library; no new captured content.');
+  assert.equal(result.saveResult.results[0].status,'duplicate');assert.equal(result.text,'已有案例，未新增采集内容。');
 });
 
 test('a user-provided link can be captured from library chat through the same URL service as MCP', async () => {
@@ -187,4 +187,37 @@ test('a user-provided link can be captured from library chat through the same UR
     }
   });
   assert(result.ok);assert.equal(calls[0].args.url,remote.sourceUrl);assert.equal(calls[0].args.tabId,undefined);assert.equal(calls[1].args.tabId,88);
+});
+
+test('saving a requested code case cannot commit source-only content as a completed interactive case', async () => {
+  let commits=0;
+  const current={...preview,candidates:[{id:'code',title:'Code module',codePreviewAvailable:false}],selections:[{candidateId:'code',includeText:true}]};
+  const result=await runCaptureAssistant({...input,captureId:'preview',instruction:'存一下这个代码案例',captureMetadata:{contentTypeId:'content:prompt:video',contentTypeExplicit:true}}, {
+    runtime,signal:new AbortController().signal,call:async name=>{if(name==='save_capture')commits++;return current;},
+    execute:async (_request,_settings,_images,{toolRuntime})=>{
+      const missing=await toolRuntime.execute('save_capture',{captureId:'preview',expectedRevision:1});
+      assert.equal(missing.data.code,'capture_code_preview_required');assert.equal(commits,0);
+      return {text:'源码已保留，还缺交互预览。'};
+    }});
+  assert(result.ok);assert.notEqual(result.outcome,'saved');assert.equal(commits,0);
+});
+
+test('a code preview edit is checked against the committed case instead of repeating the model success claim', async()=>{
+  const html='<button onclick="this.textContent=\'Done\'">Run</button>';
+  const {codePreviewText}=await import('../extension/code-case.js');
+  for(const persisted of [true,false,'read-error']) {
+    const observed=[];
+    const result=await runCaptureAssistant({instruction:'补一下交互预览',locale:'zh-CN'}, {runtime,signal:new AbortController().signal,
+      call:async (name,args)=>{observed.push([name,args]);if(name==='edit_case')return {ok:true,cases:[{caseId:'code',revision:'written'}]};
+        if(persisted==='read-error')throw new Error('Read interrupted');
+        return {ok:true,revision:'written',nextOffset:null,content:JSON.stringify({document:{text:persisted?codePreviewText(html):'Original source'},annotations:{contentRole:'code_case',classification:{pathIds:['content:code-case']}}})};},
+      execute:async (_req,_settings,_images,{toolRuntime})=>{
+        assert.equal(_req.session.outputLanguage,'auto');
+        const edited=await toolRuntime.execute('edit_case',{caseId:'code',expectedRevision:'before',patch:{codePreview:{html}}});
+        assert.equal(edited.data.ok,persisted===true);assert.equal(edited.data.codePreviewVerification.execution,'not_tested');
+        if(persisted==='read-error'){assert.equal(edited.data.writeCommitted,true);assert.equal(edited.data.cases[0].caseId,'code');}
+        return {text:persisted?'预览已保存。':'已提交内容保留，预览尚未核对。'};
+      }});
+    assert(result.ok);assert.equal(observed[1][0],'read_case_details');assert.equal(observed[1][1].caseId,'code');
+  }
 });
