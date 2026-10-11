@@ -2143,6 +2143,7 @@ const EN = Object.freeze({
   "未命名视频提示词": "Untitled video prompt",
   "关闭导航": "Close navigation",
   "新对话": "New chat",
+  "诊断包包含各网页的多轮对话、采集步骤和失败原因，不包含 API Key 或媒体文件。": "Diagnostics include conversations across pages, capture steps, and failures, without API keys or media files.",
   "最近对话": "Recent chats",
   "今天": "Today",
   "昨天": "Yesterday",

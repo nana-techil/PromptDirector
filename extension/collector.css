@@ -2,13 +2,19 @@ body { min-width: 320px; }
 .collector-header-actions { display: flex; align-items: center; gap: 6px; }
 /* The assistant is a view of the collector, not a blocking business dialog. */
 body.capture-assistant-open { overflow: hidden; }
-body.capture-assistant-open main { height: 100dvh; padding: 14px; grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
+body.capture-assistant-open main { height: 100dvh; padding: 14px; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); gap: 12px; }
 body.capture-assistant-open main > :not(.collector-header):not(.capture-assistant-panel):not(dialog) { display: none; }
 body.capture-assistant-open .library-entry { width: 36px; min-height: 36px; padding: 8px; }
 body.capture-assistant-open .library-entry strong,
 body.capture-assistant-open .library-entry > .ui-icon { display: none; }
 body.capture-assistant-open .collector-header .icon-button[aria-pressed="true"] { color: var(--accent); background: var(--selection); }
 .capture-assistant-panel { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; }
+.capture-assistant-context-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.capture-assistant-context-row .capture-assistant-context { flex: 1; min-width: 0; }
+.capture-assistant-diagnostic { flex: none; font-size: 11px; }
+.capture-assistant-new { white-space: nowrap; min-height: 36px; }
+body.capture-assistant-open .collector-header .product-brand-copy { flex: 1; }
+body.capture-assistant-open .collector-header .product-brand-name { overflow: hidden; text-overflow: ellipsis; }
 .capture-assistant-context { margin: 0; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .capture-assistant-conversation { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 22px; padding: 8px 1px 12px; }
 .capture-assistant-message { min-width: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }

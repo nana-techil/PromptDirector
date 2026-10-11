@@ -172,7 +172,9 @@ def main():
                 expect(panel.locator('#capture-assistant-panel')).to_be_hidden()
                 web.goto(origin + '/other'); worker.evaluate('captureAI.release()')
                 panel.locator('#open-capture-assistant').click()
-                expect(panel.locator('#capture-assistant-status')).to_contain_text('Agent 结果已保留',timeout=30000)
+                expect(panel.locator('.capture-assistant-welcome')).to_be_visible(timeout=30000)
+                expect(panel.locator('#capture-assistant-send')).to_be_enabled()
+                expect(panel.locator('.capture-assistant-preview')).to_have_count(0)
                 assert worker.evaluate('captureAI.requests.length')==request_count
                 web.goto(origin + '/work')
                 panel.locator('#open-capture-assistant').click();panel.locator('#open-capture-assistant').click()
@@ -190,6 +192,59 @@ def main():
                 assert len(entries)==1 and entries[0]['id']==entry['id'] and 'Exact shadow prompt' in entries[0]['text'], entries
                 assert entries[0]['mediaPrompts']==entry['mediaPrompts']
                 panel.screenshot(path=str(out/'capture-chat-saved-zh-dark-390.png'))
+
+                # An unfinished selection on A no longer prevents B from capturing.
+                worker.evaluate('captureAI.hold=false;captureAI.release=null')
+                panel.locator('#capture-assistant-input').fill('采集正文与原图')
+                panel.locator('#capture-assistant-send').click()
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
+                call('create_project',{'requestId':'session-project-a','name':'A-page-project'})
+                call('create_project',{'requestId':'session-project-b','name':'B-page-project'})
+                panel.reload();panel.locator('#open-capture-assistant').click()
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
+                panel.locator('.capture-assistant-project summary').click()
+                panel.get_by_role('checkbox',name='A-page-project',exact=True).check()
+                expect(panel.locator('.capture-assistant-project summary')).to_contain_text('A-page-project')
+                panel.locator('.capture-assistant-project summary').click()
+                page_a_preview=panel.evaluate("async()=>(await (await import('./library-storage.js')).getLibraryStorage().get('captureAssistantDialog')).captureAssistantDialog.pages")
+                assert page_a_preview[origin+'/work']['pendingBatch']['selections']
+                web.goto(origin+'/other')
+                expect(panel.locator('.capture-assistant-welcome')).to_be_visible(timeout=30000)
+                panel.locator('#capture-assistant-input').fill('采集正文与原图')
+                panel.locator('#capture-assistant-send').click()
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
+                assert panel.evaluate("async()=>(await (await import('./library-storage.js')).getLibraryStorage().get('captureAssistantDialog')).captureAssistantDialog.pages")[origin+'/other']['pendingBatch']['sourceUrl']==origin+'/other'
+                panel.locator('.capture-assistant-project summary').click()
+                panel.get_by_role('checkbox',name='B-page-project',exact=True).check()
+                expect(panel.locator('.capture-assistant-project summary')).to_contain_text('B-page-project')
+                panel.locator('.capture-assistant-project summary').click()
+                panel.screenshot(path=str(out/'capture-chat-switch-page-390.png'))
+                before_reset=worker.evaluate('captureAI.requests.length')
+                panel.locator('#capture-assistant-new').click()
+                expect(panel.locator('.capture-assistant-user')).to_have_count(0)
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled()
+                panel.reload();panel.locator('#open-capture-assistant').click()
+                expect(panel.locator('.capture-assistant-user')).to_have_count(0)
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
+                assert worker.evaluate('captureAI.requests.length')==before_reset
+                with panel.expect_download() as downloaded:
+                    panel.locator('#capture-assistant-diagnostic').click()
+                    panel.get_by_role('button',name='导出',exact=True).click()
+                downloaded.value.save_as(str(out/'capture-chat-diagnostic.json'))
+                diagnostic=json.loads((out/'capture-chat-diagnostic.json').read_text())
+                assert diagnostic['schema']=='promptdirector-composer-diagnostic' and diagnostic['surface']=='capture-assistant'
+                assert {item['sourceUrl'] for item in diagnostic['capture']['sessions']}=={origin+'/work',origin+'/other'}
+                assert any(item.get('turns') and any(turn.get('diagnostic',{}).get('toolCalls') for turn in item['turns']) for item in diagnostic['capture']['sessions'])
+                assert 'isolated-fixture' not in json.dumps(diagnostic) and 'base64,' not in json.dumps(diagnostic)
+                web.goto(origin+'/work')
+                expect(panel.locator('.capture-assistant-result')).to_contain_text('已保存',timeout=30000)
+                expect(panel.locator('#capture-assistant-save')).to_be_enabled(timeout=30000)
+                expect(panel.locator('.capture-assistant-project summary')).to_contain_text('A-page-project')
+                current=panel.evaluate("async()=>(await (await import('./library-storage.js')).getLibraryStorage().get('captureAssistantDialog')).captureAssistantDialog.pages")
+                assert current[origin+'/work']['pendingBatch']['selections']==page_a_preview[origin+'/work']['pendingBatch']['selections']
+                # Resume the existing lifecycle tests on A, including explicit stop.
+                worker.evaluate('captureAI.hold=true;captureAI.release=null')
+
                 with run.context.expect_page() as opened_info:
                     panel.locator('.capture-assistant-result button').click()
                 opened=opened_info.value
@@ -251,7 +306,20 @@ def main():
                 expect(panel.locator('.capture-assistant-result').last).to_contain_text('已保存',timeout=30000)
                 state=panel.evaluate("async()=>chrome.runtime.sendMessage({type:'GET_STATE'})")
                 project=next(item for item in state['organizerState']['collections'] if item['name']=='镜头参考')
-                assert entry['id'] in project['entryIds'], project
+                sessions=panel.evaluate("async()=>(await (await import('./library-storage.js')).getLibraryStorage().get('captureAssistantDialog')).captureAssistantDialog.pages")
+                save_receipt=next(message['result'] for message in reversed(sessions[origin+'/work']['messages']) if message['role']=='result')
+                saved_id=save_receipt['results'][0]['entryId']
+                assert saved_id in project['entryIds'], {'project':project,'receipt':save_receipt}
+                saved_entry=next(item for item in panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries") if item['id']==saved_id)
+                assert 'Exact shadow prompt' in saved_entry['text']
+                assert saved_entry['mediaAssets'][0]['id']==entry['mediaAssets'][0]['id']
+                with run.context.expect_page() as opened_copy:
+                    panel.locator('.capture-assistant-result').last.get_by_role('button',name='打开案例',exact=True).click()
+                copy_page=opened_copy.value
+                expect(copy_page.locator('#detail-drawer')).to_be_visible(timeout=30000)
+                from urllib.parse import urlparse, parse_qs
+                assert parse_qs(urlparse(copy_page.url).query)['case']==[saved_id]
+                copy_page.close()
                 panel.screenshot(path=str(out/'capture-chat-project-saved-zh-dark-390.png'))
                 # The site adapter really fails; the Agent reads the actual DOM
                 # and supplements it. A real 404 then verifies partial save.
@@ -290,13 +358,17 @@ def main():
                         panel.locator('.capture-assistant-conversation').hover();panel.mouse.wheel(0,1400)
                         expect(panel.locator('#capture-assistant-save')).to_be_in_viewport()
                         assert panel.locator('#capture-assistant-panel').evaluate('e=>e.scrollWidth<=e.clientWidth')
+                        assert panel.evaluate('document.documentElement.scrollWidth<=innerWidth'), panel.evaluate("Array.from(document.querySelectorAll('body *')).filter(e=>!e.hidden&&e.getBoundingClientRect().right>innerWidth).map(e=>({tag:e.tagName,id:e.id,class:e.className,right:e.getBoundingClientRect().right}))")
+                        for selector in ['#capture-assistant-new','#capture-assistant-diagnostic','#open-library']:
+                            assert panel.locator(selector).evaluate('e=>{const r=e.getBoundingClientRect();return r.x>=0&&r.right<=innerWidth}'),selector
                         assert panel.locator('#capture-assistant-send').evaluate('e=>{const r=e.getBoundingClientRect();return r.right<=innerWidth&&r.bottom<=innerHeight}')
                         panel.screenshot(path=str(out/f'capture-chat-{locale}-{theme}-{width}.png'))
                 results={'mcpPreviewAndSupplement':True,'exactOriginalBytesReadback':True,'saveRetryDoesNotDuplicate':True,
                     'guidanceWithoutScanTools':True,'markdownAndStreamingWired':True,'inChatSaveAndOpenCase':True,
                     'closeContinuesAndReopenRestores':True,'explicitStopRetainsPreview':True,'changedPageDoesNotApplyOldPreview':True,
                     'sameSourceDoesNotDuplicateOrReplaceOriginalPrompt':True,'localFilesSurviveReloadAndExactBytes':True,'naturalLanguageSaveToProject':True,
-                    'adapterFailureRecoveredFromObservedPage':True,'partialSaveRetainsSuccessfulOriginalsAndPreview':True,'paidRequests':0,'pageErrors':run.page_errors}
+                    'adapterFailureRecoveredFromObservedPage':True,'partialSaveRetainsSuccessfulOriginalsAndPreview':True,'perPageConversationAndPreviewRestore':True,'newChatPreservesPendingSelectionAfterReload':True,'multiPageDiagnosticNativeDownload':True,'crossProjectSaveReceiptOpensTargetCopy':True,
+                    'diagnosticExcludesSecretsAndMediaPayloads':True,'paidRequests':0,'pageErrors':run.page_errors}
                 (out/'capture-chat-results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2)+'\n')
                 print(json.dumps(results),flush=True)
     finally:

@@ -105,6 +105,11 @@ const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptu
   getCollections: () => collections, getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
   changeProject: (...args) => updateCaptureMetadata(...args),
   save: () => savePageCapture(false), cancelSave: () => cancelCaptureSave(),
+  switchBatch: batch => {
+    pageCaptureAppendBase = null; pageCaptureDetailsBase = null; genericGroupingBase = null;
+    pageCaptureMediaView = null; pageCaptureEditHistory = []; pageCaptureDraftIds = new Set(); manuallyPickedBatchId = '';
+    pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render();
+  },
   applyBatch: batch => { pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render(); } });
 let pageCaptureAppendBase = null;
 let pageCaptureDraftIds = new Set();

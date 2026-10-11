@@ -19,6 +19,7 @@ import { createSkillWriter } from './skill-writer.js';
 import { createSkillOperations } from './skill-operations.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
 import { getLibraryStorage, createLibraryCommitter, CASE_LIBRARY_REVISION_KEY } from "./library-storage.js";
+import { needsFolderOwnershipMigration, planFolderOwnership } from './library-folder-ownership.js';
 import { operationBudget, stagingByteBudget, RESOURCE_POLICY } from './resource-policy.js';
 import { createProjectOperations } from "./project-operations.js";
 import { createBrowserLibraryIdentity } from "./library-identity.js";
@@ -2633,13 +2634,24 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
         throw new Error('分类在下载期间已变化，请重新选择');
       }
       organizerState = organizerAfterCapturePlacement(latest.organizerState, entries, affectedIds, captureMetadata);
+      // Commit project copies with their actual receipt IDs. Deferring ownership
+      // migration until the next read leaves Open case pointing at the source.
+      const folderPlan = needsFolderOwnershipMigration({ organizerState })
+        ? planFolderOwnership({ entries, organizerState, compoundCases: latest.compoundCases }) : null;
+      if (folderPlan) { entries = folderPlan.state.entries; organizerState = folderPlan.state.organizerState; }
+      const targetId = captureMetadata.collectionId || (captureMetadata.newCollectionName
+        ? organizerState.collections.find(collection => !latest.organizerState.collections.some(prior => prior.id === collection.id))?.id : '');
+      for (const copy of (folderPlan?.copies || []).filter(item => item.collectionId === targetId)) {
+        for (const result of results) result.entryId = copy.entryIdMap[result.entryId] || result.entryId;
+      }
       await progress.commit?.();
       progress.stage('writing');
       const files = Object.fromEntries([...captureFiles.values()].flatMap(({ record, candidateId }) => {
         const result = results.find(item => item.candidateId === candidateId && item.entryId);
         return result ? [[agentTransfers.key(record.id), { ...record, state: 'committed', entryId: result.entryId, prepared: null, chunks: 0 }]] : [];
       }));
-      await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState, ...files });
+      await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState,
+        ...(folderPlan?.changed ? { [STORAGE_KEYS.compoundCases]: folderPlan.state.compoundCases } : {}), ...files });
     });
     metadataCommitted = true;
     const postCommitWarnings = [];
