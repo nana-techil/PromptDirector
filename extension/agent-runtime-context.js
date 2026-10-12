@@ -68,3 +68,10 @@ export function createAgentContextRuntime({ load, update, turnId }) {
     }
   };
 }
+
+
+export function stableAgentArguments(value) {
+  if (Array.isArray(value)) return value.map(stableAgentArguments);
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableAgentArguments(value[key])]));
+  return value;
+}

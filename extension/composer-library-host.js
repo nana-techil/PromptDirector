@@ -24,7 +24,7 @@ export function createLocalComposerLibraryTools(options) {
   const taskTools = tools => options.executionHost ? tools : withAssistantTaskRuntime({ ...tools,
     instructions: [tools.instructions, ASSISTANT_TASK_INSTRUCTION].filter(Boolean).join('\n\n') }, {
     messages: options.session.messages, instruction: options.session.messages.findLast(message => message.role === 'user')?.content || options.session.currentInstruction || '',
-    userMessageId: options.userMessageId, context: { surface: 'composer', model: { imageInput: options.vision === true } }
+    userMessageId: options.userMessageId, context: { surface: 'composer', cases: options.session.libraryTools?.candidates, references: options.session.referenceSnapshots, model: { imageInput: options.vision === true } }
   });
   const sendMessage = options.sendMessage ?? (message => chrome.runtime.sendMessage(message));
   const caseTools = createComposerLibraryTools({

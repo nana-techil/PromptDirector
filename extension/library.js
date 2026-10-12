@@ -54,7 +54,7 @@ import { createDetailProjectSelector } from "./detail-project-selector.js";
 import { readImageDimensions, imageNeedsOriginalPlayback } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
 import { mediaFormatLabel, usesArticleReader, usesPostReader } from "./case-presentation.js";
-import { createCodeCaseView, codePreviewHtml } from './code-case.js';
+import { createCodeCaseView, codePreviewHtml, setCodeCaseGalleryPaused } from './code-case.js';
 import { deleteScreenshotBlob, getScreenshotBlob, saveScreenshotBlob } from "./image-store.js";
 import {
   assertStorageCapacity,
@@ -330,12 +330,17 @@ const managerPanels = {
 };
 const workspace = document.querySelector(".workspace");
 const cardVideoPreviews = new WeakMap();
+const cardCodePreviews = new WeakMap();
+function releaseCardPreviews(card) {
+  cardVideoPreviews.get(card)?.stop();
+  cardCodePreviews.get(card)?.dispose();
+}
 let galleryMasonry = createVirtualGallery(elements.caseList, {
   mode: () => uiPreferences.galleryView,
   createCard: id => { const entry = visibleEntryById.get(id); return entry && caseCardForEntry(entry); },
   mountCard: card => { observePendingCardMedia([card]); scheduleVisibleMediaHydration(); },
   releaseCard: card => {
-    cardVideoPreviews.get(card)?.stop();
+    releaseCardPreviews(card);
     for (const image of card.querySelectorAll('img')) { imageObserver.unobserve(image); documentObserver.unobserve(image); thumbnailLoader.release(image); }
     caseCardCache.delete(card.dataset.entryId);
   },
@@ -1512,7 +1517,7 @@ async function openLibraryProgressively() {
     startupBrowseEntries = null;
     startupBrowsePlan = null;
     // Cards created from the interrupted version must not survive its replacement.
-    for (const card of caseCardCache.values()) cardVideoPreviews.get(card)?.stop();
+    for (const card of caseCardCache.values()) releaseCardPreviews(card);
     caseCardCache.clear();
     await refreshLibrary({ progressive: true });
   } finally {
@@ -1634,7 +1639,7 @@ async function refreshLibrary({ response: suppliedResponse, progressive = false 
   }
   sanitizeSelections();
   if (!progressive && !preserveCards) {
-    for (const card of caseCardCache.values()) cardVideoPreviews.get(card)?.stop();
+    for (const card of caseCardCache.values()) releaseCardPreviews(card);
     caseCardCache.clear();
   }
   listMetadataCache = new WeakMap();
@@ -1713,7 +1718,7 @@ async function applyLibraryEntriesChange(nextEntries, { changedEntryIds: knownId
   for (const id of affectedIds) {
     const card = caseCardCache.get(id);
     if (!card) continue;
-    cardVideoPreviews.get(card)?.stop();
+    releaseCardPreviews(card);
     caseCardCache.delete(id);
   }
   updateSelectionBar();
@@ -2133,7 +2138,7 @@ function reconcileInitialCaseCards(count = PAGE_SIZE) {
   }
   while (elements.caseList.children.length > desired.length) {
     const card = elements.caseList.lastElementChild;
-    cardVideoPreviews.get(card)?.stop();
+    releaseCardPreviews(card);
     card.remove();
   }
 }
@@ -2338,7 +2343,12 @@ function createCaseCard(entry) {
 
   const mainVisual = primaryMediaAsset(entry);
   const cover = caseCoverAsset(entry);
-  if (cover && mainVisual?.kind !== "video") {
+  const codeHtml = !(entry.coverVisualId && cover) ? codePreviewHtml(entry.text) : '';
+  if (codeHtml) {
+    const preview = createCodeCaseView(entry, { compact: true, html: codeHtml });
+    cardCodePreviews.set(card, preview);
+    card.append(preview, rawTextEl('strong', 'case-text-title case-code-title', entry.title));
+  } else if (cover && mainVisual?.kind !== "video") {
     const wrap = el("div", "case-image-wrap");
 
     const dimensions = imageDimensions(cover);
@@ -6345,6 +6355,7 @@ async function openDetail(entryId, { preserveQueue = false, returnFocus = null }
   invalidateDetailContent(entryId);
   applyDetailViewPreferences();
   document.documentElement.classList.add("detail-open");
+  setCodeCaseGalleryPaused(true);
   elements.detailDrawer.classList.add("open");
   elements.detailDrawer.setAttribute("aria-hidden", "false");
   elements.drawerBackdrop.hidden = false;
@@ -6367,6 +6378,7 @@ async function closeDetail() {
   detailReturnFocus = null;
   detailQueueMode = "";
   document.documentElement.classList.remove("detail-open");
+  setCodeCaseGalleryPaused(false);
   elements.detailDrawer.removeAttribute("data-entry-id");
   delete elements.detailDrawer.dataset.loadingEntryId;
   elements.detailDrawer.classList.remove("open");

@@ -2,7 +2,7 @@ import { createUiIcon } from './ui-icons.js';
 import { LIST_COLUMNS, formatListBytes } from './library-list.js';
 
 export function appendCaseRowDetails(card, entry, { metadata, locale }) {
-  if (!card.querySelector('img')) {
+  if (!card.querySelector('img') && !card.querySelector('.case-code-preview')) {
     card.classList.add('has-row-placeholder');
     const placeholder = document.createElement('span');
     placeholder.className = 'case-row-placeholder';

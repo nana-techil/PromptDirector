@@ -16,7 +16,7 @@ function fixture({ turnId = 'user-1', state = { toolContext: [] }, execute } = {
     const result = { data: await execute?.(name, args) || { ok: true, caseId: args.caseId } };
     await durable.recordToolResult({ name, args, data: result.data, callId: ctx.callId });
     return result;
-  } }, { messages: [{ id: turnId, role: 'user', content: 'current instruction' }], instruction: 'current instruction' });
+  } }, { messages: [{ id: turnId, role: 'user', content: 'current instruction' }], instruction: 'current instruction', context: {cases:['case','chosen-case','chosen','first','second'].map(id=>({id}))} });
   const declare = (steps, extra = {}) => runtime.execute('declare_task', { mode: 'act', goal: 'current goal', userMessageIds: [turnId], steps, ...extra });
   return { runtime, calls, state, declare };
 }
@@ -206,4 +206,76 @@ test('an unfinished full-original read cannot be downgraded to an excerpt by cha
   const f=fixture();await f.declare([{operation:'read_case',part:'original'}]);
   const changed=await f.declare([{operation:'read_case',part:'original',requireComplete:false}]);
   assert.equal(changed.data.code,'task_goal_changed');
+});
+
+test('an unresolved creation label is not accepted as a real saved Skill identity',async()=>{
+  const f=fixture();
+  const result=await f.declare([{operation:'save_capture',targetId:'not-an-observed-resource'}]);
+  assert.equal(result.data.code,'task_target_unresolved');
+  assert.equal(f.runtime.task,undefined,'the model must be able to correct an invalid plan before it is locked');
+});
+
+test('actual Skill identifiers are supported by the same target binding as cases',async()=>{
+  const {withAssistantTaskRuntime}=await import('../extension/assistant-task.js');
+  const runtime=withAssistantTaskRuntime({specs:[{name:'save_skill',parameters:{properties:{requestId:{},skillId:{}}}}],execute:async()=>({data:{ok:true,skillId:'actual-skill'}})},
+    {messages:[{id:'u',role:'user',content:'update the method'}],instruction:'update the method',context:{skills:[{id:'actual-skill'}]}});
+  await runtime.execute('declare_task',{mode:'act',goal:'Update the chosen method',userMessageIds:['u'],steps:[{operation:'save_skill',targetId:'actual-skill'}]});
+  assert((await runtime.execute('save_skill',{skillId:'actual-skill'},{callId:'saved'})).data.ok);
+  assert.equal(await runtime.finishTurn({}),undefined);
+});
+
+for(const key of ['skillId','caseId','captureId','projectId','batchId','transferId','referenceId','assetId','tabId']) {
+  test(`semantic target binding uses the actual ${key} contract`,async()=>{
+    const value=key==='tabId'?17:'actual-object';
+    const runtime=withAssistantTaskRuntime({specs:[{name:'read_object',parameters:{properties:{[key]:{}}}}],execute:async()=>({data:{ok:true,[key]:value}})},
+      {instruction:'Inspect the object',context:{objects:[{[key]:value}]}});
+    const context=await runtime.context();await runtime.execute('declare_task',{mode:'act',goal:'Inspect',userMessageIds:[context.currentUserId],steps:[{operation:'read_object',targetId:String(value)}]});
+    await runtime.execute('read_object',{[key]:value},{callId:'read'});assert.equal(await runtime.finishTurn({}),undefined);
+  });
+}
+
+test('reading only the end of a paged original cannot prove the full source was read',async()=>{
+  const f=fixture({execute:(_name,args)=>({ok:true,caseId:'case',revision:'fixed',content:args.offset?'efgh':'abcd',offset:args.offset||0,totalCharacters:8,nextOffset:args.offset?null:4})});
+  await f.declare([{operation:'read_case',targetId:'case',requireComplete:true}]);
+  await f.runtime.execute('read_case',{caseId:'case',offset:4},{callId:'end'});
+  assert.equal((await f.runtime.finishTurn({})).action,'continue');
+  await f.runtime.execute('read_case',{caseId:'case',offset:0},{callId:'start'});
+  assert.equal(await f.runtime.finishTurn({}),undefined);
+});
+
+test('a full read step supports the actual plural parts argument and exposes current pending facts',async()=>{
+  const f=fixture();await f.declare([{operation:'read_case',part:'document'}]);
+  await f.runtime.execute('read_case',{parts:['overview','document']},{callId:'document'});
+  assert.deepEqual(f.runtime.task.pending,[]);
+});
+
+test('a declared group of originals must be read per case rather than satisfied by a single successful read',async()=>{
+  const f=fixture();await f.declare([{operation:'read_case',resultIds:['first','second'],requireComplete:true}]);
+  await f.runtime.execute('read_case',{caseId:'first'},{callId:'first'});assert.equal((await f.runtime.finishTurn({})).action,'continue');
+  await f.runtime.execute('read_case',{caseId:'second'},{callId:'second'});assert.equal(await f.runtime.finishTurn({}),undefined);
+});
+
+test('batched source reads and individual continuation pages share the same source identity',async()=>{
+  let reads=0;
+  const f=fixture({execute:()=>++reads===1?{ok:true,revision:'same',sources:[{selector:'#source',content:'abcd',totalCharacters:8,nextOffset:4},{selector:'#other',content:'x',totalCharacters:20,nextOffset:1}]}:
+    {ok:true,revision:'same',selector:'#source',content:'efgh',totalCharacters:8,offset:4,nextOffset:null}});
+  await f.declare([{operation:'read_case',part:'source',selector:'#source',requireComplete:true}]);
+  await f.runtime.execute('read_case',{part:'source',selectors:['#source','#other']},{callId:'batch'});
+  await f.runtime.execute('read_case',{part:'source',selector:'#source',offset:4},{callId:'continuation'});
+  assert.equal(await f.runtime.finishTurn({}),undefined);
+});
+
+test('semantic goal wording may be refined while required outcomes and real user authorization stay fixed',async()=>{
+  const f=fixture();await f.declare([{operation:'save_capture'}]);
+  const updated=await f.runtime.execute('declare_task',{mode:'act',goal:'Preserve the source and save the guide',userMessageIds:['user-1'],steps:[{operation:'save_capture'}]});
+  assert(updated.data.ok);assert.equal((await f.runtime.finishTurn({})).action,'continue');
+  assert.equal((await f.runtime.execute('declare_task',{mode:'act',goal:'Just explain instead',userMessageIds:['user-1'],steps:[{operation:'read_case'}]})).data.code,'task_goal_changed');
+});
+
+test('actual successful analysis items survive a partial receipt and can complete after a failed-item retry',async()=>{
+  let attempt=0;
+  const f=fixture({execute:()=>({ok:true,status:++attempt===1?'partial':'completed',items:attempt===1?[{caseId:'first',state:'saved'},{caseId:'second',state:'failed'}]:[{caseId:'second',state:'saved'}]})});
+  await f.declare([{operation:'save_capture',resultIds:['first','second']}]);
+  await f.runtime.execute('save_capture',{}, {callId:'first-page'});assert.equal((await f.runtime.finishTurn({})).action,'continue');
+  await f.runtime.execute('save_capture',{}, {callId:'retry'});assert.equal(await f.runtime.finishTurn({}),undefined);
 });

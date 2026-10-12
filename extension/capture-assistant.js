@@ -209,6 +209,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
         attachments: [...attachments, ...(input.messages || []).filter(message => message.role === 'user').flatMap(message => message.attachments || [])],
         model: { imageInput: service.vision, nativeTools: service.nativeTools },
         interface: { conversations: { recentCount: 5, retained: 'all', changesOnNavigation: false },
+          codeCase: { cardPreview: 'interactive_saved_preview', previewLoads: 'visible_foreground_only', explicitCoverPreserved: true, openDetails: 'title_or_card_keyboard' },
           captureModeSwitch: true, diagnosticsExport: true, closeContinuesWork: true },
         replyPolicy: { sentences: 3, chineseCharacters: 120, englishWords: 60, detailsOnRequest: true } } });
     const toolRuntime = taskRuntime;
@@ -232,7 +233,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
   } catch (error) {
     return { ok: false, ...(preview ? { captureId: preview.captureId, revision: preview.revision } : {}), ...(saveResult ? { saveResult } : {}),
       message: signal.aborted ? signal.reason?.message || '采集助手已停止，已有预览保留' : error.message,
-      diagnostic: { ...diagnostic, task: taskRuntime?.task, finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message } } };
+      diagnostic: { ...diagnostic, task: taskRuntime?.task, ...(error.checkpoint ? { interruptedTools: captureDiagnosticValue({ requestCount: error.checkpoint.requestCount, pendingCalls: error.checkpoint.pendingCalls, uncertainCallId: error.checkpoint.uncertainCallId }) } : {}), finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message } } };
   }
 }
 

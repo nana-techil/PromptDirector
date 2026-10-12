@@ -18,6 +18,7 @@ SCRIPTS = [
     "scroll_content_reachability_e2e.py",
     "capture_current_page_e2e.py",
     "code_case_e2e.py",
+    "code_case_gallery_e2e.py",
     "capture_native_sidepanel_e2e.py",
     "acceptance_feedback_e2e.py",
     "share_directory_e2e.py",

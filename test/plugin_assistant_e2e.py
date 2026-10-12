@@ -21,10 +21,24 @@ def main():
             const canOpen=body.tools.some(t=>t.function.name==='open_workspace');
             const results=body.messages.filter(m=>m.role==='tool').map(m=>({name:body.messages.flatMap(m=>m.tool_calls||[]).find(c=>c.id===m.tool_call_id)?.function.name,data:JSON.parse(m.content)}));
             let delta,finish;const tool=(name,args)=>{delta={tool_calls:[{index:0,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]};finish='tool_calls';};
-            if(!results.some(r=>r.name==='declare_task')) {
+            if(globalThis.fixtureFlow==='skill') {
+              const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
+              const declared=results.findLast(r=>r.name==='declare_task');
+              if(!declared || !declared.data.ok) tool('declare_task',{mode:'act',goal:'基于实际案例提炼并保存视觉特效指南Skill',userMessageIds:[ctx.currentUserId],steps:[
+                {operation:'read_case',targetId:'gym-case',requireComplete:true},{operation:'read_case_details',targetId:'gym-case'},
+                {operation:'save_skill',...(!declared?{targetId:'not-an-observed-resource'}:{})}]});
+              else if(!results.some(r=>r.name==='read_case'))tool('read_case',{caseId:'gym-case',part:'body'});
+              else if(results.filter(r=>r.name==='read_case').length===1) {
+                delta={tool_calls:[['read_case',{caseId:'gym-case',part:'body'}],['read_case_details',{caseId:'gym-case',parts:['overview','document']}]].map(([name,args],index)=>({index,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}))};finish='tool_calls';
+              } else if(!results.some(r=>r.name==='save_skill'))tool('save_skill',{requestId:crypto.randomUUID(),callName:'visual-guide',portableId:'visual-guide',
+                skillMarkdown:'---\nname: visual-guide\ndescription: Reusable guidance from the selected source\n---\n# Visual guide\nUse the original source as the basis.\n',
+                references:[{path:'references/source.md',markdown:'Exact original source',runtime:true}]});
+              else {delta={content:'已保存视觉特效指南 Skill。'};finish='stop';}
+            }
+            else             if(!results.some(r=>r.name==='declare_task')) {
               const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
               tool('declare_task',{mode:'act',goal:'打开库、查找健身并修改指定案例标题',userMessageIds:[ctx.currentUserId],steps:[
-                ...(canOpen?[{operation:'open_workspace'}]:[]),{operation:'search_cases'},{operation:'read_case_details',targetId:'gym-case'},{operation:'edit_case',targetId:'gym-case'}]});
+                ...(canOpen?[{operation:'open_workspace'}]:[]),{operation:'search_cases'},{operation:'read_case_details'},{operation:'edit_case'}]});
             }
             else if(canOpen&&!results.some(r=>r.name==='open_workspace'))tool('open_workspace',{surface:'library'});
             else if(!results.some(r=>r.name==='search_cases'))tool('search_cases',{query:'健身',alternatives:['gym']});
@@ -64,6 +78,22 @@ def main():
             raise
         expect(studio.locator('.composer-message.chat').last).to_contain_text('改好标题',timeout=45000)
         assert studio.evaluate('assistantRequests.length')==5
+        # The real native sidebar flow corrects an invalid object label, rereads a cached source,
+        # then saves/reads back a Skill through the same authoritative service as MCP.
+        worker.evaluate("globalThis.fixtureFlow='skill'")
+        panel.locator('#capture-assistant-input').fill('基于这个案例总结视觉特效指南Skill，并保存供下次使用')
+        panel.locator('#capture-assistant-send').click()
+        expect(panel.locator('.capture-assistant-assistant').last).to_contain_text('已保存视觉特效指南',timeout=45000)
+        skill_result=panel.evaluate("async()=>await chrome.runtime.sendMessage({type:'SKILL_OPERATION',operation:'list_skills',input:{query:'visual-guide'}})")
+        assert skill_result['ok'],skill_result
+        saved_skill=skill_result['data']['items'][0]
+        skill_body=panel.evaluate("async skillId=>await chrome.runtime.sendMessage({type:'SKILL_OPERATION',operation:'read_skill',input:{skillId,part:'body'}})",saved_skill['id'])
+        assert '# Visual guide' in skill_body['data']['content'],skill_body
+        canonical=panel.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session",chat_id)
+        final_turn=canonical['assistantState']['turns'][-1]['diagnostic']
+        assert len([call for call in final_turn['toolCalls'] if call['name']=='read_case'])==1,'a repeat must reuse native evidence rather than read the library twice'
+        assert final_turn['task']['state']=='completed' and final_turn['task']['pending']==[]
+        assert not canonical['assistantState'].get('lastError')
         # A studio write is the very same conversation, with a guarded revision.
         chat=panel.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session",chat_id)
         stale=chat
@@ -141,6 +171,6 @@ def main():
             studio.locator('.composer-session-item').first.hover()
             studio.screenshot(path=str(out/f'studio-chats-hover-{locale}-{theme}-1280.png'))
             studio.close()
-        result={'noWebpageChatAndActualOpenSearchEdit':True,'exactSourcePreserved':True,'sameStudioConversationAndToolContext':True,'studioNativeIntentAndActualHostTools':True,'studioLiveUpdates':True,'staleWriteRejected':True,'allSevenChatsRetained':True,'sidebarFiveRecent':True,'reloadDraftPreservedWithoutModelRequest':True,'studioDeleteDoesNotResurrectOrDeleteCases':True,'deleteHiddenUntilRowHoverOrKeyboardFocus':True,'borderlessDelete':True,'paidRequests':0,'pageErrors':run.page_errors}
+        result={'noWebpageChatAndActualOpenSearchEdit':True,'exactSourcePreserved':True,'sameStudioConversationAndToolContext':True,'studioNativeIntentAndActualHostTools':True,'skillGuideSavedAndReadBack':True,'validPlanCorrectedWithoutUserRepetition':True,'sourceRereadReusesEvidence':True,'studioLiveUpdates':True,'staleWriteRejected':True,'allSevenChatsRetained':True,'sidebarFiveRecent':True,'reloadDraftPreservedWithoutModelRequest':True,'studioDeleteDoesNotResurrectOrDeleteCases':True,'deleteHiddenUntilRowHoverOrKeyboardFocus':True,'borderlessDelete':True,'paidRequests':0,'pageErrors':run.page_errors}
         (out/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))
 if __name__=='__main__':main()

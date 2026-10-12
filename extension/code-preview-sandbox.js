@@ -1,7 +1,7 @@
 // Manifest sandbox: opaque origin, no extension APIs. This page accepts only
 // document data from its parent; it exposes no command bridge to the library.
 const frame = document.getElementById('preview');
-function fitPreview() {
+function fitPreview(contain = false) {
   const body = document.body;
   if (!body) return;
   const originalZoom = body.style.zoom, originalMinHeight = body.style.minHeight;
@@ -13,9 +13,11 @@ function fitPreview() {
     const boxes = [...body.children].filter(node => !['SCRIPT', 'STYLE'].includes(node.tagName)).map(node => node.getBoundingClientRect());
     const overflow = Math.max(0, ...boxes.map(box => Math.max(-box.left, box.right - width)));
     const contentWidth = Math.max(body.scrollWidth, width + overflow * 2);
-    if (contentWidth > width && width > 0) {
-      const ratio = width / contentWidth;
-      body.style.zoom = String(ratio); body.style.minHeight = `${height / ratio}px`;
+    const overflowY = Math.max(0, ...boxes.map(box => Math.max(-box.top, box.bottom - innerHeight)));
+    const contentHeight = Math.max(body.scrollHeight, innerHeight + overflowY * 2);
+    const ratio = contain ? Math.min(1, width / contentWidth, innerHeight / contentHeight) : Math.min(1, width / contentWidth);
+    if (ratio < 1 && width > 0 && innerHeight > 0) {
+      body.style.zoom = String(ratio); body.style.minHeight = `${(contain ? innerHeight : height) / ratio}px`;
     }
   }
   addEventListener('resize', fit);
@@ -33,6 +35,6 @@ window.addEventListener('message', event => {
   }
   if (event.source !== parent || event.data?.type !== 'code-preview' || typeof event.data.html !== 'string') return;
   const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
-  const monitor = `<script>window.addEventListener('error',()=>parent.postMessage({type:'code-preview-error'},'*'));window.addEventListener('unhandledrejection',()=>parent.postMessage({type:'code-preview-error'},'*'));window.addEventListener('load',${fitPreview.toString()});</script>`;
+  const monitor = `<script>window.addEventListener('error',()=>parent.postMessage({type:'code-preview-error'},'*'));window.addEventListener('unhandledrejection',()=>parent.postMessage({type:'code-preview-error'},'*'));window.addEventListener('load',()=>(${fitPreview.toString()})(${event.data.contain === true}));</script>`;
   frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${monitor}${event.data.html}`;
 });

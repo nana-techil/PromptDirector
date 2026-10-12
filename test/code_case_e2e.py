@@ -80,11 +80,11 @@ def main():
                 after=panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries")
                 assert len(after)==2
                 assert next(item for item in after if item['id']==entry['id'])['text']==entry['text'], 'Old source and preview must remain unchanged'
-                library=run.open_page('library.html');library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
-                expect(library.locator('.code-case-frame')).to_be_visible()
-                preview=library.frame_locator('.code-case-frame').frame_locator('#preview')
+                library=run.open_page('library.html');library.locator(f'.case-card[data-entry-id="{entry["id"]}"] .case-code-title').click()
+                expect(library.locator('.code-case-view .code-case-frame')).to_be_visible()
+                preview=library.frame_locator('.code-case-view .code-case-frame').frame_locator('#preview')
                 expect(preview.locator('#state')).to_have_text('Build')
-                expect(library.locator('.code-case-frame')).to_have_attribute('data-preview-ready','true')
+                expect(library.locator('.code-case-view .code-case-frame')).to_have_attribute('data-preview-ready','true')
                 preview.get_by_role('button',name='Ship').click()
                 try: expect(preview.locator('#state')).to_have_text('Ship')
                 except Exception:
@@ -102,15 +102,15 @@ def main():
                     library.screenshot(path=str(out/f'code-case-{width}.png'))
                 # Older saved previews can have the wrong type. Display the actual saved preview without rewriting originals.
                 panel.evaluate("async()=>{const {getLibraryStorage}=await import('./library-storage.js');const storage=getLibraryStorage();const {entries}=await storage.get('entries');entries.find(item=>item.title==='Tab Pill Glide').classification={pathIds:['content:reference'],status:'confirmed',source:'manual'};await storage.set({entries})}")
-                library.reload();library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click();expect(library.locator('.code-case-frame')).to_be_visible()
-                expect(library.frame_locator('.code-case-frame').frame_locator('#preview').locator('#state')).to_have_text('Build')
+                library.reload();library.locator(f'.case-card[data-entry-id="{entry["id"]}"] .case-code-title').click();expect(library.locator('.code-case-view .code-case-frame')).to_be_visible()
+                expect(library.frame_locator('.code-case-view .code-case-frame').frame_locator('#preview').locator('#state')).to_have_text('Build')
                 with library.expect_navigation():
                     library.evaluate("async()=>chrome.storage.local.set({uiPreferences:{locale:'en',theme:'light',motion:'reduced'}})")
-                library.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
+                library.locator(f'.case-card[data-entry-id="{entry["id"]}"] .case-code-title').click()
                 expect(library.get_by_text('Reconstructed preview',exact=True)).to_be_visible()
                 for width in [1280,390]:
                     library.set_viewport_size({'width':width,'height':844})
-                    expect(library.frame_locator('.code-case-frame').frame_locator('#preview').get_by_role('button',name='Build')).to_be_in_viewport()
+                    expect(library.frame_locator('.code-case-view .code-case-frame').frame_locator('#preview').get_by_role('button',name='Build')).to_be_in_viewport()
                     library.screenshot(path=str(out/f'code-case-en-light-{width}.png'))
                 result={'savedOriginalExact':True,'updatedSameCaseWithoutDuplicateOrSourceLoss':True,'codeTypeSaved':True,'actualLibraryInteraction':True,'reloadRunsSavedPreview':True,'isolatedFromLibraryAndNetwork':True,'paidRequests':0,'pageErrors':run.page_errors}
                 (out/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))

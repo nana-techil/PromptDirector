@@ -1,7 +1,7 @@
 // Provider-native tool messages stay inside a turn. UI records contain no image bytes or provider secrets.
 import { readEventStream } from "./event-stream.js";
 import { operationBudget, resourceBudgetError } from "./resource-policy.js";
-import { appendAgentContext } from './agent-runtime-context.js';
+import { appendAgentContext, stableAgentArguments as stableObject } from './agent-runtime-context.js';
 
 export async function runComposerToolLoop({ body, protocol, request, runtime, signal: callerSignal, onDelta = () => {}, maxCharacters, allowImageOutput = false, budget: budgetValue, continuation }) {
   const budget = operationBudget({ maxTotalTokens: runtime.contextLength ? runtime.contextLength * 2 : undefined,
@@ -46,6 +46,21 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   }
   const seen = new Map(resumed?.seen ?? []);
   const callIds = new Set(resumed?.callIds ?? []);
+  const idleReadBatches = new Set(resumed?.idleReadBatches || []);
+  // These are API operation identifiers, never user-language intent rules.
+  // Live browser/capture reads retain their own freshness and source-version checks.
+  const readOperation = name => ['read_', 'search_', 'list_', 'inspect_', 'describe_', 'get_'].some(prefix => name.startsWith(prefix))
+    && (!specs.find(spec => spec.name === name)?.parameters.properties?.requestId || name === 'get_task');
+  const controlOperation = name => ['declare_task','settle_task'].includes(name);
+  const reusableRead = name => readOperation(name) && !name.startsWith('read_live_') && !name.startsWith('read_workspace_') && !['read_capture','get_task'].includes(name);
+  const resultFor = cached => {
+    if (cached.result) return cached.result;
+    const sequence = protocol === 'responses' ? current.input : current.messages;
+    const item = sequence.findLast(item => protocol === 'responses'
+      ? item.type === 'function_call_output' && item.call_id === cached.callId
+      : item.role === 'tool' && item.tool_call_id === cached.callId);
+    return item ? { data: JSON.parse(protocol === 'responses' ? item.output : item.content), ...(cached.terminate ? {terminate:true} : {}) } : null;
+  };
   const retainedSkillVersionIds = new Set(resumed?.retainedSkillVersionIds || []);
   const usage = resumed?.usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
   let usageKnown = resumed?.usageKnown ?? true;
@@ -104,6 +119,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         else current.messages.push(step.message);
         pendingCalls = step.calls;
       }
+      const batchKeys = pendingCalls.map(call => JSON.stringify([call.name, stableObject(JSON.parse(call.arguments))]));
+      let batchProgress = false;
       const batchResults = [];
       while (pendingCalls.length) {
         signal.throwIfAborted();
@@ -119,9 +136,21 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const cached = seen.get(key);
         const denied = cached?.denied;
         const retryDenied = denied && JSON.stringify(cached.scope) !== JSON.stringify(scope);
-        if (cached && cached.requestCount !== requestCount && !retryDenied) throw new Error("模型重复请求相同资料且没有进展，已停止继续调用");
+        const reusable = cached && (reusableRead(call.name) || controlOperation(call.name));
+        if (cached && cached.requestCount !== requestCount && !retryDenied && !reusable && !readOperation(call.name)) throw new Error("模型重复请求相同资料且没有进展，已停止继续调用");
         uncertainCallId = call.id;
-        const result = cached && !retryDenied ? { data: cached.result.data } : await runtime.execute(call.name, args, { callId: call.id, signal });
+        const prior = cached && resultFor(cached);
+        // A denied plan or failed read is not a durable fact: new context or a
+        // transient recovery may make the same operation valid on its next try.
+        const failedReadOrControl = prior?.data?.ok === false && (readOperation(call.name) || controlOperation(call.name));
+        const reuse = prior && !retryDenied && !failedReadOrControl && (reusable || cached.requestCount === requestCount);
+        const result = reuse ? prior : await runtime.execute(call.name, args, { callId: call.id, signal });
+        if (!result) throw new Error('此前读取回执不可用，已有资料保留');
+        if (!reuse) {
+          if (!readOperation(call.name) && !controlOperation(call.name) || args.expectedRevision && result.data?.ok === false) {
+            for (const [oldKey, value] of seen) if (readOperation(value.name || JSON.parse(oldKey)[0])) seen.delete(oldKey);
+          }
+        }
         batchResults.push(result);
         await runtime.recordToolResult?.({ callId: call.id, name: call.name, args, data: result.data,
           observedAt: new Date().toISOString() });
@@ -137,6 +166,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         }
         if (newlyRetained.length) await runtime.retainSkillVersions?.(newlyRetained);
         const output = JSON.stringify(result.data);
+        if (!prior || output !== JSON.stringify(prior.data)) batchProgress = true;
         if (protocol === "responses") {
           current.input.push({ type: "function_call_output", call_id: call.id, output });
           if (result.images?.length) current.input.push({ role: "user", content: result.images.flatMap(image => [
@@ -148,13 +178,19 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
             { type: "text", text: image.label }, runtime.chatImagePart?.(image) ?? { type: "image_url", image_url: { url: image.dataUrl, detail: "high" } }
           ]) });
         }
-        seen.set(key, { result, requestCount, scope, denied: ['task_required','task_scope_changed'].includes(result.data?.code) });
+        seen.set(key, { result, requestCount, scope, callId: call.id, name: call.name, terminate: result.terminate, denied: ['task_required','task_scope_changed'].includes(result.data?.code) });
         callIds.add(call.id);
         pendingCalls.shift(); toolCalls++;
         uncertainCallId = '';
         if (workingBytes({ body: current, cache: [...seen.values()], pendingCalls }) > budget.workingBytes) {
           stop('工具结果达到本次工作内存预算；已保留成果和未执行动作，请调整本次处理规模或使用分批读取');
         }
+      }
+      if (batchProgress) idleReadBatches.clear();
+      else {
+        const signature = JSON.stringify(batchKeys);
+        if (idleReadBatches.has(signature)) throw new Error('模型重复请求相同资料且没有进展，已停止继续调用');
+        idleReadBatches.add(signature);
       }
       const batchDecision = await runtime.finishToolBatch?.({ results: batchResults });
       if (batchDecision?.content != null) {
@@ -172,8 +208,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     if (deadlineController.signal.aborted && !callerSignal?.aborted) error = deadlineController.signal.reason;
     if (error?.code === 'RESOURCE_BUDGET_REACHED' || callIds.size || uncertainCallId) {
       const checkpoint = { protocol, body: current, pendingCalls, uncertainCallId, retainedSkillVersionIds: [...retainedSkillVersionIds],
-        seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
-        callIds: [...callIds], usage, usageKnown, requestCount };
+        seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, name: value.name, callId: value.callId, terminate: value.terminate, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
+        callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount };
       await runtime.saveContinuation?.(checkpoint);
       error.checkpoint = checkpoint;
     }
@@ -207,11 +243,7 @@ function checkedResponse(response, maxBytes, signal) {
   return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
-function stableObject(value) {
-  if (Array.isArray(value)) return value.map(stableObject);
-  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map(key => [key, stableObject(value[key])]));
-  return value;
-}
+
 
 function requestCharacters(body) {
   return JSON.stringify(body, (key, value) => ["image_url", "video_url", "file_data"].includes(key) ? "[media]" : value).length;
