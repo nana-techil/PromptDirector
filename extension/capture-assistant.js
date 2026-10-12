@@ -234,7 +234,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
   } catch (error) {
     return { ok: false, ...(preview ? { captureId: preview.captureId, revision: preview.revision } : {}), ...(saveResult ? { saveResult } : {}),
       message: signal.aborted ? signal.reason?.message || '采集助手已停止，已有预览保留' : error.message,
-      diagnostic: { ...diagnostic, task: taskRuntime?.task, ...(error.checkpoint ? { interruptedTools: captureDiagnosticValue({ requestCount: error.checkpoint.requestCount, pendingCalls: error.checkpoint.pendingCalls, uncertainCallId: error.checkpoint.uncertainCallId }) } : {}), finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message } } };
+      diagnostic: { ...diagnostic, task: taskRuntime?.task, ...(error.checkpoint ? { interruptedTools: captureDiagnosticValue({ requestCount: error.checkpoint.requestCount, usage: error.checkpoint.usageKnown ? error.checkpoint.usage : null, pendingCalls: error.checkpoint.pendingCalls, uncertainCallId: error.checkpoint.uncertainCallId }) } : {}), finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message } } };
   }
 }
 
@@ -266,8 +266,14 @@ export function captureSourceSelectionCheck(calls, preview, task) {
   const selected = new Set(preview?.selections?.filter(item => item.includeText).map(item => item.candidateId));
   const bindings = (preview?.candidates || []).filter(candidate => selected.has(candidate.id)).flatMap(candidate => candidate.textSources || []);
   const missing = calls.filter(call => call.name === 'read_capture' && ['source', 'supplement'].includes(call.args?.part)
-    && call.result?.data?.ok !== false && call.result?.data).flatMap(call => call.result.data.sources || [call.result.data])
-    .filter(source => (!requiredSources.size || requiredSources.has(source.selector)) && !bindings.some(binding => binding.selector === source.selector
-      && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'));
-  if (missing.length) return { revision: preview?.revision, missing: missing.map(source => source.selector) };
+    && call.result?.data?.ok !== false && call.result?.data).flatMap(call => (call.result.data.sources || [call.result.data])
+      .map(source => ({ ...source, captureId: call.result.data.captureId || call.args.captureId })))
+    .filter(source => (!requiredSources.size || requiredSources.has(source.selector))
+      && !((!source.captureId || !preview?.captureId || source.captureId === preview.captureId) && bindings.some(binding => binding.selector === source.selector
+        && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'))
+      && !calls.some(call => call.name === 'save_capture' && call.result?.data?.captureId === source.captureId
+        && call.result.data.results?.some(receipt => receipt.entryId && ['saved','duplicate'].includes(receipt.status)
+          && receipt.originalVerification?.status === 'verified' && receipt.originalVerification.sources?.some(binding =>
+            binding.selector === source.selector && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'))));
+  if (missing.length) return { revision: preview?.revision, missing: [...new Set(missing.map(source => source.selector))] };
 }

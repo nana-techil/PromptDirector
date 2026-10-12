@@ -116,6 +116,7 @@ test('real native broker binds one library, authenticates and forwards response'
         ['read_skill_file', {skillId: 'skill', expectedRevision: 'revision', source: 'package', path: 'scripts/frames.py', encoding: 'text'}],
         ['read_projects', { offset: 0, length: 31 }],
         ['read_projects', { name: '目标项目' }],
+        ['read_projects', { query: '目标' }],
         ['read_projects', { path: ['父项目', '目标项目'] }],
         ['create_project', { requestId: 'project', name: '子项目', parentId: 'parent', requirements: '完整要求' }],
         ['update_project', { requestId: 'brief', projectId: 'parent', expectedRevision: 'version', requirements: '新要求' }],

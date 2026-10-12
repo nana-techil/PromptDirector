@@ -209,3 +209,15 @@ test('exploratory sources outside the registered target do not force unrelated c
   preview.candidates[0].textSources=[];
   assert.deepEqual(captureSourceSelectionCheck(reads,preview,task).missing,['#chosen-module']);
 });
+
+test('separate batch previews recognize earlier verified saves without forcing their sources into the final case',()=>{
+ const reads=['first','second'].map(id=>({name:'read_capture',args:{captureId:id,part:'source',selector:'#'+id},result:{data:{selector:'#'+id,totalCharacters:20}}}));
+ const save={name:'save_capture',args:{captureId:'first'},result:{data:{ok:true,captureId:'first',results:[{entryId:'saved-first',candidateId:'first',status:'saved',originalVerification:{status:'verified',sources:[{selector:'#first',totalCharacters:20,completeness:'complete'}]}}]}}};
+ const preview={captureId:'second',candidates:[{id:'second',textSources:[{selector:'#second',totalCharacters:20,completeness:'complete'}]}],selections:[{candidateId:'second',includeText:true}]};
+ const task={steps:[{operation:'read_capture',part:'source',selector:'#first'},{operation:'read_capture',part:'source',selector:'#second'},{operation:'save_capture'}]};
+ assert.equal(captureSourceSelectionCheck([...reads,save],preview,task),undefined);
+ save.result.data.results[0].originalVerification.status='unverified';
+ assert.deepEqual(captureSourceSelectionCheck([...reads,save],preview,task).missing,['#first']);
+ save.result.data.results[0].originalVerification.status='verified';save.result.data.captureId='wrong-preview';
+ assert.deepEqual(captureSourceSelectionCheck([...reads,save],preview,task).missing,['#first']);
+});

@@ -25,13 +25,15 @@ export function createProjectOperations({ loadState, loadReadState = loadState, 
   return {
     read: input => enqueue(async () => {
       validateProjectOperation('read_projects', input);
-      if (['projectId', 'name', 'path'].filter(key => input[key] !== undefined).length > 1) throw agentError('invalid_input', '项目编号、名称或路径只选一种定位方式');
+      if (['projectId', 'name', 'path', 'query'].filter(key => input[key] !== undefined).length > 1) throw agentError('invalid_input', '项目定位方式只选一种');
+      const query = input.query?.trim().toLocaleLowerCase();
       const organizer = normalizeOrganizerState((await loadReadState()).organizerState);
       const revision = await hash(organizer);
       if (input.expectedRevision && revision !== input.expectedRevision) throw agentError('project_conflict', '项目树已变化，请从第一页重新读取');
       if (input.projectId) findProject(organizer, input.projectId);
       const scope = input.projectId && new Set(collectionSubtreeIds(organizer, input.projectId));
       const projects = await Promise.all(organizer.collections.filter(p => (!scope || scope.has(p.id))
+        && (!query || collectionPath(organizer, p.id).some(item => item.name.toLocaleLowerCase().includes(query)))
         && (input.name === undefined || p.name === input.name)
         && (input.path === undefined || JSON.stringify(collectionPath(organizer, p.id).map(item => item.name)) === JSON.stringify(input.path))).map(p => summary(organizer, p)));
       const text = JSON.stringify(projects), offset = input.offset || 0, length = input.length || 12000;

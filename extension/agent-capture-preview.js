@@ -79,7 +79,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         const tab = await chromeApi.tabs.get(tabId);
         if (record && tab.url !== record.batch.sourceUrl) throw agentError('page_changed', '采集网页已改变，请重新开始当前网页的采集');
         await permission(tab.url);
-        const [observed] = await chromeApi.scripting.executeScript({ target: { tabId }, func: readCapturePageContext, args: [input.query || ''] });
+        const [observed] = await chromeApi.scripting.executeScript({ target: { tabId }, func: readCapturePageContext, args: [input.query || '', Boolean(input.includeHidden)] });
         if (!observed?.result?.ok) throw agentError('capture_page_unavailable', observed?.result?.message || '当前网页现场未取得');
         if (observed.result.url !== tab.url || (await chromeApi.tabs.get(tabId)).url !== tab.url) throw agentError('page_changed', '读取期间网页已改变');
         const offset = input.offset ?? 0, length = input.length ?? 12000;
@@ -357,7 +357,8 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
             try { const savedText = await readSavedText(receipt.entryId); matches = sources.every(source => savedText.includes(sourceMaterialText(source).trim())); }
             catch (error) { receipt.warnings = [...(receipt.warnings || []), `保存读回未完成：${error.message}`]; }
           }
-          receipt.originalVerification = { status: matches && !partial ? 'verified' : partial ? 'partial' : 'unverified', sourceCount: sources.length };
+          receipt.originalVerification = { status: matches && !partial ? 'verified' : partial ? 'partial' : 'unverified', sourceCount: sources.length,
+            sources: sources.map(source => ({ selector: source.selector, totalCharacters: source.text.length, completeness: source.completeness || 'unverified' })) };
           if (partial || readSavedText && !matches) {
             receipt.status = 'partial'; receipt.warnings = [...new Set([...(receipt.warnings || []), partial ? '来源正文仍被折叠，尚未取得全文' : '已保存内容与完整来源不一致，请补采后核对'])];
           }
@@ -465,7 +466,7 @@ export function readCapturePageEvidence(selector = '') {
 }
 
 // Injected in isolation; all helpers deliberately stay inside this function.
-export function readCapturePageContext(query = '') {
+export function readCapturePageContext(query = '', includeHidden = false) {
   const excluded = 'script,style,noscript,input,textarea,select,[data-promptdirector-capture-ui]';
   const visible = element => {
     if (element.closest('[hidden],[aria-hidden="true"]')) return false;
@@ -477,9 +478,11 @@ export function readCapturePageContext(query = '') {
     return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth;
   };
   const path = element => {
-    if (element.id && document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) return '#' + CSS.escape(element.id);
     const parts = [];
     while (element && element !== document.body) {
+      if (element.id && document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) {
+        return ['#' + CSS.escape(element.id), ...parts].join(' > ');
+      }
       const siblings = [...(element.parentElement?.children || [])].filter(peer => peer.localName === element.localName);
       parts.unshift(element.localName + (siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(element) + 1})` : ''));
       element = element.parentElement;
@@ -489,18 +492,32 @@ export function readCapturePageContext(query = '') {
   const titleSelector = 'h1,h2,h3,h4,h5,h6,[role="heading"],[class*="title"],[class*="name"]';
   function owner(element) {
     for (let node = element.parentElement; node && node !== document.body; node = node.parentElement) {
-      const title = [...node.querySelectorAll(titleSelector)].find(item => !item.closest('pre,code') && !item.matches(excluded) && item.textContent.trim());
+      const validTitle = item => !item.closest('pre,code,button,a,[role="button"]') && !item.matches(excluded) && item.textContent.trim();
+      const depth = item => { let count = 0; for (; item && item !== node; item = item.parentElement) count++; return count; };
+      // A module's name is stronger identity evidence than a demo's title
+      // text. Controls and event-tracking class names are not module labels.
+      const title = [...node.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]')].find(validTitle)
+        || [...node.querySelectorAll('[class*="name"]')].filter(validTitle).sort((a, b) => depth(a) - depth(b))[0]
+        || [...node.querySelectorAll(titleSelector)].filter(validTitle).sort((a, b) => depth(a) - depth(b))[0];
       if (title) return { selector: path(node), title: title.textContent.trim() };
     }
     return null;
   }
   const needle = query.trim().toLocaleLowerCase();
-  const codeBlocks = [...document.querySelectorAll('pre')].filter(element => !element.closest('[data-promptdirector-capture-ui]')).map(element => {
+  const allCodeBlocks = [...document.querySelectorAll('pre')].filter(element => !element.closest('[data-promptdirector-capture-ui]')).map(element => {
     const module = owner(element), shown = visible(element);
     return { selector: path(element), characters: element.textContent.length, visible: shown, module,
       ...(shown ? { content: element.textContent } : {}),
       language: element.getAttribute('data-lang') || element.querySelector('code')?.className || '' };
-  }).filter(item => needle ? item.module?.title.toLocaleLowerCase().includes(needle) : item.visible).sort((a, b) => Number(b.visible) - Number(a.visible));
+  });
+  const codeBlocks = allCodeBlocks.filter(item => needle ? item.module?.title.toLocaleLowerCase().includes(needle) : item.visible).sort((a, b) => Number(b.visible) - Number(a.visible));
+  const modules = new Map();
+  if (includeHidden) for (const block of allCodeBlocks) {
+    if (!block.module || needle && !block.module.title.toLocaleLowerCase().includes(needle)) continue;
+    const module = modules.get(block.module.selector) || { ...block.module, sources: [] };
+    module.sources.push({ selector: block.selector, language: block.language, characters: block.characters });
+    modules.set(module.selector, module);
+  }
   const dialogs = [...document.querySelectorAll('dialog[open],[role="dialog"]')].filter(visible).map(element => ({ selector: path(element),
     title: element.querySelector(titleSelector)?.textContent.trim() || element.getAttribute('aria-label') || '' }));
   const active = document.activeElement;
@@ -519,6 +536,7 @@ export function readCapturePageContext(query = '') {
   }).filter(item => item.text);
   return { ok: true, url: location.href, title: document.title, query,
     selection: active?.matches('input,textarea,select') ? '' : String(getSelection() || ''), dialogs, codeBlocks, textModules,
+    ...(includeHidden ? { modules: [...modules.values()], inventoryScope: 'currently_loaded_dom' } : {}),
     untrustedContent: true };
 }
 

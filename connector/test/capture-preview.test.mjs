@@ -35,7 +35,7 @@ test('MCP uses the same capture schemas, waits for receipts and exposes no arbit
     return operation === 'read_capture' ? { captureId: 'preview', revision: 1 } : { state: 'queued', id: input.requestId };
   });
   try {
-    const inputs = { prepare_capture: { requestId: 'prepare', tabId: 5 }, read_capture: { captureId: 'preview' },
+    const inputs = { prepare_capture: { requestId: 'prepare', tabId: 5 }, read_capture: { captureId: 'preview', part: 'context', includeHidden: true },
       update_capture: { requestId: 'select', captureId: 'preview', expectedRevision: 1, selections: [], candidates: [{id:'code',title:'Code',canonicalUrl:'https://example.test/',contentText:'Original source',media:[],codePreview:{html:'<!doctype html><button>Demo</button>'}}] },
       save_capture: { requestId: 'save', captureId: 'preview', expectedRevision: 2, contentTypeId:'content:code-case', saveMode:'combined' } };
     for (const spec of CAPTURE_OPERATION_SPECS) {

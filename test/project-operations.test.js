@@ -185,3 +185,16 @@ test('new materials save and read back authored fields, labels, source evidence 
   assert.equal(JSON.parse((await run.cases.read({caseId:id,part:'source'})).content).sourceFacts.author,input.sourceFacts.author);
   assert.equal(run.state.entries.length,2);
 });
+
+test('a partial multilingual project name resolves matching paths without reading the entire tree or guessing an ID',async()=>{
+ const run=setup();
+ const root=(await run.api.execute('create_project',{requestId:'motion',name:'网页参考'})).project;
+ const child=(await run.api.execute('create_project',{requestId:'motion-child',name:'Kinetics-网页动效',parentId:root.id})).project;
+ await run.api.execute('create_project',{requestId:'unrelated',name:'其他资料'});
+ const result=await run.api.read({query:'kinetics'});
+ assert.deepEqual(JSON.parse(result.content).map(x=>x.id),[child.id]);
+ assert.deepEqual(JSON.parse((await run.api.read({query:'网页参考'})).content).map(x=>x.id),[root.id,child.id]);
+ assert.equal((await run.api.read({name:'kinetics'})).total,0,'exact lookup remains exact');
+ await assert.rejects(run.api.read({query:'kinetics',name:'Kinetics-网页动效'}),{code:'invalid_input'});
+ await assert.rejects(run.api.read({query:'  '}),/文字无效/);
+});

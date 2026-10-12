@@ -303,3 +303,16 @@ test('actual successful analysis items survive a partial receipt and can complet
   await f.runtime.execute('save_capture',{}, {callId:'first-page'});assert.equal((await f.runtime.finishTurn({})).action,'continue');
   await f.runtime.execute('save_capture',{}, {callId:'retry'});assert.equal(await f.runtime.finishTurn({}),undefined);
 });
+
+test('a project lookup step can continue using its actual name fragment filter without losing the save requirement',async()=>{
+ let state={toolContext:[]};
+ const durable=createAgentContextRuntime({turnId:'project-user',load:async()=>state,update:async transform=>{state=transform(state);}});
+ const runtime=withAssistantTaskRuntime({...durable,specs:[{name:'read_projects',parameters:{properties:{query:{},name:{}}}},{name:'save_capture',parameters:{properties:{requestId:{}}}}],
+  execute:async(name,args)=>({data:{ok:true,content:JSON.stringify([{id:'real-project',name:'Motion-effects'}]),nextOffset:null}})},
+  {instruction:'Save the selected effects in the project',userMessageId:'project-user'});
+ await runtime.loadContext();
+ await runtime.execute('declare_task',{mode:'act',goal:'Save separate effects in the matching project',userMessageIds:['project-user'],steps:[{operation:'read_projects',selector:'motion'},{operation:'save_capture'}]});
+ await runtime.execute('read_projects',{query:' MOTION '},{callId:'actual-project-search'});
+ assert.deepEqual(runtime.task.pending,[{operation:'save_capture'}]);
+ assert.equal((await runtime.finishTurn({content:'All saved.'})).action,'continue');
+});

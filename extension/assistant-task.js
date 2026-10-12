@@ -43,14 +43,17 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
   const declaration = { name: 'declare_task', description: '本轮首次输出登记对用户目标的语义理解，不匹配固定说法。mode=respond或clarify时给出reply，不执行工具；mode=act时steps列出完成目标必须取得的实际操作成果，可以同批继续调用工具。需要完整遍历或全文时将步骤requireComplete设为true；仅查找一页不要求遍历全部。批量任务用resultIds登记必须取得成果的实际候选或案例编号，每项都要核对，不以选中一项代表全部。userMessageIds引用本次上下文提供的真实用户消息，必须含当前用户消息；历史有效授权可同时引用。steps不是用户表单，也不要求用户再次确认。后续扩展步骤可再次登记，目标描述可据事实细化；已登记范围、授权引用和成果条件不能撤销，也不能降成普通回答。contentTypeId来自真实类型目录，人工指定优先。',
     parameters: object({ mode: { enum: ['respond', 'act', 'clarify'] }, goal: text,
       userMessageIds: { ...list(text), minItems: 1, uniqueItems: true },
-      steps: list(object({ operation: { enum: operations }, targetId: { ...text, description: '仅填现场或工具事实已提供的真实对象ID；创建新对象或身份尚未知时省略，不填名称或代号。' }, part: text, selector: text, resultIds: { ...list(text), minItems: 1, uniqueItems: true }, requireComplete: { type: 'boolean' } }, ['operation'])),
+      steps: list(object({ operation: { enum: operations }, targetId: { ...text, description: '仅填现场或工具事实已提供的真实对象ID；创建新对象或身份尚未知时省略，不填名称或代号。' }, part: text,
+        selector: { ...text, description: '网页读取的实际selector；read_projects时为实际name/query筛选值。对象编号用targetId，不把名称或CSS选择器作为编号。' }, resultIds: { ...list(text), minItems: 1, uniqueItems: true }, requireComplete: { type: 'boolean' } }, ['operation'])),
       constraints: list(text), contentTypeId: text, reply: text }, ['mode', 'goal', 'userMessageIds', 'steps']) };
   const settle = { name: 'settle_task', description: '记录当前任务的真实阻塞或需要用户解决的一个歧义。blocked必须关联本轮真实失败的工具调用编号；waiting说明一个实际缺失的信息。已取得成果保留，不把部分成功标成全部完成。不用于绕过缺失保存或代码预览。',
     parameters: object({ state: { enum: ['blocked', 'waiting'] }, reason: text, failedCallId: text }, ['state', 'reason']) };
   function matches(step, record) {
     return step.operation === record.name
       && (!step.part || step.part === record.args.part || record.args.parts?.includes(step.part))
-      && (!step.selector || step.selector === record.args.selector || record.args.selectors?.includes(step.selector))
+      && (!step.selector || step.selector === record.args.selector || record.args.selectors?.includes(step.selector)
+        || record.name === 'read_projects' && (record.args.name === step.selector
+          || typeof record.args.query === 'string' && record.args.query.trim().toLocaleLowerCase() === step.selector.trim().toLocaleLowerCase()))
       && (!step.targetId || [record.args.caseId, record.args.captureId, record.args.projectId, record.args.candidateId, record.args.transferId, record.args.skillId, record.args.batchId, record.args.referenceId, record.args.tabId, record.args.assetId, record.args.visualId, record.args.versionId, record.args.callId,
         record.data?.caseId, record.data?.captureId, record.data?.project?.id, record.data?.skillId, record.data?.skill?.id, record.data?.batchId, record.data?.id,
         ...(record.args.sourceCaseIds || [])].filter(value => value != null).map(String).includes(step.targetId));
