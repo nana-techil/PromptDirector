@@ -21,6 +21,30 @@ function fixture({ turnId = 'user-1', state = { toolContext: [] }, execute } = {
   return { runtime, calls, state, declare };
 }
 
+test('a created material is complete for its actual source targets without replaying the committed save',async()=>{
+  const record=[];
+  const runtime=withAssistantTaskRuntime({specs:[{name:'save_material',parameters:{properties:{requestId:{}}}}],execute:async(name,args)=>{record.push(name);return{data:{ok:true,results:[{status:'saved',entryId:'new-output',sourceCaseIds:args.sourceCaseIds}]}};}},
+    {instruction:'Save this work',userMessageId:'new-user',context:{cases:[{id:'source-case'}]}});
+  await runtime.execute('declare_task',{mode:'act',goal:'Save new material based on selected source',userMessageIds:['new-user'],steps:[{operation:'save_material',targetId:'source-case',resultIds:['source-case']}]});
+  await runtime.execute('save_material',{requestId:'once',sourceCaseIds:['source-case']},{callId:'saved'});
+  assert.equal(await runtime.finishTurn({}),undefined);assert.equal(runtime.task.state,'completed');assert.deepEqual(record,['save_material']);
+});
+
+test('a committed result at the token budget is delivered without another model call, while unfinished work still stops',async()=>{
+  for(const saved of [true,false]) {
+    const f=fixture({execute:()=>({results:[{status:saved?'saved':'failed',entryId:'case'}]})});let requests=0;
+    const action=runComposerToolLoop({protocol:'chat_completions',runtime:f.runtime,budget:{maxTotalTokens:10},body:{model:'fixture',messages:[{role:'user',content:'current instruction'}]},request:async()=>{
+      requests++;
+      return new Response(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[
+        {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Save this result',userMessageIds:['user-1'],steps:[{operation:'save_capture'}]})}},
+        {id:'save',type:'function',function:{name:'save_capture',arguments:'{}'}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:9,completion_tokens:1,total_tokens:10}}));
+    }});
+    if(saved){const result=await action;assert(result.content.includes('Save this result'));assert.equal(f.runtime.task.state,'completed');}
+    else {await assert.rejects(action,{code:'RESOURCE_BUDGET_REACHED'});assert.equal(f.runtime.task.state,'active');}
+    assert.equal(requests,1);assert.equal(f.calls.length,1);
+  }
+});
+
 test('a declared edit cannot mutate a different case with the same tool', async () => {
   const f = fixture(); await f.declare([{ operation: 'edit_case', targetId: 'chosen-case' }]);
   const denied = await f.runtime.execute('edit_case', { caseId: 'unrelated-case' }, { callId: 'wrong' });

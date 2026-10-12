@@ -21,7 +21,10 @@ def main():
             const canOpen=body.tools.some(t=>t.function.name==='open_workspace');
             const results=body.messages.filter(m=>m.role==='tool').map(m=>({name:body.messages.flatMap(m=>m.tool_calls||[]).find(c=>c.id===m.tool_call_id)?.function.name,data:JSON.parse(m.content)}));
             let delta,finish;const tool=(name,args)=>{delta={tool_calls:[{index:0,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]};finish='tool_calls';};
-            if(globalThis.fixtureFlow==='skill') {
+            if(globalThis.fixtureFlow==='full-reply') {
+              const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
+              tool('declare_task',{mode:'respond',goal:'Report the finished task',userMessageIds:[ctx.currentUserId],steps:[],reply:globalThis.fullReplyFixture});
+            } else if(globalThis.fixtureFlow==='skill') {
               const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
               const declared=results.findLast(r=>r.name==='declare_task');
               if(!declared || !declared.data.ok) tool('declare_task',{mode:'act',goal:'基于实际案例提炼并保存视觉特效指南Skill',userMessageIds:[ctx.currentUserId],steps:[
@@ -94,6 +97,26 @@ def main():
         assert len([call for call in final_turn['toolCalls'] if call['name']=='read_case'])==1,'a repeat must reuse native evidence rather than read the library twice'
         assert final_turn['task']['state']=='completed' and final_turn['task']['pending']==[]
         assert not canonical['assistantState'].get('lastError')
+        # A long answer is fully visible once, including its final completion receipt.
+        full_reply='已拿到原案例完整原文。\n\n## 整理结果\n\n'+'\n\n'.join([
+            '原始提示词作为参考材料单独保留，指南正文用于解释使用方法，两个部分可以分别查看和继续编辑。',
+            '案例中实际存在的效果才会进入指南；缺少来源的内容应明确列出缺口，方便下一步补充资料。',
+            '后续创作可以引用这份指南，同时保留当前选择的角色、场景与原案例之间的关系。',
+            '较长的解释直接在对话内阅读，使用原来的滚动区域到达最后一段，不需要逐条展开。',
+            '当前成果已通过正式保存服务写入并读回，已有原文和项目归属保持。'])+'\n\n保存已完成，参考文件已读回。'
+        worker.evaluate("text=>{globalThis.fixtureFlow='full-reply';globalThis.fullReplyFixture=text}",full_reply)
+        panel.locator('#capture-assistant-input').fill('展示完整结果')
+        panel.locator('#capture-assistant-send').click()
+        answer=panel.locator('.capture-assistant-assistant').last
+        expect(answer).to_contain_text('参考文件已读回',timeout=30000)
+        assert answer.inner_text().count('已拿到原案例完整原文。')==1
+        assert answer.locator('details').count()==0
+        for width in [390,900]:
+            panel.set_viewport_size({'width':width,'height':844})
+            panel.locator('.capture-assistant-conversation').evaluate('el=>el.scrollTop=el.scrollHeight')
+            expect(panel.locator('#capture-assistant-input')).to_be_in_viewport()
+            panel.screenshot(path=str(out/f'full-reply-zh-dark-{width}.png'))
+        worker.evaluate("()=>{globalThis.fixtureFlow=undefined}")
         # A studio write is the very same conversation, with a guarded revision.
         chat=panel.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session",chat_id)
         stale=chat
@@ -171,6 +194,6 @@ def main():
             studio.locator('.composer-session-item').first.hover()
             studio.screenshot(path=str(out/f'studio-chats-hover-{locale}-{theme}-1280.png'))
             studio.close()
-        result={'noWebpageChatAndActualOpenSearchEdit':True,'exactSourcePreserved':True,'sameStudioConversationAndToolContext':True,'studioNativeIntentAndActualHostTools':True,'skillGuideSavedAndReadBack':True,'validPlanCorrectedWithoutUserRepetition':True,'sourceRereadReusesEvidence':True,'studioLiveUpdates':True,'staleWriteRejected':True,'allSevenChatsRetained':True,'sidebarFiveRecent':True,'reloadDraftPreservedWithoutModelRequest':True,'studioDeleteDoesNotResurrectOrDeleteCases':True,'deleteHiddenUntilRowHoverOrKeyboardFocus':True,'borderlessDelete':True,'paidRequests':0,'pageErrors':run.page_errors}
+        result={'noWebpageChatAndActualOpenSearchEdit':True,'exactSourcePreserved':True,'sameStudioConversationAndToolContext':True,'studioNativeIntentAndActualHostTools':True,'skillGuideSavedAndReadBack':True,'fullReplyVisibleOnceWithFinalReceipt':True,'validPlanCorrectedWithoutUserRepetition':True,'sourceRereadReusesEvidence':True,'studioLiveUpdates':True,'staleWriteRejected':True,'allSevenChatsRetained':True,'sidebarFiveRecent':True,'reloadDraftPreservedWithoutModelRequest':True,'studioDeleteDoesNotResurrectOrDeleteCases':True,'deleteHiddenUntilRowHoverOrKeyboardFocus':True,'borderlessDelete':True,'paidRequests':0,'pageErrors':run.page_errors}
         (out/'results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result))
 if __name__=='__main__':main()

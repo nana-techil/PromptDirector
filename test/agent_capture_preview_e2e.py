@@ -457,10 +457,8 @@ def main():
                 panel.locator('#capture-assistant-save').click()
                 expect(panel.locator('.capture-assistant-result')).to_have_count(count+1,timeout=30000)
                 assert panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries.some(entry=>entry.classification?.pathIds?.[0]==='content:reference' && entry.classification?.source==='manual')")
-                # Old verbose messages are compact by default; their full content
-                # remains available without another model request.
-                panel.evaluate("async()=>{const {compactCaptureReply}=await import('./capture-reply.js');const text='Long explanation. '.repeat(100);const projected=compactCaptureReply(text);if(Array.from(projected.brief).length>120||!projected.overflow)throw new Error('Reply must stay compact')}")
-                results={'manualContentTypeSaveReadback':True,'boundedSidebarReply':True,'mcpPreviewAndSupplement':True,'exactOriginalBytesReadback':True,'saveRetryDoesNotDuplicate':True,
+                # Full reply visibility is exercised by plugin_assistant_e2e.
+                results={'manualContentTypeSaveReadback':True,'mcpPreviewAndSupplement':True,'exactOriginalBytesReadback':True,'saveRetryDoesNotDuplicate':True,
                     'guidanceWithoutScanTools':True,'markdownAndStreamingWired':True,'inChatSaveAndOpenCase':True,
                     'closeContinuesAndReopenRestores':True,'explicitStopRetainsPreview':True,'changedPageDoesNotApplyOldPreview':True,'earlyFalseCompletionDoesNotRemainInChatOrWriteCases':True,
                     'sameSourceDoesNotDuplicateOrReplaceOriginalPrompt':True,'localFilesSurviveReloadAndExactBytes':True,'chatPasteDropRemoveWithoutLibraryWrites':True,'modelSelectionSendsActualImageWithoutChangingGlobalRoute':True,'naturalLanguageSaveToProject':True,'naturalLanguageCreateProjectAndSave':True,

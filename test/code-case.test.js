@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { codePreviewHtml, codePreviewText } from '../extension/code-case.js';
-import { compactCaptureReply, CAPTURE_REPLY_CHARACTERS } from '../extension/capture-reply.js';
 import { classifyContent } from '../extension/classifier.js';
 import { CONTENT_IDS, createDefaultTaxonomy, normalizeTaxonomy } from '../extension/taxonomy.js';
 
@@ -20,11 +19,4 @@ test('existing libraries gain a code type while custom names and original classi
   const updated = normalizeTaxonomy(taxonomy);
   assert(updated.nodes.some(node => node.id === CONTENT_IDS.codeCase));
   assert.equal(updated.nodes[0].name, 'My tutorial');
-});
-test('long sidebar replies stay compact while the original and saved code remain untouched', () => {
-  const original = '暂未保存。'.repeat(100) + '```html\nsource\n```';
-  const result = compactCaptureReply(original);
-  assert(result.overflow); assert(Array.from(result.brief).length <= CAPTURE_REPLY_CHARACTERS);
-  assert(original.endsWith('```html\nsource\n```'));
-  assert.deepEqual(compactCaptureReply('已保存。'), { brief: '已保存。', overflow: false });
 });

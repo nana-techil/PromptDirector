@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAgentContextRuntime, mergeAgentToolContext, projectAgentToolContext } from '../extension/agent-runtime-context.js';
+import { createAgentContextRuntime, mergeAgentToolContext, projectAgentToolContext, readAgentToolResult } from '../extension/agent-runtime-context.js';
 import { runComposerToolLoop } from '../extension/composer-tool-loop.js';
 import { createComposerToolProgress } from '../extension/composer-tool-progress.js';
 import { createComposerSession } from '../extension/composer.js';
+import { withAssistantTaskRuntime } from '../extension/assistant-task.js';
+import { AGENT_CHUNK_BYTES } from '../extension/agent-protocol.js';
 const spec = { name: 'read_source', parameters: { type: 'object' } };
 const response = message => new Response(JSON.stringify({ choices: [{ message, finish_reason: message.tool_calls ? 'tool_calls' : 'stop' }] }));
 const body = () => ({ model: 'fixture', messages: [{ role: 'user', content: '读取这段代码' }] });
@@ -13,6 +15,46 @@ function contextFixture() {
   return { runtime: createAgentContextRuntime({ turnId: 'human-request', load: async () => state,
     update: async transform => { state = structuredClone(transform(state)); } }), state: () => state };
 }
+
+test('large historical source is indexed and can be retrieved exactly through the existing task and native loop',async()=>{
+  const original='Original source, never a summary.\n'.repeat(1000);
+  let state={toolContext:[{turnId:'old-turn',callId:'old-read',name:'read_source',args:{selector:'pre'},data:{content:original,revision:'frozen'}}]};
+  const durable=createAgentContextRuntime({turnId:'new-user',load:async()=>state,update:async transform=>{state=transform(state);}});
+  const runtime=withAssistantTaskRuntime({...durable,specs:[spec],execute:()=>assert.fail('no backend reread or mutation')},{instruction:'Use the previous source',userMessageId:'new-user'});
+  let requests=0;
+  await runComposerToolLoop({body:{model:'fixture',messages:[{role:'user',content:'Use the previous source'}]},protocol:'chat_completions',runtime,request:async actual=>{
+    if(++requests===1){
+      const facts=JSON.parse(actual.messages.findLast(message=>message.role==='user').content[0].text).untrustedToolEvidence;
+      assert.equal(facts[0].data.content,undefined);
+      assert.deepEqual(facts[0].data.contentReference,{callId:'old-read',turnId:'old-turn',path:['data','content']});
+      assert(actual.tools.some(tool=>tool.function.name==='read_tool_result'));
+      return response({role:'assistant',tool_calls:[
+        {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Read frozen source',userMessageIds:['new-user'],steps:[{operation:'read_tool_result',targetId:'old-read',requireComplete:true}]})}},
+        {id:'read-history',type:'function',function:{name:'read_tool_result',arguments:JSON.stringify({turnId:'old-turn',callId:'old-read',path:['data','content']})}}
+      ]});
+    }
+    const result=JSON.parse(actual.messages.find(item=>item.tool_call_id==='read-history').content);assert.equal(result.content,original);
+    return response({role:'assistant',content:'Original retrieved.'});
+  }});
+  assert.equal(state.toolContext[0].data.content,original);assert.equal(runtime.task.state,'completed');
+});
+
+test('frozen history reads preserve every page and reject ambiguous or missing references',()=>{
+  const source='Source 🐉\n'.repeat(10000);
+  const records=[{turnId:'first',callId:'same-call',data:{content:source,revision:'one'}},{turnId:'second',callId:'same-call',data:{content:'different source'}}];
+  assert.equal(readAgentToolResult(records,{callId:'same-call',path:['data','content']}).ok,false);
+  assert.equal(readAgentToolResult(records,{turnId:'first',callId:'same-call',path:['data','missing']}).ok,false);
+  let content='',offset=0;
+  do {const page=readAgentToolResult(records,{turnId:'first',callId:'same-call',path:['data','content'],offset});
+    assert(page.content.length<=AGENT_CHUNK_BYTES/4);assert.equal(page.historical,true);content+=page.content;offset=page.nextOffset;
+  } while(offset!=null);
+  assert.equal(content,source);assert.equal(records[0].data.content,source);
+});
+
+test('an archived source fragment retains its original paging warning instead of pretending to be the full source',()=>{
+  const page=readAgentToolResult([{callId:'fragment',name:'read_case',data:{content:'first part',offset:0,totalCharacters:200,nextOffset:10}}],{callId:'fragment',path:['data','content']});
+  assert.equal(page.nextOffset,null);assert.equal(page.origin.nextOffset,10);assert.equal(page.origin.totalCharacters,200);
+});
 
 test('exact source survives a finished turn, reload and model/protocol change without replaying writes', async () => {
   const f = contextFixture(); const original = 'export function realCode() {\n  const embeddedImage = "data:image/png;base64,eA==";\n  return "original, not a summary";\n}\n';
@@ -26,7 +68,9 @@ test('exact source survives a finished turn, reload and model/protocol change wi
     runtime: { ...reloaded, specs: [spec], execute: () => assert.fail('completed actions must not replay') },
     request: async actual => {
       const context = JSON.parse(actual.input[0].content[0].text);
-      assert.equal(context.untrustedToolEvidence[0].data.content, original);
+      const reference = context.untrustedToolEvidence[0].data.contentReference;
+      assert.equal(reference.callId, 'source-one');
+      assert.equal(readAgentToolResult(f.state().toolContext, reference).content, original);
       assert(actual.input[0].content.at(-1).text.includes('继续保存'));
       return new Response(JSON.stringify({ status: 'completed', output_text: '原始资料仍在' }));
     } });

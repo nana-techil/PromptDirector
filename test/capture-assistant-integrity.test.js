@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { captureContextReferences, runCaptureAssistant } from '../extension/capture-assistant.js';
+import { readAgentToolResult } from '../extension/agent-runtime-context.js';
 import { createAgentCapturePreview } from '../extension/agent-capture-preview.js';
 import { applyPageCaptureSelections } from '../extension/page-capture.js';
 import { captureSourceSelectionCheck } from '../extension/capture-assistant.js';
@@ -23,12 +24,16 @@ function fixture() {
 
 test('historic nested source results and candidate originals are references, not repeated model input', () => {
   const original = 'Full original source '.repeat(10000);
-  const records = [{ name: 'read_capture', args: { captureId: 'preview', part: 'source', selectors: ['pre'] }, data: { part: 'source', sources: [{ selector: 'pre', content: original, totalCharacters: original.length }] } },
-    { name: 'update_capture', args: { candidates: [{ id: 'case', contentText: original, originalPrompt: original, codePreview: { html: original } }] }, data: { captureId: 'preview', revision: 3, selections: [{ candidateId: 'case' }] } }];
+  const records = [{ callId:'read-original',turnId:'old',name: 'read_capture', args: { captureId: 'preview', part: 'source', selectors: ['pre'] }, data: { part: 'source', sources: [{ selector: 'pre', content: original, totalCharacters: original.length }] } },
+    { callId:'prepared',turnId:'old',name: 'update_capture', args: { candidates: [{ id: 'case', contentText: original, originalPrompt: original, codePreview: { html: original } }] }, data: { captureId: 'preview', revision: 3, selections: [{ candidateId: 'case' }] } }];
   const projected = captureContextReferences(records);
   assert(JSON.stringify(projected).length < 3000, 'full originals must not be repeatedly sent inside nested source results or mutation arguments');
   assert.equal(records[0].data.sources[0].content, original, 'durable originals remain intact');
-  assert.equal(projected[0].data.sources[0].totalCharacters, original.length);
+  let restored='',offset=0;
+  do {const page=readAgentToolResult(records,{...projected[0].data.sourcesReference,path:['data','sources','0','content'],offset});restored+=page.content;offset=page.nextOffset;} while(offset!=null);
+  assert.equal(restored,original);
+  assert.equal(projected[0].data.sourcesCount,1);
+  assert.equal(readAgentToolResult(records,{callId:'read-original',turnId:'old',path:['data','sources','0','totalCharacters']}).content,String(original.length));
   assert.equal(projected[1].data.revision, 3);
 });
 

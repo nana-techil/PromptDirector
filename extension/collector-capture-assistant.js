@@ -16,7 +16,6 @@ import { availableAiModelChoicesForTask } from './ai-provider-registry.js';
 import { composerProfileForTaskAssignment } from './composer.js';
 import { composerLibraryToolService } from './composer-service.js';
 import { getMediaBlob } from './media-store.js';
-import { compactCaptureReply } from './capture-reply.js';
 const storage = getLibraryStorage();
 const stateKey = 'captureAssistantDialog';
 
@@ -247,15 +246,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     return line;
   }
   function replyView(text) {
-    const { brief, overflow } = compactCaptureReply(text);
-    const view = node('div'); view.append(renderMarkdownDocument(brief));
-    if (overflow) {
-      const details = node('details', 'capture-assistant-original'); const summary = node('summary'); summary.textContent = t('展开全文');
-      details.append(summary); details.addEventListener('toggle', () => {
-        if (details.open && details.childElementCount === 1) details.append(renderMarkdownDocument(text));
-      }); view.append(details);
-    }
-    return view;
+    return renderMarkdownDocument(text);
   }
   function welcome() {
     const box = node('div', 'capture-assistant-welcome');

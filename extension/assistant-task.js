@@ -1,5 +1,6 @@
-import { stableAgentArguments } from './agent-runtime-context.js';
+import { stableAgentArguments, AGENT_CONTEXT_READ_SPEC, readAgentToolResult } from './agent-runtime-context.js';
 import { validate } from './case-operation-specs.js';
+import { t } from './i18n.js';
 
 const text = { type: 'string', minLength: 1 };
 const object = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -13,7 +14,8 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
   }));
   if (users.at(-1)?.content !== instruction || userMessageId && users.at(-1)?.id !== userMessageId) users.push({ id: userMessageId || crypto.randomUUID(), content: instruction, userMessageIndex: users.length });
   const currentUserId = users.at(-1)?.id;
-  const operations = runtime.specs.map(spec => spec.name);
+  const specs = [...runtime.specs, ...(runtime.loadContext ? [AGENT_CONTEXT_READ_SPEC] : [])];
+  const operations = specs.map(spec => spec.name);
   const mutations = new Set(runtime.specs.filter(spec => spec.parameters.properties?.requestId).map(spec => spec.name));
   let task, observations = [], terminalReply;
   const knownTargets = new Set();
@@ -27,6 +29,7 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
     }
   }
   function observeRecord(record) {
+    if (record.callId) knownTargets.add(record.callId);
     if (record.data?.ok === false) {
       for (const item of record.data.results || []) if (['saved','duplicate'].includes(item.status) && item.entryId) observeTargets(item);
       return;
@@ -48,8 +51,9 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
     return step.operation === record.name
       && (!step.part || step.part === record.args.part || record.args.parts?.includes(step.part))
       && (!step.selector || step.selector === record.args.selector || record.args.selectors?.includes(step.selector))
-      && (!step.targetId || [record.args.caseId, record.args.captureId, record.args.projectId, record.args.candidateId, record.args.transferId, record.args.skillId, record.args.batchId, record.args.referenceId, record.args.tabId, record.args.assetId, record.args.visualId, record.args.versionId,
-        record.data?.caseId, record.data?.captureId, record.data?.project?.id, record.data?.skillId, record.data?.skill?.id, record.data?.batchId, record.data?.id].filter(value => value != null).map(String).includes(step.targetId));
+      && (!step.targetId || [record.args.caseId, record.args.captureId, record.args.projectId, record.args.candidateId, record.args.transferId, record.args.skillId, record.args.batchId, record.args.referenceId, record.args.tabId, record.args.assetId, record.args.visualId, record.args.versionId, record.args.callId,
+        record.data?.caseId, record.data?.captureId, record.data?.project?.id, record.data?.skillId, record.data?.skill?.id, record.data?.batchId, record.data?.id,
+        ...(record.args.sourceCaseIds || [])].filter(value => value != null).map(String).includes(step.targetId));
   }
   const requiresComplete = step => step.requireComplete ?? (mutations.has(step.operation) || ['source','supplement','document','original'].includes(step.part));
   function pending() {
@@ -59,7 +63,8 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       const requireComplete = requiresComplete(step);
       const complete = record => succeeded(record, requireComplete) && (!requireComplete || sourceComplete(record, records, step.selector));
       if (step.resultIds) return step.resultIds.some(id => !records.some(record =>
-        record.data?.results?.some(item => [item.candidateId, item.entryId, item.caseId].includes(id) && succeeded({ data: { results: [item] } }))
+        record.data?.results?.some(item => ([item.candidateId, item.entryId, item.caseId].includes(id)
+          || record.args.sourceCaseIds?.includes(id) && item.sourceCaseIds?.includes(id)) && succeeded({ data: { results: [item] } }))
         || [...(record.data?.items || []), ...(record.data?.item ? [record.data.item] : [])].some(item => item.caseId === id && item.state === 'saved')
         || complete(record) && matches({ ...step, resultIds: undefined, targetId: id }, record)));
       return !records.some(complete);
@@ -98,7 +103,7 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
     await runtime.recordToolResult?.({ callId: `task-state-${currentUserId}`, name: 'assistant_task_state', args: {}, data: task });
   }
   function fail(code, message) { return { data: { ok: false, code, message } }; }
-  return { ...runtime, specs: [declaration, settle, ...runtime.specs],
+  return { ...runtime, specs: [declaration, settle, ...specs],
     executionScope: () => task ? { steps: task.steps } : null,
     get task() { return task ? { ...task, pending: pending() } : undefined; },
     get observations() { return observations; },
@@ -156,7 +161,11 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       }
       if (task.mode !== 'act' || task.state !== 'active') return fail('task_not_active', '本轮没有可执行目标，不改变案例或预览');
       if (mutations.has(name) && !task.steps.some(step => matches(step, { name, args }))) return fail('task_scope_changed', '该动作不属于本轮登记目标；必要准备先扩展同一任务步骤，不能自动增加用户授权');
-      const result = await runtime.execute(name, args, call);
+      let result;
+      if (name === AGENT_CONTEXT_READ_SPEC.name && runtime.loadContext) {
+        try { validate(AGENT_CONTEXT_READ_SPEC.parameters, args, name); } catch (error) { return fail('context_reference_invalid', error.message); }
+        result = { data: readAgentToolResult(await runtime.loadContext(), args) };
+      } else result = await runtime.execute(name, args, call);
       const observation = { callId: call.callId, name, args, data: result.data };
       observations.push(observation); observeRecord(observation);
       return result;
@@ -169,7 +178,11 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       if (missing.length) return { action: 'continue', state: missing, message: `当前任务还缺实际成果：${JSON.stringify(missing)}。继续已授权目标或登记有依据的阻塞，不以回复结束代替完成。` };
       const check = await runtime.finishTurn?.(value);
       if (check) return check;
+      // At a resource boundary deliver already verified committed work. Never
+      // renew the budget or infer a finished synthesis from read-only progress.
+      if (value.atBudget && !observations.some(record => mutations.has(record.name) && succeeded(record))) return;
       await recordState('completed');
+      if (value.atBudget) return { action: 'respond', completed: true, content: `${task.goal}\n\n${t('已完成')}` };
     },
     async finishToolBatch({ results }) {
       if (terminalReply && results.every(result => result.terminate)) return { content: terminalReply };

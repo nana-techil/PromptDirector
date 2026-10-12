@@ -8,6 +8,7 @@ import { capturePlatformGuidance } from './agent-capture-preview.js';
 import { CONTENT_IDS, CONTENT_ROLES } from './taxonomy.js';
 import { codePreviewHtml } from './code-case.js';
 import { withAssistantTaskRuntime } from './assistant-task.js';
+import { agentContextReferences } from './agent-runtime-context.js';
 import { PLUGIN_ASSISTANT_INSTRUCTION, ASSISTANT_TASK_INSTRUCTION } from './plugin-assistant-prompt.js';
 
 // Page reads and mutations are lazy: asking how to use the collector must not
@@ -85,7 +86,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     diagnostic.context = captureDiagnosticValue(captureContextReferences(priorContext));
     const captureTools = {
       ...sessionRuntime,
-      loadContext: async () => captureContextReferences(priorContext),
+      loadContext: async () => await sessionRuntime.loadContext?.() || priorContext,
       finishTurn: async () => {
         const check = captureSourceSelectionCheck(diagnostic.toolCalls, preview, taskRuntime.task);
         if (check) return { action: 'continue', state: check, message: '完整来源尚未选入当前目标。按实际selector与当前版本补齐textSources，保留原文；不要用摘要替代或宣称完成。' };
@@ -211,7 +212,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
         interface: { conversations: { recentCount: 5, retained: 'all', changesOnNavigation: false },
           codeCase: { cardPreview: 'interactive_saved_preview', previewLoads: 'visible_foreground_only', explicitCoverPreserved: true, openDetails: 'title_or_card_keyboard' },
           captureModeSwitch: true, diagnosticsExport: true, closeContinuesWork: true },
-        replyPolicy: { sentences: 3, chineseCharacters: 120, englishWords: 60, detailsOnRequest: true } } });
+        replyPolicy: { conciseByDefault: true, requestedWorkUnabridged: true, fullTextVisible: true } } });
     const toolRuntime = taskRuntime;
     onStatus('正在回复…');
     const result = await execute({ session, userMessage: input.instruction, instruction: input.instruction, route: 'chat' }, settings, preparedImages, { signal, toolRuntime, onDelta });
@@ -248,27 +249,12 @@ export function capturePreviewReference(batch) {
     instruction: '人工预览原文已保留，prepare_capture复用这份实际预览，再read_capture按需读取正文；此处只是索引。' };
 }
 export function captureContextReferences(records) {
-  function reference(value) {
-    if (Array.isArray(value)) return value.map(reference);
-    if (!value || typeof value !== 'object') return value;
-    const output = {};
-    for (const [key, item] of Object.entries(value)) {
-      if (['content', 'contentText', 'contentHtml', 'originalPrompt', 'text', 'html'].includes(key) && typeof item === 'string') {
-        output[key + 'Characters'] = item.length; continue;
-      }
-      if (['textBlocks', 'articleDocument', 'codePreview', 'initialBatch'].includes(key)) {
-        output[key + 'Retained'] = Boolean(item); continue;
-      }
-      output[key] = reference(item);
-    }
-    return output;
-  }
-  return records.map(record => {
+  return agentContextReferences(records).map((record, index) => {
     if (!['read_capture','prepare_capture','update_capture','save_capture'].includes(record.name)) return record;
-    const args = reference(record.args);
-    return { ...record, args, data: { ...reference(record.data), historical: true,
+    const args = record.args;
+    return { ...record, data: { ...record.data, historical: true,
       readAgain: record.name === 'read_capture' ? args : { captureId: record.data?.captureId || record.args?.captureId, part: 'summary' },
-      previouslyReturnedCharacters: record.data?.content?.length || 0 } };
+      previouslyReturnedCharacters: records[index].data?.content?.length || 0 } };
   });
 }
 

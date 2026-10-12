@@ -80,8 +80,17 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     for (;;) {
       signal.throwIfAborted();
       if (!pendingCalls.length) {
-        if (requestCount - segmentStart >= budget.maxRequests) stop("本轮已达到模型请求预算；已保留任务进度，可继续本轮");
-        if (budget.maxTotalTokens && usageKnown && usage.totalTokens - segmentTokens >= budget.maxTotalTokens) stop("本轮已达到累计模型工作预算；已保留任务进度，可继续本轮");
+        const requestsExhausted = requestCount - segmentStart >= budget.maxRequests;
+        const tokensExhausted = budget.maxTotalTokens && usageKnown && usage.totalTokens - segmentTokens >= budget.maxTotalTokens;
+        if (requestsExhausted || tokensExhausted) {
+          const decision = await runtime.finishTurn?.({ atBudget: true, toolCalls, requestCount });
+          if (decision?.action === 'respond' && decision.completed) {
+            await runtime.retainSkillVersions?.([...retainedSkillVersionIds]); await runtime.clearContinuation?.();
+            onDelta(decision.content, decision.content);
+            return { content: decision.content, finishReason: 'completed', usage, usageKnown, requestCount, outputItems: [] };
+          }
+          stop(requestsExhausted ? "本轮已达到模型请求预算；已保留任务进度，可继续本轮" : "本轮已达到累计模型工作预算；已保留任务进度，可继续本轮");
+        }
         if (workingBytes(current) > budget.workingBytes) stop("本轮工具内容已达到运行内存预算；完整内容及任务进度保留");
         // Explicit destination context limits are independent of the finite
         // execution budget. Never silently remove input or tool output.

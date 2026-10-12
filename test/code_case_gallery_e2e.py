@@ -13,7 +13,9 @@ def main():
         source='Original CSS and React remain intact.\n\n```promptdirector-preview-html\n'+html+'\n```'
         entries=[{'id':f'code-{i}','title':f'Tab Pill {i}','text':source,'mediaAssets':[],'classification':{'pathIds':['content:code-case'],'status':'confirmed'},'sourceFacts':{'codePreviewAvailable':True}} for i in range(50)]
         entries[1]['classification']={'pathIds':['content:reference'],'status':'confirmed'};entries[1]['sourceFacts']={}
-        run.seed_storage(panel,{'entries':entries})
+        run.seed_storage(panel,{'entries':entries,'organizerState':{'version':1,'collections':[
+            {'id':'code-parent','name':'Code project','entryIds':[],'order':0,'visibility':'library'},
+            {'id':'code-child','name':'Code child','parentId':'code-parent','entryIds':['code-10'],'order':0,'visibility':'library'}]}})
         library=run.open_page('library.html')
         card=library.locator('.case-card[data-entry-id="code-0"]')
         expect(card).to_be_visible();library.screenshot(path=str(out/'baseline.png'))
@@ -21,6 +23,11 @@ def main():
         expect(frame).to_be_visible(timeout=6000)
         expect(frame).to_have_attribute('data-preview-ready','true')
         expect(library.locator('.case-card[data-entry-id="code-1"] .code-case-frame')).to_have_attribute('data-preview-ready','true')
+        library.locator('.project-row[data-collection-id="code-parent"] .project-disclosure').click()
+        library.locator('.project-row[data-collection-id="code-child"] .project-filter').click()
+        expect(library.locator('.case-card[data-entry-id="code-10"] .code-case-frame')).to_have_attribute('data-preview-ready','true')
+        library.locator('#workspace-library').click()
+        expect(frame).to_have_attribute('data-preview-ready','true')
         demo=card.frame_locator('.code-case-frame').frame_locator('#preview')
         actual=bool(os.environ.get('PD_CODE_GALLERY_HTML'))
         if actual:
@@ -89,5 +96,5 @@ def main():
         expected_errors=list(run.page_errors)
         assert expected_errors and all(error.endswith(': fixture preview failure') for error in expected_errors),expected_errors
         run.page_errors.clear() # Only the explicitly injected sandbox failures are expected here.
-        print(json.dumps({'liveGalleryCode':True,'interactionOnCard':True,'listPreviewAndNavigation':True,'selectionPreserved':True,'visibleOnlyRuntime':True,'detailPauseAndReturn':True,'virtualRecycle':True,'sourceUnchanged':True,'truthfulPreviewFailure':True,'expectedSandboxErrors':expected_errors,'paidRequests':0,'pageErrors':run.page_errors}))
+        print(json.dumps({'liveGalleryCode':True,'interactionOnCard':True,'projectRoundTripWithoutReload':True,'listPreviewAndNavigation':True,'selectionPreserved':True,'visibleOnlyRuntime':True,'detailPauseAndReturn':True,'virtualRecycle':True,'sourceUnchanged':True,'truthfulPreviewFailure':True,'expectedSandboxErrors':expected_errors,'paidRequests':0,'pageErrors':run.page_errors}))
 if __name__=='__main__':main()

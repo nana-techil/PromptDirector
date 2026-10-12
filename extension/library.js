@@ -333,7 +333,8 @@ const cardVideoPreviews = new WeakMap();
 const cardCodePreviews = new WeakMap();
 function releaseCardPreviews(card) {
   cardVideoPreviews.get(card)?.stop();
-  cardCodePreviews.get(card)?.dispose();
+  const preview = cardCodePreviews.get(card);
+  if (preview) { preview.dispose(); caseCardCache.delete(card.dataset.entryId); }
 }
 let galleryMasonry = createVirtualGallery(elements.caseList, {
   mode: () => uiPreferences.galleryView,
