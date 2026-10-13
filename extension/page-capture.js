@@ -131,6 +131,7 @@ export function combinePageCaptureCandidates(values = [], options = {}) {
   if (!candidates.length) return null;
   const canonicalUrl = safeUrl(options.canonicalUrl) || candidates[0].canonicalUrl;
   const title = clean(options.title) || candidates[0].title;
+  if (candidates.length === 1) return normalizePageCaptureCandidate({ ...candidates[0], canonicalUrl, title });
   const ordered = candidates.map((candidate, index) => ({ candidate, index }));
   const textBlocks = ordered.flatMap(({ candidate, index }) => {
     const text = [candidate.title, candidate.contentText].filter(Boolean).join("\n");
@@ -144,7 +145,8 @@ export function combinePageCaptureCandidates(values = [], options = {}) {
   });
   const articleBlocks = ordered.flatMap(({ candidate, index }) => {
     const documentValue = normalizeArticleDocument(candidate.articleDocument);
-    const blocks = documentValue?.blocks || [];
+    const blocks = documentValue?.blocks || (candidate.contentText
+      ? [{ id: 'body', kind: 'paragraph', mimeType: 'text/markdown', text: candidate.contentText }] : []);
     return [
       { id: `combined:${index}:title`, kind: "heading", level: 2, text: candidate.title, sourceOrder: 0 },
       ...blocks.map((block) => ({ ...block, id: `combined:${index}:${block.id}`,

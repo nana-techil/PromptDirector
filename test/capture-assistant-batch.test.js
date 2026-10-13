@@ -4,7 +4,7 @@ import { runCaptureAssistant } from '../extension/capture-assistant.js';
 import { createAgentContextRuntime } from '../extension/agent-runtime-context.js';
 import { runComposerToolLoop } from '../extension/composer-tool-loop.js';
 
-test('one native assistant task saves separate previews and accepts all verified source receipts',async()=>{
+for (const interrupted of [false,true]) for (const lastDuplicate of [false,true]) test(`separate batch receipts retain earlier saves when the last item is ${lastDuplicate?'already present':'new'} and completion is ${interrupted?'interrupted':'normal'}`,async()=>{
  let state={},requests=0,created=0;const previews=new Map(),saved=[];
  const durable=createAgentContextRuntime({turnId:'batch-user',load:async()=>state,update:async transform=>{state=transform(state);}});
  const tool=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
@@ -31,15 +31,17 @@ test('one native assistant task saves separate previews and accepts all verified
    if(name==='read_capture')return args.part==='source'?{captureId:args.captureId,selector:args.selector,content:'x'.repeat(20),totalCharacters:20,revision:1,nextOffset:null}:preview;
    if(name==='update_capture'){preview.revision=2;preview.selections=args.selections;return{state:'completed',result:preview};}
    assert.equal(name,'save_capture');assert.equal(args.project,'real-project');preview.state='completed';saved.push(preview.captureId);
-   return{state:'completed',result:{ok:true,captureId:preview.captureId,results:[{status:'saved',entryId:'saved-'+created,candidateId:'effect-'+created,originalVerification:{status:'verified',sources:preview.candidates[0].textSources}}]}};
+   return{state:'completed',result:{ok:true,captureId:preview.captureId,results:[{status:lastDuplicate&&created===2?'duplicate':'saved',entryId:'saved-'+created,candidateId:'effect-'+created,originalVerification:{status:'verified',sources:preview.candidates[0].textSources}}]}};
   },
   execute:async(_request,_settings,_images,{toolRuntime})=>{
    const out=await runComposerToolLoop({protocol:'chat_completions',body:{model:'fixture',messages:[{role:'user',content:'Save separate effects'}]},runtime:toolRuntime,request:async()=>{
     assert(requests<batches.length,'all verified cases must finish without an extra model continuation');
-    const calls=batches[requests++];return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:calls.length?'':'Saved two effects.',...(calls.length?{tool_calls:calls}:{})}}]}));
+    const calls=batches[requests++];if(interrupted&&!calls.length)throw new Error('provider interrupted after saving');return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:calls.length?'':'Saved two effects.',...(calls.length?{tool_calls:calls}:{})}}]}));
    }});return{text:out.content,usage:out.usage};
   }
  });
- assert.equal(result.ok,true,result.message+' '+JSON.stringify(result.diagnostic?.task)+' '+JSON.stringify(result.diagnostic?.toolCalls.map(c=>({name:c.name,result:c.result?.data}))));assert.equal(result.taskState,'completed');assert.deepEqual(saved,['preview-1','preview-2']);
- assert.equal(result.diagnostic.task.pending.length,0);assert.equal(requests,batches.length);
+ assert.equal(result.ok,!interrupted,result.message);assert.deepEqual(saved,['preview-1','preview-2']);
+ assert.equal(result.saveResult.results.length,2);assert.equal(result.saveResult.results[0].status,'saved');assert.equal(requests,batches.length);
+ if(interrupted)assert.match(result.message,/provider interrupted/);
+ else {assert.equal(result.taskState,'completed');assert.equal(result.text,lastDuplicate?'已保存 1 项，已有 1 项。':'已保存 2 项，已有 0 项。');assert.equal(result.diagnostic.task.pending.length,0);}
 });

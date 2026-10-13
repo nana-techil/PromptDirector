@@ -44,7 +44,7 @@ test('multiple source tabs share one revision and save every frozen original eve
   const sources=['css','react','prompt'].map(selector=>({ok:true,url:'https://example.test/work',selector,text:'Complete '+selector+' original',format:'code'}));
   f.options.chromeApi.scripting.executeScript=async()=>[{result:{ok:true,url:'https://example.test/work',sources}}];
   const read=await f.api.read({captureId:'preview',expectedRevision:1,part:'source',selectors:['css','react','prompt'],length:3});
-  assert.equal(read.revision,2);assert(read.sources.every(source=>source.content.length===1&&source.nextOffset===1));
+  assert.equal(read.revision,1);assert(read.sources.every(source=>source.content.length===1&&source.nextOffset===1));
   const selected=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:read.revision,
     candidates:[{id:'original',title:'Original',canonicalUrl:'https://example.test/work',contentText:'',media:[],textSources:sources.map(source=>({selector:source.selector,target:'prompt'}))}],
     selections:[{candidateId:'original',includeText:true,selectedMediaIds:[]}]},'all-tabs',f.scope);
@@ -348,4 +348,22 @@ test('real code capture cannot report success while a model paraphrases frozen o
  const result=await f.api.read({captureId:'preview',part:'candidate',candidateId:'module',expectedRevision:updated.revision});
  assert(JSON.parse(result.content).contentText.includes(source.content));
  assert(!JSON.parse(result.content).contentText.includes(patch.contentText));
+});
+
+test('independent source reads in one model call do not invalidate each other; changed originals still invalidate stale writes', async () => {
+  const f = fixture();
+  await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  let suffix = 'original';
+  f.options.chromeApi.scripting.executeScript = async ({ args }) => [{ result: {
+    ok: true, url: 'https://example.test/work', selector: args[0], text: args[0] + suffix, completeness: 'complete'
+  } }];
+  for (const selector of ['#first', '#second', '#third']) {
+    const source = await f.api.read({ captureId: 'preview', part: 'source', selector, expectedRevision: 1 });
+    assert.equal(source.revision, 1, 'caching another source is not a preview edit');
+  }
+  suffix = 'changed';
+  const changed = await f.api.read({ captureId: 'preview', part: 'source', selector: '#first', expectedRevision: 1 });
+  assert.equal(changed.revision, 2, 'replacing a previously observed original requires a fresh write revision');
+  await assert.rejects(f.api.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: selected }, 'stale', f.scope), { code: 'capture_changed' });
+  assert.equal((await f.api.read({ captureId: 'preview', part: 'source', selector: '#third', expectedRevision: 2, offset: 1 })).content, '#thirdoriginal'.slice(1));
 });

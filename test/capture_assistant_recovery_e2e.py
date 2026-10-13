@@ -47,6 +47,7 @@ globalThis.recoveryAssistant=recoveryAssistant;globalThis.recoveryLoop=recoveryL
                 page.close()
                 page = run.context.new_page()
                 page.goto(url)
+                page.add_style_tag(content='body { background: rgb(15, 15, 15); color: rgb(232, 232, 232); }')
                 current = panel.evaluate('async url=>(await chrome.tabs.query({})).find(t=>t.url===url).id', url)
                 proof = worker.evaluate('''async ({url,current,old}) => {
                   const runCaptureAssistant=globalThis.recoveryAssistant;
@@ -74,9 +75,9 @@ globalThis.recoveryAssistant=recoveryAssistant;globalThis.recoveryLoop=recoveryL
                           else if(stage===2){fresh=data;expect(fresh.captureId!==old.captureId&&fresh.tabId===current,'stale preview reused');calls.push(call('read_capture',{captureId:fresh.captureId,part:'modules'}));}
                           else if(stage===3){expect(data.inventoryProgress?.complete&&data.inventoryProgress.read===3,'directory completion was not exposed');calls.push(call('read_capture',{captureId:fresh.captureId,part:'modules'}));}
                           else if(stage===4){const feedback=JSON.parse(body.messages.at(-1).content);expect(feedback.runtimeFeedback?.status==='unchanged_tool_results','no corrective feedback before stop');calls.push(call('read_capture',{captureId:fresh.captureId,part:'source',selectors:['#effect-1 pre[data-lang="CSS"]','#effect-1 pre[data-lang="Prompt"]']}));}
-                          else if(stage===5){source=data;calls.push(call('update_capture',{requestId:'select',captureId:fresh.captureId,expectedRevision:data.revision,candidates:[{id:'effect-1',title:'Effect 1',canonicalUrl:url,textSources:data.sources.map(s=>({selector:s.selector,target:'text'})),codePreview:{html:'<button onclick="this.textContent=String(Number(this.textContent)+1)">0</button>'}}],selections:[{candidateId:'effect-1',includeText:true,selectedMediaIds:[]}]}));}
-                          else if(stage===6){selected=data;expect(data.ok===true,'update must follow new capture identity');calls.push(call('save_capture',{requestId:'save',captureId:fresh.captureId,expectedRevision:data.revision,contentTypeId:'content:code-case'}));}
-                          else if(stage===7){expect(data.results?.[0]?.status==='saved','real save receipt required');}
+                          else if(stage===5){source=data;expect(source.appearance?.page?.body?.['background-color']==='rgb(15, 15, 15)','source background was guessed or omitted');calls.push(call('update_capture',{requestId:'select',captureId:fresh.captureId,expectedRevision:data.revision,candidates:[{id:'effect-1',title:'Effect 1',canonicalUrl:url,textSources:data.sources.map(s=>({selector:s.selector,target:'text'})),codePreview:{html:'<button onclick="this.textContent=String(Number(this.textContent)+1)">0</button>'}}],selections:[{candidateId:'effect-1',includeText:true,selectedMediaIds:[]}]}));}
+                          else if(stage===6){selected=data;expect(data.ok===true,'update must follow new capture identity');calls.push(call('save_capture',{requestId:'save',captureId:fresh.captureId,expectedRevision:data.revision,contentTypeId:'content:code-case',saveMode:'combined'}));}
+                          else if(stage===7){expect(data.results?.[0]?.status==='saved','real save receipt required');expect(data.results[0].originalVerification?.status==='verified','combined save lost original code');}
                           else throw new Error('recovery did not finish');
                           stage++;
                           return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:calls.length?'':'Saved.',...(calls.length?{tool_calls:calls}:{})}}]}));
@@ -96,7 +97,7 @@ globalThis.recoveryAssistant=recoveryAssistant;globalThis.recoveryLoop=recoveryL
                 assert all(s['content'] in entry['text'] for s in proof['source']['sources'])
                 assert 'promptdirector-preview-html' in entry['text']
                 print(json.dumps({'saved': 1, 'fullSources': 2, 'closedTabReplaced': True, 'oldDraftRetained': proof['oldRetained'],
-                                  'taskCompleted': True, 'directoryProgressAndRecoveryFeedback': True, 'scriptedProviderRequests': proof['providerRequests'], 'paidApiCalls': 0, 'realLibraryWrites': 0}))
+                                  'taskCompleted': True, 'directoryProgressAndRecoveryFeedback': True, 'combinedCodeOriginalsVerified': True, 'sourceAppearanceObserved': True, 'scriptedProviderRequests': proof['providerRequests'], 'paidApiCalls': 0, 'realLibraryWrites': 0}))
     finally:
         server.shutdown()
 

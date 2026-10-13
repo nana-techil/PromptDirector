@@ -175,27 +175,36 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (!input.offset) {
           await permission(record.batch.sourceUrl);
           if ((await chromeApi.tabs.get(record.batch.tabId)).url !== record.batch.sourceUrl) throw agentError('page_changed', '采集网页已改变，未读取原文');
-          const [observed] = await chromeApi.scripting.executeScript({ target: { tabId: record.batch.tabId }, func: readCaptureSource, args: [input.selectors || input.selector] });
+          const requestedSelectors = input.selectors || [input.selector];
+          const modules = (record.moduleInventory || []).filter(module => module.selector === input.selector
+            || module.sources?.some(source => requestedSelectors.includes(source.selector))).map(module => module.selector);
+          const [observed] = await chromeApi.scripting.executeScript({ target: { tabId: record.batch.tabId }, func: readCaptureSource, args: [input.selectors || input.selector, modules] });
           if (!observed?.result?.ok) throw agentError('capture_page_unavailable', observed?.result?.message || '指定区域原文未取得');
           if (observed.result.url !== record.batch.sourceUrl || (await chromeApi.tabs.get(record.batch.tabId)).url !== record.batch.sourceUrl) throw agentError('page_changed', '读取期间网页已改变');
           record.sources ||= {};
-          let changed = false;
-          for (const source of observed.result.sources || [observed.result]) {
-            if (JSON.stringify(record.sources[source.selector || input.selector]) === JSON.stringify(source)) continue;
+          let changed = false, replaced = false;
+          for (const value of observed.result.sources || [observed.result]) {
+            const source = { ...value, ...(observed.result.appearance ? { appearance: observed.result.appearance } : {}) };
+            const previous = record.sources[source.selector || input.selector];
+            if (JSON.stringify(previous) === JSON.stringify(source)) continue;
+            if (previous && ['text', 'url', 'format', 'completeness'].some(key => previous[key] !== source[key])) replaced = true;
             record.sources[source.selector || input.selector] = source; changed = true;
           }
-          if (changed) { record.revision++; await persist(record); }
+          // Reading an additional independent source does not edit the preview.
+          // Replacing a frozen original still invalidates stale selections.
+          if (replaced) record.revision++;
+          if (changed) await persist(record);
         }
         if (input.selectors) {
           const perSource = Math.max(1, Math.floor(length / input.selectors.length));
-          return { captureId: record.id, revision: record.revision, part, sourceUrl: record.batch.sourceUrl,
+          return { captureId: record.id, revision: record.revision, part, sourceUrl: record.batch.sourceUrl, appearance: record.sources[input.selectors[0]]?.appearance,
             sources: input.selectors.map(selector => { const source = record.sources[selector];
               return { selector, content: source.text.slice(0, perSource), totalCharacters: source.text.length,
                 nextOffset: source.text.length > perSource ? perSource : null }; }), untrustedContent: true };
         }
         const source = record.sources?.[input.selector];
         if (!source) throw agentError('capture_source_required', '请先读取这段实际原文');
-        return { captureId: record.id, revision: record.revision, part, selector: input.selector, sourceUrl: source.url,
+        return { captureId: record.id, revision: record.revision, part, selector: input.selector, sourceUrl: source.url, appearance: source.appearance,
           content: source.text.slice(offset, offset + length), offset, totalCharacters: source.text.length,
           nextOffset: offset + length < source.text.length ? offset + length : null, completeness: source.completeness || 'unverified', untrustedContent: true };
       }
@@ -593,7 +602,17 @@ export function readCapturePageContext(query = '', includeHidden = false, select
     untrustedContent: true };
 }
 
-export function readCaptureSource(selector) {
+export function readCaptureSource(selector, moduleSelectors = []) {
+  const style = element => {
+    const computed = getComputedStyle(element);
+    return Object.fromEntries(['background-color', 'background-image', 'color', 'font-family', 'border-radius']
+      .map(name => [name, computed.getPropertyValue(name)]));
+  };
+  const appearance = { page: { html: style(document.documentElement), body: style(document.body) },
+    modules: moduleSelectors.flatMap(selector => {
+      const element = document.querySelector(selector);
+      return element ? [{ selector, style: style(element) }] : [];
+    }) };
   function read(selector) {
   let element;
   try { element = document.querySelector(selector); }
@@ -610,10 +629,10 @@ export function readCaptureSource(selector) {
   return { ok: true, url: location.href, selector, text: clone.textContent, completeness: truncated ? 'partial' : 'complete',
     format: element.matches('pre,code') ? 'code' : 'text', untrustedContent: true };
   }
-  if (!Array.isArray(selector)) return read(selector);
+  if (!Array.isArray(selector)) return { ...read(selector), appearance };
   const sources = selector.map(read);
   const failed = sources.find(source => !source.ok);
-  return failed || { ok: true, url: location.href, sources, untrustedContent: true };
+  return failed || { ok: true, url: location.href, sources, appearance, untrustedContent: true };
 }
 
 function sourceMaterialText(source) {

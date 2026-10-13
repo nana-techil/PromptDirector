@@ -248,14 +248,19 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     const toolRuntime = taskRuntime;
     onStatus('正在回复…');
     const result = await execute({ session, userMessage: input.instruction, instruction: input.instruction, route: 'chat' }, settings, preparedImages, { signal, toolRuntime, onDelta });
-    saveResult ||= taskRuntime.observations.findLast(record => record.name === 'save_capture' && record.data?.results?.length)?.data;
+    saveResult = aggregateCaptureSaves(taskRuntime.observations, saveResult);
     // The save receipt, not a model's explanation, determines the final result.
     const unresolved = ['blocked','waiting'].includes(taskRuntime.task?.state);
     const saved = !unresolved && saveResult?.results?.length && saveResult.results.every(item => item.status === 'saved' && item.entryId);
     const english = /^en/iu.test(input.locale || '') && !/\p{Script=Han}/u.test(input.instruction || '');
     const codeEdited = diagnostic.toolCalls.some(call => call.name === 'edit_case' && call.result?.data?.ok
       && call.result.data.codePreviewVerification?.status === 'saved');
-    const reply = unresolved ? taskRuntime.task.reason : saved ? (english ? 'Saved.' : '已保存。') : saveResult?.results?.length
+    const savedCount = saveResult?.results?.filter(item => item.status === 'saved').length || 0;
+    const duplicateCount = saveResult?.results?.filter(item => item.status === 'duplicate').length || 0;
+    const verifiedBatch = saveResult?.results?.length > 1 && savedCount + duplicateCount === saveResult.results.length;
+    const reply = unresolved ? taskRuntime.task.reason : verifiedBatch
+      ? (english ? `Saved ${savedCount}; already in the library: ${duplicateCount}.` : `已保存 ${savedCount} 项，已有 ${duplicateCount} 项。`)
+      : saved ? (english ? 'Saved.' : '已保存。') : saveResult?.results?.length
       ? (saveResult.results.every(item => item.status === 'duplicate') ? (english ? 'Already in the library; no new captured content.' : '已有案例，未新增采集内容。')
         : (english ? 'Partially saved. See the result for missing content.' : '已部分保存，请查看缺失原因。'))
       : codeEdited ? (english ? 'Preview saved. Open the case to view it.' : '交互预览已保存，请打开案例查看。') : result.text;
@@ -264,6 +269,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
       ...(saveResult ? { saveResult } : {}), text: reply, model: result.model || aiProfile.model, usage: result.usage, instruction: input.instruction,
       diagnostic: { ...diagnostic, task: taskRuntime.task, modelReply: result.text, model: result.model || aiProfile.model, usage: result.usage, finishedAt: new Date().toISOString() } };
   } catch (error) {
+    saveResult = aggregateCaptureSaves(taskRuntime?.observations, saveResult);
     return { ok: false, ...(preview ? { captureId: preview.captureId, revision: preview.revision } : {}), ...(saveResult ? { saveResult } : {}),
       message: signal.aborted ? signal.reason?.message || '采集助手已停止，已有预览保留' : error.message,
       diagnostic: { ...diagnostic, task: taskRuntime?.task, ...(error.checkpoint ? { interruptedTools: captureDiagnosticValue({ requestCount: error.checkpoint.requestCount, usage: error.checkpoint.usageKnown ? error.checkpoint.usage : null, pendingCalls: error.checkpoint.pendingCalls, uncertainCallId: error.checkpoint.uncertainCallId }) } : {}), finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message } } };
@@ -308,4 +314,17 @@ export function captureSourceSelectionCheck(calls, preview, task) {
           && receipt.originalVerification?.status === 'verified' && receipt.originalVerification.sources?.some(binding =>
             binding.selector === source.selector && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'))));
   if (missing.length) return { revision: preview?.revision, missing: [...new Set(missing.map(source => source.selector))] };
+}
+
+function aggregateCaptureSaves(observations = [], fallback) {
+  const receipts = observations.filter(record => record.name === 'save_capture' && record.data?.results?.length);
+  if (!receipts.length) return fallback;
+  const results = new Map();
+  for (const receipt of receipts) for (const item of receipt.data.results) {
+    const key = item.entryId || `${receipt.data.captureId}:${item.candidateId}`;
+    // A later duplicate is not another save and must not erase a committed
+    // success. A repaired partial uses its newer receipt.
+    if (item.status !== 'duplicate' || results.get(key)?.status !== 'saved') results.set(key, item);
+  }
+  return { ...receipts.at(-1).data, results: [...results.values()] };
 }
