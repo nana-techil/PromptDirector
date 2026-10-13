@@ -187,6 +187,13 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
         try { validate(AGENT_CONTEXT_READ_SPEC.parameters, args, name); } catch (error) { return fail('context_reference_invalid', error.message); }
         result = { data: readAgentToolResult(await runtime.loadContext(), args) };
       } else result = await runtime.execute(name, args, call);
+      if (task && name === 'prepare_capture' && result.data?.ok !== false && result.data?.replacesCaptureId && result.data?.captureId) {
+        // The capture service refreshed this same source, not a different user
+        // target. Plans follow the new handle; old drafts and receipts remain.
+        task.steps = task.steps.map(step => ['read_capture', 'update_capture', 'save_capture'].includes(step.operation)
+          && step.targetId === result.data.replacesCaptureId ? { ...step, targetId: result.data.captureId } : step);
+        await recordState(task.state);
+      }
       const observation = { callId: call.callId, name, args, data: result.data };
       observations.push(observation); observeRecord(observation);
       return result;

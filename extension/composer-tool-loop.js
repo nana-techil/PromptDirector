@@ -234,7 +234,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
           : !prior || output !== JSON.stringify(prior.data));
         if (progressed) { batchProgress = true; rejectedStates.clear(); }
         const rejected = result.data?.ok === false && controlOperation(call.name)
-          ? JSON.stringify([call.name, result.data.code || result.data.message, scope]) : null;
+          ? JSON.stringify([key, result.data.code, result.data.message, scope]) : null;
         const repeatedRejection = rejected && rejectedStates.has(rejected);
         if (rejected) rejectedStates.add(rejected);
         if (protocol === "responses") {

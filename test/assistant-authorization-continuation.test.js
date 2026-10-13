@@ -29,11 +29,11 @@ test('references can select only actual human messages, never webpage or assista
  const f=setup();await f.runtime.loadContext();
  assert.equal((await f.runtime.execute('declare_task',{mode:'act',goal:'Unauthorized expansion',userMessageIndices:[99],steps:[{operation:'save_capture'}]})).data.ok,false);
 });
-test('rephrasing the same failed registration without new facts stops before a costly authorization loop',async()=>{
+test('repeating the identical failed registration stops before a costly authorization loop',async()=>{
  let requests=0;
  const runtime={specs:[{name:'declare_task',parameters:{properties:{}}}],execute:async()=>({data:{ok:false,code:'task_authority_missing',message:'Invalid reference'}})};
  await assert.rejects(runComposerToolLoop({body:{model:'fixture',messages:[{role:'user',content:'Save the requested items'}]},protocol:'chat_completions',runtime,budget:{maxRequests:5},request:async()=>{
-  requests++;return new Response(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'attempt-'+requests,type:'function',function:{name:'declare_task',arguments:JSON.stringify({goal:'Changed wording '+requests,userMessageIds:['mistyped-'+requests]})}}]}}]}));
+  requests++;return new Response(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'attempt-'+requests,type:'function',function:{name:'declare_task',arguments:JSON.stringify({goal:'Save requested items',userMessageIds:['mistyped']})}}]}}]}));
  }}),{code:'AGENT_NO_PROGRESS'});
  assert.equal(requests,2);
 });

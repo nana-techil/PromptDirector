@@ -23,7 +23,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
   const service = composerLibraryToolService(session, settings.ai, settings.vision);
   if (!service.nativeTools) throw agentError('capture_tools_unsupported', '当前模型不支持采集工具调用，请在设置中选择支持工具的模型');
   const hasPage = Number.isInteger(input.tabId) && /^https?:/iu.test(input.sourceUrl || '');
-  let preview = null, saveResult = null, taskRuntime;
+  let preview = null, saveResult = null, taskRuntime, previewReadFailed = false;
   const attachments = input.attachments || [];
   const attachmentIds = new Set([...attachments, ...(input.messages || []).filter(message => message.role === 'user').flatMap(message => message.attachments || [])].map(item => item.transferId));
   const captureFileIds = new Set([...attachmentIds, ...(input.initialBatch?.candidates || []).flatMap(candidate => candidate.media || []).map(media => media.localTransferId).filter(Boolean)]);
@@ -58,14 +58,23 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
   }
   async function prepare(args = {}) {
     if (!hasPage && !args.url && args.tabId === undefined) throw agentError('capture_page_required', '采集需要打开目标网页，聊天和案例库操作可以继续');
-    if (preview?.state === 'preview' && (!args.url || args.url === preview.sourceUrl)) return preview;
+    const targetTab = args.tabId ?? (!args.url ? input.tabId : undefined);
+    const sameTarget = (!args.url || args.url === preview?.sourceUrl)
+      && (targetTab === undefined || targetTab === preview?.tabId);
+    if (preview?.state === 'preview' && sameTarget && !previewReadFailed && !args.selector) return preview;
+    const previous = preview;
     // A type choice belongs to the supplied preview, not to an unrelated
     // capture prepared later in this conversation. Project choice persists.
     input = { ...input, captureMetadata: { ...input.captureMetadata, contentTypeId: '', contentTypeExplicit: false } };
     onStatus('正在读取网页…');
-    return remember(await completed('prepare_capture', { requestId: crypto.randomUUID(), ...(args.url ? { url: args.url } : { tabId: args.tabId ?? input.tabId }), mode: args.mode || 'loaded',
+    const data = await completed('prepare_capture', { requestId: crypto.randomUUID(), ...(args.url ? { url: args.url } : { tabId: args.tabId ?? input.tabId }), mode: args.mode || 'loaded',
       ...(args.selector ? { selector: args.selector } : {}), ...(args.maxCandidates ? { maxCandidates: args.maxCandidates } : {}),
-      ...(!args.url && input.initialBatch ? { initialBatch: input.initialBatch } : {}) }));
+      ...(!previous && !args.url && !args.selector && input.initialBatch?.tabId === targetTab && input.initialBatch?.sourceUrl === input.sourceUrl ? { initialBatch: input.initialBatch } : {}) });
+    // Refresh the live source identity, never overwrite the old draft or its
+    // frozen originals. A plan may follow this receipt to the same webpage.
+    previewReadFailed = false;
+    return { ...remember(data), ...(previous && previous.sourceUrl === data.sourceUrl && !args.selector
+      ? { replacesCaptureId: previous.captureId } : {}) };
   }
   try {
     const preparedImages = [];
@@ -88,6 +97,14 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     const captureTools = {
       ...sessionRuntime,
       loadContext: async () => await sessionRuntime.loadContext?.() || priorContext,
+      recordToolResult: async record => {
+        await sessionRuntime.recordToolResult?.(record);
+        if (record.name === 'assistant_task_state' || diagnostic.toolCalls.some(event => event.callId && event.callId === record.callId)) return;
+        // Schema rejections and reused receipts never enter execute(). Include
+        // those native results as well, so a terminal error has its real cause.
+        diagnostic.toolCalls.push({ callId: record.callId, name: record.name, args: captureDiagnosticValue(record.args),
+          result: { data: captureDiagnosticValue(record.data) }, finishedAt: record.observedAt || new Date().toISOString() });
+      },
       finishTurn: async () => {
         const check = captureSourceSelectionCheck(diagnostic.toolCalls, preview, taskRuntime.task);
         if (check) return { action: 'continue', state: check, message: '完整来源尚未选入当前目标。按实际selector与当前版本补齐textSources，保留原文；不要用摘要替代或宣称完成。' };
@@ -140,8 +157,8 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           }
           if (!hasPage && !preview) throw agentError('capture_page_required', '采集需要打开目标网页，聊天和案例库操作可以继续');
           if (name === 'read_capture' && args.part === 'context') {
-            const tabId = preview?.tabId ?? input.tabId;
-            if (args.tabId !== undefined && args.tabId !== tabId || args.captureId && args.captureId !== preview?.captureId) throw agentError('capture_scope_changed', '只能读取本轮采集网页');
+            const tabId = args.tabId ?? preview?.tabId ?? input.tabId;
+            if (![input.tabId, preview?.tabId].includes(tabId) || args.captureId && (args.captureId !== preview?.captureId || tabId !== preview?.tabId)) throw agentError('capture_scope_changed', '只能读取本轮采集网页');
             return { data: await call(name, { ...args, tabId }) };
           }
           if (name === 'read_capture' && args.part === 'modules' && args.captureId !== preview?.captureId && frozenDirectories.has(args.captureId)) {
@@ -204,16 +221,11 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           throw agentError('unknown_operation', '本轮不支持这个操作');
         } catch (error) {
           if (signal.aborted) throw error;
+          if (name === 'read_capture' && args.captureId === preview?.captureId
+            && ['capture_failed', 'capture_page_unavailable', 'page_changed'].includes(error.code || 'capture_failed')) previewReadFailed = true;
           return { data: { ok: false, code: error.code || 'capture_failed', message: error.message } };
         }
       }
-    };
-    const executeTool = captureTools.execute;
-    captureTools.execute = async (name, args, context) => {
-      const event = { name, args: captureDiagnosticValue(args), startedAt: new Date().toISOString() }; diagnostic.toolCalls.push(event);
-      try { const result = await executeTool(name, args, context); event.result = captureDiagnosticValue(result); return result; }
-      catch (error) { event.error = { code: error.code, message: error.message }; throw error; }
-      finally { event.finishedAt = new Date().toISOString(); }
     };
     taskRuntime = withAssistantTaskRuntime(captureTools, { messages: input.messages,
       instruction: input.instruction, userMessageId: input.userMessageId || sessionRuntime.turnId,
@@ -226,6 +238,13 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           codeCase: { contentTypeId: CONTENT_IDS.codeCase, cardPreview: 'interactive_saved_preview', previewLoads: 'visible_foreground_only', explicitCoverPreserved: true, openDetails: 'title_or_card_keyboard' },
           captureModeSwitch: true, diagnosticsExport: true, closeContinuesWork: true },
         replyPolicy: { conciseByDefault: true, requestedWorkUnabridged: true, fullTextVisible: true } } });
+    const executeTool = taskRuntime.execute;
+    taskRuntime.execute = async (name, args, context) => {
+      const event = { callId: context?.callId, name, args: captureDiagnosticValue(args), startedAt: new Date().toISOString() }; diagnostic.toolCalls.push(event);
+      try { const result = await executeTool(name, args, context); event.result = captureDiagnosticValue(result); return result; }
+      catch (error) { event.error = { code: error.code, message: error.message }; throw error; }
+      finally { event.finishedAt = new Date().toISOString(); }
+    };
     const toolRuntime = taskRuntime;
     onStatus('正在回复…');
     const result = await execute({ session, userMessage: input.instruction, instruction: input.instruction, route: 'chat' }, settings, preparedImages, { signal, toolRuntime, onDelta });
