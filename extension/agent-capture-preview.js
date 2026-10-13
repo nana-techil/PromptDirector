@@ -241,7 +241,11 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (input.tabId !== undefined) requireInteger(input.tabId);
         let tab = input.tabId !== undefined ? await chromeApi.tabs.get(input.tabId) : { url: requireWebUrl(input.url) };
         await permission(tab.url);
-        if (input.url) tab = await waitForAgentTab(chromeApi.tabs, (await chromeApi.tabs.create({ url: tab.url, active: true })).id);
+        if (input.url) {
+          const matches = (await chromeApi.tabs.query({})).filter(item => item.url === tab.url);
+          const existing = matches.find(item => item.id === input.preferredTabId) || matches.find(item => item.active) || matches[0];
+          tab = await waitForAgentTab(chromeApi.tabs, existing?.id ?? (await chromeApi.tabs.create({ url: tab.url, active: false })).id);
+        }
         const url = requireWebUrl(tab.url);
         await permission(url);
         if (input.initialBatch && (input.initialBatch.tabId !== tab.id || input.initialBatch.sourceUrl !== url)) {

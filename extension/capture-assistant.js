@@ -68,6 +68,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     input = { ...input, captureMetadata: { ...input.captureMetadata, contentTypeId: '', contentTypeExplicit: false } };
     onStatus('正在读取网页…');
     const data = await completed('prepare_capture', { requestId: crypto.randomUUID(), ...(args.url ? { url: args.url } : { tabId: args.tabId ?? input.tabId }), mode: args.mode || 'loaded',
+      ...(args.url && args.url === previous?.sourceUrl ? { preferredTabId: previous.tabId } : args.url && args.url === input.sourceUrl ? { preferredTabId: input.tabId } : {}),
       ...(args.selector ? { selector: args.selector } : {}), ...(args.maxCandidates ? { maxCandidates: args.maxCandidates } : {}),
       ...(!previous && !args.url && !args.selector && input.initialBatch?.tabId === targetTab && input.initialBatch?.sourceUrl === input.sourceUrl ? { initialBatch: input.initialBatch } : {}) });
     // Refresh the live source identity, never overwrite the old draft or its

@@ -9,7 +9,7 @@ function fixture() {
     remove: async keys => { for (const key of keys) delete data[key]; } };
   const scope = { libraryId, assertCurrent: async () => { if (libraryId !== scope.libraryId) throw Object.assign(new Error('changed'), { code: 'library_changed' }); } };
   const options = { storage, chromeApi: { permissions: { contains: async () => allowed },
-    tabs: { get: async id => ({ id, url, status: 'complete' }) },
+    tabs: { get: async id => ({ id, url, status: 'complete' }), onUpdated: {addListener() {}, removeListener() {}}, onRemoved: {addListener() {}, removeListener() {}} },
     scripting: { executeScript: async () => [{ result: { ok: true, url, text: 'complete observed page', links: [], media: [] } }] } },
     collect: async () => ({ candidates: [{ id: 'original', title: 'Original', canonicalUrl: url, contentText: 'Full original body',
       articleDocument: { version: 1, blocks: [{ id: 'old-paragraph', kind: 'paragraph', text: 'Full original body', sourceOrder: 0 }] },
@@ -19,6 +19,28 @@ function fixture() {
   return { data, commits, options, scope, api: createAgentCapturePreview(options),
     permission: value => { allowed = value; }, navigate: () => { url = 'https://example.test/elsewhere'; }, changeLibrary: () => { libraryId = 'library-b'; } };
 }
+
+test('new batches reuse the same exact webpage without opening or focusing another tab', async () => {
+  const f = fixture(); const url = 'https://example.test/work';
+  f.options.chromeApi.tabs.query = async () => [{ id: 8, url, active: false }, { id: 9, url, active: true }, { id: 10, url: url + '#other', active: true }];
+  f.options.chromeApi.tabs.create = async () => assert.fail('an existing source must not open again');
+  for (const id of ['batch-one', 'batch-two']) {
+    const result = await f.api.execute('prepare_capture', { url }, id, f.scope);
+    assert.equal(result.tabId, 9);
+  }
+  assert.equal((await f.api.execute('prepare_capture', { url, preferredTabId: 8 }, 'pinned-batch', f.scope)).tabId, 8,
+    'an active same-URL tab must not replace the running task source');
+  assert.equal((await f.api.execute('prepare_capture', { url, preferredTabId: 10 }, 'navigated-source', f.scope)).tabId, 9,
+    'a preferred tab which navigated away must not be read as the original page');
+});
+
+test('a closed source opens once while a different URL is never retargeted', async () => {
+  const f = fixture(); const url = 'https://example.test/work'; const created = [];
+  f.options.chromeApi.tabs.query = async () => [{ id: 8, url: url + '/elsewhere' }];
+  f.options.chromeApi.tabs.create = async input => { created.push(input); return { id: 9 }; };
+  assert.equal((await f.api.execute('prepare_capture', { url }, 'reopened', f.scope)).tabId, 9);
+  assert.deepEqual(created, [{ url, active: false }]);
+});
 
 test('source-backed capture stores the full original code even when the model read only a prefix or supplied fabricated code', async () => {
   const f = fixture(); const original = '  export function source() {\n  return "keep actual code";\n}\n' + '// full original\n'.repeat(1000);

@@ -232,8 +232,8 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       if (missing.length) return { action: 'continue', state: missing, message: `当前任务还缺实际成果：${JSON.stringify(missing)}。继续已授权目标或登记有依据的阻塞，不以回复结束代替完成。` };
       const check = await runtime.finishTurn?.(value);
       if (check) return check;
-      // At a resource boundary deliver already verified committed work. Never
-      // renew the budget or infer a finished synthesis from read-only progress.
+      // A generic operation checklist does not prove the whole user's goal.
+      // The shared loop checkpoints actual commit progress at work boundaries.
       if (value.atBudget) return; // An operation checklist is not proof of the whole user's goal.
       await recordState('completed');
     },

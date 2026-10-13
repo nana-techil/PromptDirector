@@ -38,21 +38,11 @@ body.capture-assistant-open .collector-header .product-brand-name { overflow: hi
 .capture-assistant-send { width: 32px; height: 32px; min-height: 32px; padding: 6px; }
 .capture-assistant-status { margin: 0; font-size: 12px; }
 .capture-assistant-status:not(:empty) { margin-top: 8px; }
-.capture-assistant-preview, .capture-assistant-result { border: 1px solid var(--line); border-radius: var(--ui-container-radius); padding: 12px; background: var(--card); font-size: 12px; overflow-wrap: anywhere; }
-.capture-assistant-preview-heading { display: flex; gap: 12px; align-items: flex-start; }
-.capture-assistant-preview-heading > div { min-width: 0; }
-.capture-assistant-preview-heading img { width: 80px; height: 96px; object-fit: cover; border-radius: var(--ui-control-radius); flex: none; }
-.capture-assistant-preview-meta { margin: 6px 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.capture-assistant-result { border: 1px solid var(--line); border-radius: var(--ui-container-radius); padding: 12px; background: var(--card); font-size: 12px; overflow-wrap: anywhere; }
 .capture-assistant-preview-error { font-size: 11px; line-height: 1.6; color: var(--danger); }
 .capture-assistant-original { margin: 12px 0; color: var(--muted); }
 .capture-assistant-original p { white-space: pre-wrap; color: var(--ink); line-height: 1.7; }
 .capture-assistant-original .capture-assistant-preview-error { color: var(--danger); }
-.capture-assistant-save-row { display: flex; gap: 8px; align-items: center; padding-top: 10px; margin-top: 10px; border-top: 1px solid var(--line); }
-.capture-assistant-project { flex: 1; min-width: 0; }
-.capture-assistant-project > .detail-project-popover { width: min(430px, calc(100vw - 28px)); grid-template-rows: auto auto minmax(80px, 1fr) auto; }
-.capture-assistant-save-row > button { flex: none; white-space: nowrap; }
-.capture-assistant-save-settings { display: flex; gap: 8px; margin-top: 10px; }
-.capture-assistant-save-settings > select { flex: 1; min-width: 0; font-size: 11px; }
 .collector-header .capture-assistant-mode-toggle { display: inline-flex; gap: 5px; align-items: center; width: auto; padding: 0 9px; font-size: 11px; white-space: nowrap; }
 .capture-assistant-mode-labels { display: grid; }
 .capture-assistant-mode-labels > span { grid-area: 1 / 1; }

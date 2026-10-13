@@ -1,4 +1,4 @@
-"""Real sidebar component: rapid submits, original disclosures and visible save controls.
+"""Real sidebar component: rapid submits, full replies and drafts kept in Tools.
 Model/task replies are fixtures; shared chat persistence uses the actual background.
 """
 import os
@@ -19,7 +19,7 @@ def main():
           document.querySelector('#capture-assistant-panel').remove();
           document.querySelector('#capture-assistant-new').remove();
           const send = chrome.runtime.sendMessage.bind(chrome.runtime);
-          window.fixture = { starts: 0, saves: 0, draft: {}, batch: null, original: send };
+          window.fixture = { starts: 0, draft: {}, batch: null, original: send };
           chrome.runtime.sendMessage = async message => {
             if(message.type === 'START_CAPTURE_ASSIST') {
               fixture.starts++; await new Promise(resolve => setTimeout(resolve, 100));
@@ -44,11 +44,9 @@ def main():
           const { installCaptureAssistant } = await import('./collector-capture-assistant.js');
           fixture.view = installCaptureAssistant({getBatch:()=>fixture.batch, applyBatch:batch=>fixture.batch=batch,
             isBusy:()=>false,isAutomaticCapturing:()=>Boolean(fixture.scenario),getBatchEditVersion:()=>fixture.editVersion||0,
-            getCollections:()=>[], getDraft:()=>fixture.draft, getMetadata:()=>fixture.draft,
+            getDraft:()=>fixture.draft, getMetadata:()=>fixture.draft,
             changeProject:async patch=>{fixture.draft={...fixture.draft,...patch};return true;},
-            getContentTypes:()=>[{id:'video-prompt',label:'视频提示词'},{id:'code',label:'代码案例'}],getSuggestedType:()=> 'video-prompt',
-            save:async()=>{fixture.saves++;fixture.saved={batch:structuredClone(fixture.batch),draft:structuredClone(fixture.draft)};
-              fixture.batch=null;return {ok:true,results:[{entryId:'saved',status:'saved',title:'Saved fixture'}]};},cancelSave:async()=>{}});
+          });
           await fixture.view.restore();
         }''')
         page.locator('#open-capture-assistant').click()
@@ -68,11 +66,8 @@ def main():
         expect(page.locator('.capture-assistant-user')).to_have_count(1)
         expect(page.locator('.capture-assistant-assistant')).to_have_count(1)
         expect(page.locator('.capture-assistant-chats option:checked')).to_have_text('保存这个案例')
-        summary = page.locator('.capture-assistant-assistant summary')
-        box = summary.bounding_box()
-        page.mouse.click(box['x'] + 3, box['y'] + box['height']/2, delay=140)
-        expect(summary.locator('..')).to_have_attribute('open', '')
-        page.keyboard.press('Escape')
+        expect(page.locator('.capture-assistant-assistant summary')).to_have_count(0)
+        assert page.locator('.capture-assistant-assistant').inner_text().count('A long response.') == 100
         # The ordinary tools and conversation are reachable via the existing toggle.
         assistant_header = page.locator('.collector-header').bounding_box()
         assistant_toggle = page.locator('#open-capture-assistant').bounding_box()
@@ -92,20 +87,14 @@ def main():
             selections:['post','comment'].map(candidateId=>({candidateId,includeText:true,selectedMediaIds:[]}))};
           fixture.view.refresh();
         }''')
-        expect(page.locator('#capture-assistant-content-type')).to_be_visible()
-        page.locator('#capture-assistant-content-type').select_option('code')
-        expect(page.locator('#capture-assistant-save-mode')).to_be_visible()
-        page.locator('#capture-assistant-save-mode').select_option('combined')
-        summary.click()
+        expect(page.locator('.capture-assistant-preview')).to_have_count(0)
         for width in [390, 900]:
             page.set_viewport_size({'width':width,'height':844})
-            page.locator('.capture-assistant-preview').scroll_into_view_if_needed()
-            page.screenshot(path=str(out/f'preview-{width}.png'))
-        page.locator('#capture-assistant-save').click()
-        expect(page.locator('.capture-assistant-result')).to_contain_text('已保存')
-        assert page.evaluate('fixture.saved.draft.contentTypeId') == 'code'
-        assert page.evaluate('fixture.saved.batch.saveMode') == 'combined'
-        assert page.evaluate('fixture.saves') == 1
+            expect(page.locator('#capture-assistant-send')).to_be_in_viewport()
+            page.screenshot(path=str(out/f'chat-with-pending-draft-{width}.png'))
+        page.locator('#open-capture-assistant').click()
+        assert page.evaluate('fixture.batch.selections.length') == 2, 'switching to Tools keeps the manual selections'
+        page.locator('#open-capture-assistant').click()
         page.evaluate('''()=>{
           chrome.tabs.query=async()=>[{id:42,url:'https://example.test/current',title:'Current target'}];
           chrome.tabs.get=async()=>({id:42,url:'https://example.test/current',title:'Current target'});
@@ -139,7 +128,7 @@ def main():
                     expect(page.locator('#open-library')).to_be_in_viewport()
                     page.screenshot(path=str(out/f'header-{locale}-{theme}-{width}-{opened}.png'))
                 page.locator('#open-capture-assistant').click()
-        print('PASS: immediate send gate, one task/message, marker click, mode continuity, visible type and save mode')
+        print('PASS: immediate send gate, one task/message, full reply, mode continuity, pending selection retained')
 
 if __name__ == '__main__':
     main()

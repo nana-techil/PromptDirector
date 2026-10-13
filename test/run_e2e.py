@@ -16,6 +16,8 @@ SCRIPTS = [
     "plugin_assistant_e2e.py",
     "capture_assistant_feedback_e2e.py",
     "capture_assistant_recovery_e2e.py",
+    "capture_assistant_batch_ui_e2e.py",
+    "capture_assistant_long_batch_e2e.py",
     "scroll_content_reachability_e2e.py",
     "capture_current_page_e2e.py",
     "code_case_e2e.py",

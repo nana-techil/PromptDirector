@@ -7,6 +7,82 @@ const call = (id, args) => ({ id, type: 'function', function: { name: 'search_ca
 const body = () => ({ model: 'fixture-model', messages: [{ role: 'user', content: '查询案例' }] });
 const sse = events => new Response(new ReadableStream({ start(controller) { const text = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''); const bytes = new TextEncoder().encode(text); for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i+7)); controller.close(); } }), { headers: { 'content-type': 'text/event-stream' } });
 
+function batchRuntime() {
+  const journal = [], checkpoints = [];
+  const runtime = { turnId: 'batch-turn', task: { mode:'act',state:'active',goal:'Save every requested effect' },
+    specs: ['update_capture','save_capture','read_tool_result'].map(name => ({name,parameters:{type:'object',properties:{},additionalProperties:true}})),
+    loadContext: async () => journal, recordToolResult: async record => journal.push({...structuredClone(record),turnId:'batch-turn'}),
+    saveContinuation: async value => checkpoints.push(structuredClone(value)), clearContinuation: async () => {},
+    execute: async (name,args) => ({data: name === 'save_capture'
+      ? {captureId:args.captureId,state:'completed',results:[{candidateId:args.captureId,entryId:args.captureId,status:'saved'}]}
+      : {captureId:args.captureId}}) };
+  return {runtime,journal,checkpoints};
+}
+
+test('a durable batch crosses the default 100 requests with receipt progress, preserving original journal and cumulative usage', async () => {
+  const {runtime,journal,checkpoints}=batchRuntime(); let count=0;
+  const html='<html>full effect source</html>'.repeat(200);
+  const result=await runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,
+    request: async value => {
+      if(count>2) assert(JSON.stringify(value).length<300000,'completed generated HTML must not grow with every saved batch');
+      const index=count++; const captureId=`effect-${Math.floor(index/2)}`;
+      return chat(index<104?{role:'assistant',tool_calls:[{id:`batch-${index}`,type:'function',function:{name:index%2?'save_capture':'update_capture',arguments:JSON.stringify({captureId,...(index%2?{project:'destination'}:{candidates:[{id:captureId,title:captureId,codePreview:{html}}]})})}}]}:{role:'assistant',content:'Saved all requested effects'},
+        {usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}});
+    }});
+  assert.equal(result.requestCount,105);assert.equal(result.usage.totalTokens,1260);
+  assert.equal(journal.filter(record=>record.name==='save_capture').length,52);
+  assert.equal(journal[0].args.candidates[0].codePreview.html,html);
+  assert.equal(checkpoints.length,1);assert.equal(checkpoints[0].requestCount,100);
+});
+
+test('verified batch progress never overrides an explicit request cap or a cumulative token cap', async () => {
+  for(const budget of [{maxRequests:2},{maxTotalTokens:24}]) {
+    const {runtime}=batchRuntime();let count=0;
+    await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,budget,
+      request:async()=>chat({role:'assistant',tool_calls:[{id:`save-${++count}`,type:'function',function:{name:'save_capture',arguments:JSON.stringify({captureId:`saved-${count}`})}}]}, {usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}})
+    }),{code:'RESOURCE_BUDGET_REACHED'});
+    assert.equal(count,2);
+  }
+});
+
+test('the default tool segment checkpoints between paired calls and keeps pending writes exactly once', async () => {
+  const {runtime,checkpoints}=batchRuntime();let requests=0,writes=0;
+  const execute=runtime.execute;runtime.execute=async(...args)=>{writes++;return execute(...args)};
+  await runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,request:async()=>chat(++requests===1
+    ? {role:'assistant',tool_calls:Array.from({length:501},(_,i)=>({id:`bulk-${i}`,type:'function',function:{name:'save_capture',arguments:JSON.stringify({captureId:`case-${i}`})}}))}
+    : {role:'assistant',content:'done'})});
+  assert.equal(writes,501);assert.equal(requests,2);assert.equal(checkpoints.length,1);
+  assert.deepEqual(checkpoints[0].pendingCalls.map(call=>call.id),['bulk-500']);
+  assert.equal(checkpoints[0].uncertainCallId,'');
+});
+
+test('a failed item does not erase independent successful receipts when continuing a long batch', async () => {
+  const {runtime,checkpoints}=batchRuntime();let count=0;
+  runtime.execute=async(_name,args)=>({data:{ok:false,captureId:args.captureId,state:'preview',results:[
+    {candidateId:'good',entryId:args.captureId,status:'saved'}, {candidateId:'unavailable',status:'failed'}]}});
+  await runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,request:async()=>chat(count++<101
+    ? {role:'assistant',tool_calls:[{id:`partial-${count}`,type:'function',function:{name:'save_capture',arguments:JSON.stringify({captureId:`saved-${count}`})}}]}
+    : {role:'assistant',content:'Successful items kept; unavailable items reported'})});
+  assert.equal(count,102);assert.equal(checkpoints.length,1);
+});
+
+test('a stopped batch cannot auto-resume and repeated existing-case receipts cannot fund endless segments', async () => {
+  const controller=new AbortController();const {runtime}=batchRuntime();const execute=runtime.execute;
+  runtime.execute=async(...args)=>{const result=await execute(...args);controller.abort();return result};
+  let requests=0;
+  await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,signal:controller.signal,
+    request:async()=>{requests++;return chat({role:'assistant',tool_calls:[{id:'stop-save',type:'function',function:{name:'save_capture',arguments:'{"captureId":"saved"}'}}]})}
+  }),{name:'AbortError'});
+  assert.equal(requests,1);
+  const repeated=batchRuntime();let count=0;
+  repeated.runtime.execute=async(_name,args)=>({data:{captureId:args.captureId,state:'completed',results:[{entryId:'same-existing',status:'duplicate'}]}});
+  await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime:repeated.runtime,
+    request:async()=>chat({role:'assistant',tool_calls:[{id:`same-${++count}`,type:'function',function:{name:'save_capture',arguments:JSON.stringify({captureId:`retry-${count}`})}}]})
+  }),{code:'RESOURCE_BUDGET_REACHED'});
+  assert.equal(repeated.checkpoints[0].requestCount,100);
+  assert.equal(count,200,'only first observed result makes progress; changing request handles cannot extend again');
+});
+
 test('varying tool parameters cannot evade a finite default work budget or keep charging forever', async () => {
   let requests = 0;
   await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions',

@@ -3,9 +3,11 @@ import { validate } from './case-operation-specs.js';
 import { readEventStream } from "./event-stream.js";
 import { operationBudget, resourceBudgetError } from "./resource-policy.js";
 import { appendAgentContext, agentContextReferences, stableAgentArguments as stableObject } from './agent-runtime-context.js';
+import { captureSavedEntries, projectCaptureHandoff } from './agent-capture-handoff.js';
 
 export async function runComposerToolLoop({ body, protocol, request, runtime, signal: callerSignal, onDelta = () => {}, maxCharacters, allowImageOutput = false, budget: budgetValue, continuation }) {
-  const budget = operationBudget(budgetValue ?? runtime.budget);
+  const explicitBudget = budgetValue ?? runtime.budget ?? {};
+  const budget = operationBudget(explicitBudget);
   const resumed = continuation ?? await runtime.loadContinuation?.({ model: body.model, protocol });
   if (resumed && (resumed.protocol !== protocol || resumed.body?.model !== body.model)) throw new Error("本轮模型或协议已变化，不能重放旧工具进度");
   const source = resumed?.body ?? body;
@@ -31,6 +33,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   // evict working material after each call: it creates reference reread loops.
   const indexedOutputs = new Map();
   const canIndex = runtime.loadContext && runtime.recordToolResult && specs.some(spec => spec.name === 'read_tool_result');
+  const captureRecords = canIndex ? retainedContext.filter(record => record.turnId === runtime.turnId) : [];
   const indexResult = record => {
     if (!canIndex || record.name === 'read_tool_result') return;
     indexedOutputs.delete(record.callId);
@@ -56,14 +59,15 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   let lastPromptTokens = resumed?.lastPromptTokens;
   let lastRequestBytes = resumed?.lastRequestBytes;
   const modelRequest = () => {
-    const bytes = workingBytes(current);
+    const working = canIndex ? projectCaptureHandoff(current, protocol, captureRecords, runtime.task) : current;
+    const bytes = workingBytes(working);
     const estimate = Number.isFinite(lastPromptTokens) ? lastPromptTokens + Math.max(0, bytes - lastRequestBytes) : bytes;
     const reserve = current.max_tokens || current.max_output_tokens || current.max_completion_tokens || 0;
-    const pressure = maxCharacters && requestCharacters(current) > maxCharacters
+    const pressure = maxCharacters && requestCharacters(working) > maxCharacters
       || runtime.contextLength && estimate + reserve >= runtime.contextLength;
-    if (!pressure) return current;
+    if (!pressure) return working;
     const key = protocol === 'responses' ? 'input' : 'messages';
-    return { ...current, [key]: current[key].map(item => {
+    return { ...working, [key]: working[key].map(item => {
       const id = protocol === 'responses' && item.type === 'function_call_output' ? item.call_id : item.role === 'tool' ? item.tool_call_id : null;
       const output = id && !latestBatch.has(id) && indexedOutputs.get(id);
       return output ? { ...item, [protocol === 'responses' ? 'output' : 'content']: output } : item;
@@ -111,17 +115,39 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   const usage = resumed?.usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
   let usageKnown = resumed?.usageKnown ?? true;
   let requestCount = resumed?.requestCount ?? 0;
-  const segmentStart = requestCount;
+  let segmentStart = requestCount;
   const segmentTokens = usage.totalTokens;
   let toolCalls = 0;
+  let toolSegmentStart = 0;
+  const committedEntries = new Set(captureRecords.flatMap(captureSavedEntries));
+  let segmentProgress = committedEntries.size;
   const finishStates = new Set();
   let pendingCalls = resumed?.pendingCalls ?? [];
   let uncertainCallId = resumed?.uncertainCallId ?? '';
   if (uncertainCallId) throw new Error("上一次工具执行状态未确认，请先核对已保存成果，不能自动重放");
   const deadlineController = new AbortController();
   const signal = callerSignal ? AbortSignal.any([callerSignal, deadlineController.signal]) : deadlineController.signal;
-  const deadline = setTimeout(() => deadlineController.abort(resourceBudgetError("本轮已达到工作时间预算；已保留任务进度，可继续本轮")), budget.maxDurationMs);
+  let deadline;
+  const armDeadline = () => {
+    clearTimeout(deadline);
+    deadline = setTimeout(() => deadlineController.abort(resourceBudgetError("本轮已达到工作时间预算；已保留任务进度，可继续本轮")), budget.maxDurationMs);
+  };
+  armDeadline();
   const stop = message => { throw resourceBudgetError(message, { requestCount, toolCalls, resumable: true }); };
+  const checkpoint = () => ({ protocol, body: current, pendingCalls, uncertainCallId, retainedSkillVersionIds: [...retainedSkillVersionIds],
+    seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, name: value.name, callId: value.callId, terminate: value.terminate, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
+    callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount, lastPromptTokens, lastRequestBytes });
+  const canContinueTask = () => canIndex && runtime.saveContinuation && runtime.task?.mode === 'act' && runtime.task.state === 'active';
+  const continueSegment = async () => {
+    if (!canContinueTask() || committedEntries.size <= segmentProgress) return false;
+    await runtime.saveContinuation(checkpoint());
+    segmentProgress = committedEntries.size;
+    if (!explicitBudget.maxRequests) segmentStart = requestCount;
+    if (!explicitBudget.maxToolCalls) toolSegmentStart = toolCalls;
+    // Usage is cumulative. Explicit token, request, tool and time budgets are
+    // not replenished by a completed transaction or an internal checkpoint.
+    return true;
+  };
   try {
     for (;;) {
       signal.throwIfAborted();
@@ -135,7 +161,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
             onDelta(decision.content, decision.content);
             return { content: decision.content, finishReason: 'completed', usage, usageKnown, requestCount, outputItems: [] };
           }
-          stop(requestsExhausted ? "本轮已达到模型请求预算；已保留任务进度，可继续本轮" : "本轮已达到累计模型工作预算；已保留任务进度，可继续本轮");
+          if (tokensExhausted || explicitBudget.maxRequests || !await continueSegment())
+            stop(tokensExhausted ? "本轮已达到累计模型工作预算；已保留任务进度，可继续本轮" : "本轮已达到模型请求预算；已保留任务进度，可继续本轮");
         }
         if (workingBytes(current) > budget.workingBytes) stop("本轮工具内容已达到运行内存预算；完整内容及任务进度保留");
         // Explicit destination context limits are independent of the finite
@@ -184,7 +211,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
       const unchangedCalls = [];
       while (pendingCalls.length) {
         signal.throwIfAborted();
-        if (toolCalls >= budget.maxToolCalls) stop("本轮已达到工具工作预算；已保留任务进度，可继续本轮");
+        if (toolCalls - toolSegmentStart >= budget.maxToolCalls
+          && (explicitBudget.maxToolCalls || !await continueSegment())) stop("本轮已达到工具工作预算；已保留任务进度，可继续本轮");
         const call = pendingCalls[0];
         if (!call.id || !specs.some(spec => spec.name === call.name)) throw new Error("模型调用了当前不可用的工具");
         if (callIds.has(call.id)) throw new Error("模型重复使用了工具调用编号，已停止本轮");
@@ -218,6 +246,16 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         await runtime.recordToolResult?.({ callId: call.id, name: call.name, args, data: result.data,
           observedAt: new Date().toISOString() });
         indexResult({ callId: call.id, turnId: runtime.turnId, name: call.name, args, data: result.data });
+        const record = { callId: call.id, turnId: runtime.turnId, name: call.name, args, data: result.data };
+        if (canIndex) captureRecords.push(record);
+        const savedEntries = captureSavedEntries(record);
+        if (savedEntries.length) {
+          const before = committedEntries.size;
+          savedEntries.forEach(id => committedEntries.add(id));
+          // The default duration bounds time without durable progress. A
+          // caller's explicit deadline always covers the whole execution.
+          if (committedEntries.size > before && canContinueTask() && !explicitBudget.maxDurationMs) armDeadline();
+        }
         const objects = [result.data];
         const newlyRetained = [];
         while (objects.length) {
@@ -290,11 +328,9 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   } catch (error) {
     if (deadlineController.signal.aborted && !callerSignal?.aborted) error = deadlineController.signal.reason;
     if (error?.code === 'RESOURCE_BUDGET_REACHED' || callIds.size || uncertainCallId) {
-      const checkpoint = { protocol, body: current, pendingCalls, uncertainCallId, retainedSkillVersionIds: [...retainedSkillVersionIds],
-        seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, name: value.name, callId: value.callId, terminate: value.terminate, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
-        callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount, lastPromptTokens, lastRequestBytes };
-      await runtime.saveContinuation?.(checkpoint);
-      error.checkpoint = checkpoint;
+      const saved = checkpoint();
+      await runtime.saveContinuation?.(saved);
+      error.checkpoint = saved;
     }
     throw error;
   } finally {

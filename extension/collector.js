@@ -105,10 +105,8 @@ const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptu
   isBusy: () => Boolean(saving || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || smartVisualSession || regionCaptureState || draft?.targetCaseId),
   isAutomaticCapturing: () => autoPageCaptureActive,
   getBatchEditVersion: () => capturePreviewEditVersion,
-  getCollections: () => collections, getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
-  getContentTypes: () => contentTypes, getSuggestedType: () => elements.contentType.value,
+  getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
   changeProject: (...args) => updateCaptureMetadata(...args),
-  save: () => savePageCapture(false), cancelSave: () => cancelCaptureSave(),
   switchBatch: batch => {
     pageCaptureAppendBase = null; pageCaptureDetailsBase = null; genericGroupingBase = null;
     pageCaptureMediaView = null; pageCaptureEditHistory = []; pageCaptureDraftIds = new Set(); manuallyPickedBatchId = '';
