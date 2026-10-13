@@ -12,7 +12,7 @@ const candidate = object({ id, title: id, canonicalUrl: id, contentText: { type:
   originalPrompt: { type: 'string' }, author: { type: 'string' },
   codePreview: { ...object({ html: id }, ['html']), description: '用户要求保留代码交互效果时，提供自包含HTML复现；原始源码另用textSources保留。库内隔离、不联网、不调用插件API；复现不是原站原件，不把未验证的预览说成已正确运行。' },
   pageType: { enum: ['article', 'artwork', 'post', 'gallery', 'feed', 'video', 'generic'] },
-  media: { type: 'array', items: media } }, ['id', 'title', 'canonicalUrl', 'contentText', 'media']);
+  media: { type: 'array', items: media } }, ['id', 'title', 'canonicalUrl']);
 
 // Shared definitions for MCP and the collector assistant. No arbitrary scripts,
 // Chrome messages, credentials, or library deletion are exposed here.

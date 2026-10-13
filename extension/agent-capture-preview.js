@@ -299,7 +299,11 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           const sameModule = index < 0 && candidates.find(item => record.sourceBindings?.[item.id]?.length
             && item.canonicalUrl === value.canonicalUrl && item.title === value.title);
           if (sameModule) throw agentError('capture_candidate_exists', `该模块已有候选 ${sameModule.id}，请用这个编号补充预览和重新选择，不要为同一模块另建编号`);
-          if (prior?.adapter === 'generic' && patch.textSources?.length && value.title !== undefined && value.title !== prior.title) {
+          if (patch.codePreview && Object.keys(record.sources || {}).length
+            && !patch.textSources?.length && !record.sourceBindings?.[patch.id]?.length) {
+            throw agentError('capture_source_required', '已读取原始源码；请用textSources关联该候选的实际selector，完整原文由插件保存，不能用模型重写的内容替代');
+          }
+          if (prior?.adapter === 'generic' && prior.sourceFacts?.captureScope !== 'selection' && patch.textSources?.length && value.title !== undefined && value.title !== prior.title) {
             throw agentError('capture_source_changed', '单独模块请新建候选，不能重命名已有整页候选并混入它的正文');
           }
           if (prior && prior.canonicalUrl !== requireWebUrl(value.canonicalUrl)) throw agentError('capture_source_changed', '已有候选的来源不能改为其他网页，请另建候选');

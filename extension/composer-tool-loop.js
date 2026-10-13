@@ -1,11 +1,11 @@
 // Provider-native tool messages stay inside a turn. UI records contain no image bytes or provider secrets.
+import { validate } from './case-operation-specs.js';
 import { readEventStream } from "./event-stream.js";
 import { operationBudget, resourceBudgetError } from "./resource-policy.js";
 import { appendAgentContext, agentContextReferences, stableAgentArguments as stableObject } from './agent-runtime-context.js';
 
 export async function runComposerToolLoop({ body, protocol, request, runtime, signal: callerSignal, onDelta = () => {}, maxCharacters, allowImageOutput = false, budget: budgetValue, continuation }) {
-  const budget = operationBudget({ maxTotalTokens: runtime.contextLength ? runtime.contextLength * 2 : undefined,
-    ...(budgetValue ?? runtime.budget) });
+  const budget = operationBudget(budgetValue ?? runtime.budget);
   const resumed = continuation ?? await runtime.loadContinuation?.({ model: body.model, protocol });
   if (resumed && (resumed.protocol !== protocol || resumed.body?.model !== body.model)) throw new Error("本轮模型或协议已变化，不能重放旧工具进度");
   const source = resumed?.body ?? body;
@@ -27,21 +27,16 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   }
   const specs = runtime.specs;
   // The journal/checkpoint retains provider-native originals. At the model
-  // boundary only, earlier tool batches use the same exact-read references as
-  // previous human turns. The latest batch stays full for immediate reasoning.
+  // boundary only, context pressure can offload older source bodies. Do not
+  // evict working material after each call: it creates reference reread loops.
   const indexedOutputs = new Map();
-  const indexedArguments = new Map();
   const canIndex = runtime.loadContext && runtime.recordToolResult && specs.some(spec => spec.name === 'read_tool_result');
   const indexResult = record => {
-    if (!canIndex) return;
-    indexedOutputs.delete(record.callId); indexedArguments.delete(record.callId);
+    if (!canIndex || record.name === 'read_tool_result') return;
+    indexedOutputs.delete(record.callId);
     const projected = agentContextReferences([record])[0];
     const output = JSON.stringify(projected.data);
     if (output !== JSON.stringify(record.data)) indexedOutputs.set(record.callId, output);
-    if (record.args) {
-      const args = JSON.stringify(projected.args);
-      if (args !== JSON.stringify(record.args)) indexedArguments.set(record.callId, args);
-    }
   };
   const duplicateIds = new Set();
   const retainedIds = new Set();
@@ -50,7 +45,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     retainedIds.add(record.callId);
     indexResult(record);
   }
-  for (const id of duplicateIds) { indexedOutputs.delete(id); indexedArguments.delete(id); }
+  for (const id of duplicateIds) indexedOutputs.delete(id);
   let latestBatch = new Set();
   if (protocol === 'responses') {
     const lastCall = current.input.findLastIndex(item => item.type === 'function_call');
@@ -58,15 +53,17 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
       if (current.input[i].type === 'function_call') latestBatch.add(current.input[i].call_id);
     }
   } else latestBatch = new Set(current.messages.findLast(item => item.tool_calls?.length)?.tool_calls.map(call => call.id) || []);
+  let lastPromptTokens = resumed?.lastPromptTokens;
+  let lastRequestBytes = resumed?.lastRequestBytes;
   const modelRequest = () => {
+    const bytes = workingBytes(current);
+    const estimate = Number.isFinite(lastPromptTokens) ? lastPromptTokens + Math.max(0, bytes - lastRequestBytes) : bytes;
+    const reserve = current.max_tokens || current.max_output_tokens || current.max_completion_tokens || 0;
+    const pressure = maxCharacters && requestCharacters(current) > maxCharacters
+      || runtime.contextLength && estimate + reserve >= runtime.contextLength;
+    if (!pressure) return current;
     const key = protocol === 'responses' ? 'input' : 'messages';
     return { ...current, [key]: current[key].map(item => {
-      const argumentsFor = id => !latestBatch.has(id) && indexedArguments.get(id);
-      if (protocol === 'responses' && item.type === 'function_call' && argumentsFor(item.call_id)) {
-        return { ...item, arguments: argumentsFor(item.call_id) };
-      }
-      if (item.tool_calls?.length) return { ...item, tool_calls: item.tool_calls.map(call => argumentsFor(call.id)
-        ? { ...call, function: { ...call.function, arguments: argumentsFor(call.id) } } : call) };
       const id = protocol === 'responses' && item.type === 'function_call_output' ? item.call_id : item.role === 'tool' ? item.tool_call_id : null;
       const output = id && !latestBatch.has(id) && indexedOutputs.get(id);
       return output ? { ...item, [protocol === 'responses' ? 'output' : 'content']: output } : item;
@@ -153,6 +150,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const step = await readToolResponse(checkedResponse(response, budget.maxTextBytes, signal), protocol, onDelta, signal);
         usageKnown = previouslyKnown && step.usage != null;
         addUsage(usage, step.usage, protocol);
+        lastPromptTokens = step.usage?.prompt_tokens ?? step.usage?.input_tokens;
+        lastRequestBytes = workingBytes(projected);
         await runtime.onRequest?.({ requestCount, usage: usageKnown ? usage : null });
         signal.throwIfAborted();
         if (!step.calls.length) {
@@ -204,7 +203,10 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         // transient recovery may make the same operation valid on its next try.
         const failedReadOrControl = prior?.data?.ok === false && (readOperation(call.name) || controlOperation(call.name));
         const reuse = prior && !retryDenied && !failedReadOrControl && (reusable || cached.requestCount === requestCount);
-        const result = reuse ? prior : await runtime.execute(call.name, args, { callId: call.id, signal });
+        let invalid;
+        try { validate(specs.find(spec => spec.name === call.name).parameters, args, call.name); }
+        catch (error) { invalid = { data: { ok: false, code: 'invalid_tool_arguments', message: error.message } }; }
+        const result = invalid || (reuse ? prior : await runtime.execute(call.name, args, { callId: call.id, signal }));
         if (!result) throw new Error('此前读取回执不可用，已有资料保留');
         if (!reuse) {
           if (!readOperation(call.name) && !controlOperation(call.name) || args.expectedRevision && result.data?.ok === false) {
@@ -214,7 +216,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         batchResults.push(result);
         await runtime.recordToolResult?.({ callId: call.id, name: call.name, args, data: result.data,
           observedAt: new Date().toISOString() });
-        indexResult({ callId: call.id, turnId: runtime.turnId, args, data: result.data });
+        indexResult({ callId: call.id, turnId: runtime.turnId, name: call.name, args, data: result.data });
         const objects = [result.data];
         const newlyRetained = [];
         while (objects.length) {
@@ -278,7 +280,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     if (error?.code === 'RESOURCE_BUDGET_REACHED' || callIds.size || uncertainCallId) {
       const checkpoint = { protocol, body: current, pendingCalls, uncertainCallId, retainedSkillVersionIds: [...retainedSkillVersionIds],
         seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, name: value.name, callId: value.callId, terminate: value.terminate, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
-        callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount };
+        callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount, lastPromptTokens, lastRequestBytes };
       await runtime.saveContinuation?.(checkpoint);
       error.checkpoint = checkpoint;
     }

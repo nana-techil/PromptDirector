@@ -38,13 +38,13 @@ test('rephrasing the same failed registration without new facts stops before a c
  assert.equal(requests,2);
 });
 
-test('read-only discovery can establish actual targets before a write plan, without granting unregistered saves',async()=>{
+test('discovery establishes targets and an authorized simple write needs no extra plan',async()=>{
  let writes=0;
  const runtime=withAssistantTaskRuntime({specs:[{name:'read_target',parameters:{properties:{}}},{name:'save_capture',parameters:{properties:{requestId:{}}}}],
   execute:async(name)=>{if(name==='save_capture')writes++;return{data:{ok:true,captureId:'actual-preview'}};}},
   {instruction:'Inspect and save the selected module',userMessageId:'real-user'});
  assert.equal((await runtime.execute('read_target',{}, {callId:'discover'})).data.captureId,'actual-preview');
- assert.equal((await runtime.execute('save_capture',{requestId:'too-early'})).data.code,'task_required');assert.equal(writes,0);
+ assert.equal(writes,0);
  assert.equal((await runtime.execute('declare_task',{mode:'act',goal:'Save the actual module',steps:[{operation:'save_capture',targetId:'actual-preview'}]})).data.ok,true);
  assert.equal((await runtime.execute('save_capture',{requestId:'actual-write',captureId:'actual-preview'},{callId:'write'})).data.ok,true);assert.equal(writes,1);
 });

@@ -30,7 +30,7 @@ test('a created material is complete for its actual source targets without repla
   assert.equal(await runtime.finishTurn({}),undefined);assert.equal(runtime.task.state,'completed');assert.deepEqual(record,['save_material']);
 });
 
-test('a committed result at the token budget is delivered without another model call, while unfinished work still stops',async()=>{
+test('one committed operation at the token budget cannot prove an entire user goal complete',async()=>{
   for(const saved of [true,false]) {
     const f=fixture({execute:()=>({results:[{status:saved?'saved':'failed',entryId:'case'}]})});let requests=0;
     const action=runComposerToolLoop({protocol:'chat_completions',runtime:f.runtime,budget:{maxTotalTokens:10},body:{model:'fixture',messages:[{role:'user',content:'current instruction'}]},request:async()=>{
@@ -39,8 +39,8 @@ test('a committed result at the token budget is delivered without another model 
         {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Save this result',steps:[{operation:'save_capture'}]})}},
         {id:'save',type:'function',function:{name:'save_capture',arguments:'{}'}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:9,completion_tokens:1,total_tokens:10}}));
     }});
-    if(saved){const result=await action;assert(result.content.includes('Save this result'));assert.equal(f.runtime.task.state,'completed');}
-    else {await assert.rejects(action,{code:'RESOURCE_BUDGET_REACHED'});assert.equal(f.runtime.task.state,'active');}
+    await assert.rejects(action,{code:'RESOURCE_BUDGET_REACHED'});assert.equal(f.runtime.task.state,'active');
+    assert.equal(f.runtime.observations[0].data.results[0].status,saved?'saved':'failed');
     assert.equal(requests,1);assert.equal(f.calls.length,1);
   }
 });

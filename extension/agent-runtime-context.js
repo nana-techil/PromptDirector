@@ -3,7 +3,6 @@
 import { AGENT_CHUNK_BYTES } from './agent-protocol.js';
 
 const sourceFields = new Set(['content','contentText','contentHtml','originalPrompt','text','html','body','skillMarkdown','markdown','referenceText','reply']);
-const sourceLists = new Set(['cases','items','entries','collections','projects','candidates','sources','modules','mediaAssets','files']);
 export function agentContextReferences(records = []) {
   function reference(value, identity, path = []) {
     if (Array.isArray(value)) return value.map((item, index) => reference(item, identity, [...path, String(index)]));
@@ -12,14 +11,24 @@ export function agentContextReferences(records = []) {
     for (const [key, item] of Object.entries(value)) {
       const pointer = { ...identity, path: [...path, key] };
       const indexed = { [key + (Array.isArray(item) ? 'Count' : 'Characters')]: item?.length, [key + 'Reference']: pointer };
-      const source = sourceFields.has(key) && typeof item === 'string' || sourceLists.has(key) && Array.isArray(item);
+      const source = sourceFields.has(key) && typeof item === 'string';
       if (source && JSON.stringify(indexed).length < JSON.stringify({ [key]: item }).length) {
         Object.assign(output, indexed);
       } else output[key] = reference(item, identity, [...path, key]);
     }
     return output;
   }
-  return records.map(record => reference(record, { callId: record.callId, turnId: record.turnId }));
+  return records.map(record => {
+    const identity = { callId: record.callId, turnId: record.turnId };
+    // Native call arguments remain executable examples of the declared schema.
+    // Keep inventory identities and cursors; only source bodies are offloaded.
+    const projected = reference(record.data, identity, ['data']);
+    if (record.name === 'read_projects' && typeof record.data?.content === 'string') {
+      projected.content = record.data.content;
+      delete projected.contentReference; delete projected.contentCharacters;
+    }
+    return { ...record, data: projected };
+  });
 }
 
 export const AGENT_CONTEXT_READ_SPEC = {

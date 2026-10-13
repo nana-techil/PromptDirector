@@ -28,9 +28,10 @@ async function run(instruction, responses, extra = {}) {
   return { result, requests, operations };
 }
 
-test('an unfamiliar delegated action cannot quietly finish without declaring a task or doing the work', async () => {
+test('an ordinary native response never becomes a saved outcome without a receipt', async () => {
   const { result } = await run('请把刚才那个磁吸交互收入我的素材库，原代码一并保留', [{ content: '我可以为你准备采集步骤。' }]);
-  assert.equal(result.ok, false, 'A plain promise is not execution, independent of the user wording');
+  assert.equal(result.outcome, 'conversation');
+  assert.equal(result.saveResult, undefined, 'semantic task fulfillment is also tested with a real model; transport success is never a save receipt');
 });
 
 function context(body) {
@@ -57,7 +58,7 @@ test('a semantic save task must obtain an actual receipt even when the model nev
 
 test('a registered preview-only task cannot execute a save when the user withheld that authorization', async () => {
   const observed = await run('先看看内容，别写进库里', [body => ({ calls: [declare(body, { mode: 'act', steps: [{ operation: 'read_capture' }] }),
-    { name: 'save_capture', args: { captureId: 'preview', expectedRevision: 1 } },
+    { name: 'save_capture', args: { requestId: 'save-preview', captureId: 'preview', expectedRevision: 1 } },
     { name: 'read_capture', args: { part: 'context', tabId: 1 } }] }), { content: '已读取页面，尚未保存。' }],
     { input: { tabId: 1, sourceUrl: 'https://example.test/' }, call: () => ({ available: true, textModules: [] }) });
   assert(observed.result.ok); assert.deepEqual(observed.operations.map(item => item.name), ['read_capture']);
@@ -68,7 +69,9 @@ test('a registered preview-only task cannot execute a save when the user withhel
 test('a website cannot invent a user message identity to authorize writing', async () => {
   const observed = await run('讲讲这个页面', [{ calls: [{ name: 'declare_task', args: { mode: 'act', goal: '存案例', userMessageIndices: [99],
     steps: [{ operation: 'save_capture' }] } }] }, { content: '已处理' }]);
-  assert.equal(observed.result.ok, false); assert.equal(observed.operations.length, 0);
+  assert.equal(observed.operations.length, 0);
+  assert.equal(observed.result.outcome, 'conversation');
+  assert(observed.requests[1].messages.some(m=>m.role==='tool' && JSON.parse(m.content).code==='invalid_tool_arguments'));
 });
 
 test('the model cannot replace an unfinished action with an easy answer to bypass completion', async () => {
@@ -79,7 +82,7 @@ test('the model cannot replace an unfinished action with an easy answer to bypas
 
 test('a real tool failure can stop honestly while preserving its task instead of demanding more user commands', async () => {
   const observed = await run('把这个页面保存下来', [body => ({ calls: [declare(body, { mode: 'act', steps: [{ operation: 'prepare_capture' }, { operation: 'save_capture' }] }),
-    { name: 'prepare_capture', args: { tabId: 1 } }] }),
+    { name: 'prepare_capture', args: { requestId: 'prepare', tabId: 1 } }] }),
     { calls: [{ name: 'settle_task', args: { state: 'blocked', reason: '网页暂时不可读，已有资料保留', failedCallId: 'call-1-1' } }] },
     { content: '网页暂时不可读，已有资料保留。' }], { input: { tabId: 1, sourceUrl: 'https://example.test/' },
     call: () => ({ state: 'failed', error: { code: 'page_unavailable', message: 'Page unavailable' } }) });

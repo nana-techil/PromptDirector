@@ -329,3 +329,23 @@ test('an unfinished frozen directory survives preview saves and automatic histor
  assert.equal(rest.revision,first.revision);assert.equal(rest.captureRevision,saved.revision);assert.equal(rest.nextOffset,null);
  assert.equal(first.modules.length+rest.modules.length,12);
 });
+
+test('a source-scoped candidate can be retitled when adding its interactive preview',async()=>{
+ const f=fixture();await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+ const source=await f.api.read({captureId:'preview',part:'source',selector:'#module'});
+ let result=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:source.revision,candidates:[{id:'module',title:'Effect',canonicalUrl:'https://example.test/work',textSources:[{selector:'#module',target:'text'}]}]},'module',f.scope);
+ result=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:result.revision,candidates:[{id:'module',title:'Effect — interactive',canonicalUrl:'https://example.test/work',textSources:[{selector:'#module',target:'text'}],codePreview:{html:'<button>Effect</button>'}}]},'preview-added',f.scope);
+ assert.equal(result.candidates.find(c=>c.id==='module').title,'Effect — interactive');
+});
+
+test('real code capture cannot report success while a model paraphrases frozen original sources',async()=>{
+ const f=fixture();await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+ const source=await f.api.read({captureId:'preview',part:'source',selector:'#module'});
+ const patch={id:'module',title:'Module',canonicalUrl:'https://example.test/work',contentText:'A model paraphrase instead of the frozen source',codePreview:{html:'<button>Effect</button>'}};
+ await assert.rejects(f.api.execute('update_capture',{captureId:'preview',expectedRevision:source.revision,candidates:[patch]},'paraphrased',f.scope),{code:'capture_source_required'});
+ assert.equal(f.commits.length,0);
+ const updated=await f.api.execute('update_capture',{captureId:'preview',expectedRevision:source.revision,candidates:[{...patch,textSources:[{selector:'#module',target:'text'}]}]},'bound',f.scope);
+ const result=await f.api.read({captureId:'preview',part:'candidate',candidateId:'module',expectedRevision:updated.revision});
+ assert(JSON.parse(result.content).contentText.includes(source.content));
+ assert(!JSON.parse(result.content).contentText.includes(patch.contentText));
+});

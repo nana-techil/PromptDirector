@@ -86,7 +86,7 @@ export function validate(schema, value, path) {
   if (type === 'object') {
     for (const key of schema.required || []) if (!Object.hasOwn(value, key)) throw new Error(`${path}：缺少 ${key}`);
     for (const [key, item] of Object.entries(value)) {
-      const child = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : schema.additionalProperties;
+      const child = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : (schema.additionalProperties ?? true);
       if (!child) throw new Error(`${path}：不支持 ${key}`);
       if (typeof child === 'object') validate(child, item, `${path}.${key}`);
     }

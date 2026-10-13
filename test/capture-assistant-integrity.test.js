@@ -22,17 +22,18 @@ function fixture() {
   return { api: createAgentCapturePreview(options), options, original, commits, url, scope: { libraryId: 'test-library', assertCurrent: async () => {} } };
 }
 
-test('historic nested source results and candidate originals are references, not repeated model input', () => {
+test('historic source bodies are retrievable while candidate arguments retain their executable schema', () => {
   const original = 'Full original source '.repeat(10000);
   const records = [{ callId:'read-original',turnId:'old',name: 'read_capture', args: { captureId: 'preview', part: 'source', selectors: ['pre'] }, data: { part: 'source', sources: [{ selector: 'pre', content: original, totalCharacters: original.length }] } },
     { callId:'prepared',turnId:'old',name: 'update_capture', args: { candidates: [{ id: 'case', contentText: original, originalPrompt: original, codePreview: { html: original } }] }, data: { captureId: 'preview', revision: 3, selections: [{ candidateId: 'case' }] } }];
   const projected = captureContextReferences(records);
-  assert(JSON.stringify(projected).length < 3000, 'full originals must not be repeatedly sent inside nested source results or mutation arguments');
+  assert(JSON.stringify(projected[0]).length < 3000, 'source bodies are offloaded without losing their selectors');
+  assert.deepEqual(projected[1].args,records[1].args,'native argument shapes must not become invalid reference-shaped examples');
   assert.equal(records[0].data.sources[0].content, original, 'durable originals remain intact');
   let restored='',offset=0;
-  do {const page=readAgentToolResult(records,{...projected[0].data.sourcesReference,path:['data','sources','0','content'],offset});restored+=page.content;offset=page.nextOffset;} while(offset!=null);
+  do {const page=readAgentToolResult(records,{...projected[0].data.sources[0].contentReference,path:['data','sources','0','content'],offset});restored+=page.content;offset=page.nextOffset;} while(offset!=null);
   assert.equal(restored,original);
-  assert.equal(projected[0].data.sourcesCount,1);
+  assert.equal(projected[0].data.sources.length,1);
   assert.equal(readAgentToolResult(records,{callId:'read-original',turnId:'old',path:['data','sources','0','totalCharacters']}).content,String(original.length));
   assert.equal(projected[1].data.revision, 3);
 });
@@ -156,7 +157,7 @@ test('the first frozen X-comment correction reaches the strict provider and sele
           for(const message of body.messages) if(Object.hasOwn(message,'tool_calls'))assert(message.tool_calls.length>0,'first X-comment correction must satisfy the provider schema');
           const outputs=body.messages.filter(message=>message.role==='tool').map(message=>JSON.parse(message.content));
           const current=outputs.at(-1);
-          if(requests===1)return tool('prepare_capture',{tabId:1});
+          if(requests===1)return tool('prepare_capture',{requestId:'prepare-comments',tabId:1});
           if(requests===2)return tool('read_capture',{captureId:current.captureId,expectedRevision:current.revision,part:'source',selector:'#comment'});
           if(requests===3)return sse({content:'完整提示词已选中。'});
           if(requests===4){assert(body.messages.at(-1).content.includes('update_capture'));return tool('update_capture',{requestId:'select',captureId:current.captureId,expectedRevision:current.revision,
