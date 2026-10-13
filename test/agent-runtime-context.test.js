@@ -29,7 +29,7 @@ test('large historical source is indexed and can be retrieved exactly through th
       assert.deepEqual(facts[0].data.contentReference,{callId:'old-read',turnId:'old-turn',path:['data','content']});
       assert(actual.tools.some(tool=>tool.function.name==='read_tool_result'));
       return response({role:'assistant',tool_calls:[
-        {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Read frozen source',userMessageIds:['new-user'],steps:[{operation:'read_tool_result',targetId:'old-read',requireComplete:true}]})}},
+        {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Read frozen source',steps:[{operation:'read_tool_result',targetId:'old-read',requireComplete:true}]})}},
         {id:'read-history',type:'function',function:{name:'read_tool_result',arguments:JSON.stringify({turnId:'old-turn',callId:'old-read',path:['data','content']})}}
       ]});
     }

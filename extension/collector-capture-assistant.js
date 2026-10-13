@@ -385,11 +385,12 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       if (state.tabId !== target.id || state.sourceUrl !== target.url) state.captureId = '';
       const requestId = crypto.randomUUID(), metadata = getDraft() || {};
       const attachments = [...(state.attachments || [])];
-      const input = { instruction: instruction || t('请查看附件'), attachments, sessionId: state.id, aiProfile: state.aiProfile, messages: state.messages.map(message => message.role === 'result'
+      const userMessageId = crypto.randomUUID();
+      const input = { instruction: instruction || t('请查看附件'), userMessageId, attachments, sessionId: state.id, aiProfile: state.aiProfile, messages: state.messages.map(message => message.role === 'result'
         ? { role: 'assistant', content: JSON.stringify({ saveReceipt: message.result }) } : message), ...(Number.isInteger(target.id) ? { tabId: target.id } : {}),
         sourceUrl: target.url || '', pageTitle: target.title || '', locale: currentLocale(), project: metadata.collectionId || '', newCollectionName: metadata.newCollectionName || '', captureMetadata: getMetadata(),
         ...(state.captureId ? { captureId: state.captureId } : reusableBatch ? { initialBatch: baseBatch } : {}) };
-      state = { ...state, requestId, awaitingAutomaticPreview: isAutomaticCapturing(), previewEditVersion: getBatchEditVersion(), committing: false, tabId: target.id, sourceUrl: target.url || '', pendingRevision: null, draft: '', attachments: [], lastError: '', messages: [...state.messages, { role: 'user', content: input.instruction, attachments }] };
+      state = { ...state, requestId, awaitingAutomaticPreview: isAutomaticCapturing(), previewEditVersion: getBatchEditVersion(), committing: false, tabId: target.id, sourceUrl: target.url || '', pendingRevision: null, draft: '', attachments: [], lastError: '', messages: [...state.messages, { id: userMessageId, role: 'user', content: input.instruction, attachments }] };
       owner = state;
       state.events = [...(state.events || []), { type: 'turn_started', requestId, tabId: target.id, sourceUrl: target.url || '', previewSourceUrl: currentBatch?.sourceUrl, at: new Date().toISOString() }];
       field.value = ''; render(); conversation.scrollTop = conversation.scrollHeight;

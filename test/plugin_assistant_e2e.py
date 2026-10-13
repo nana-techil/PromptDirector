@@ -23,11 +23,11 @@ def main():
             let delta,finish;const tool=(name,args)=>{delta={tool_calls:[{index:0,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]};finish='tool_calls';};
             if(globalThis.fixtureFlow==='full-reply') {
               const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
-              tool('declare_task',{mode:'respond',goal:'Report the finished task',userMessageIds:[ctx.currentUserId],steps:[],reply:globalThis.fullReplyFixture});
+              tool('declare_task',{mode:'respond',goal:'Report the finished task',steps:[],reply:globalThis.fullReplyFixture});
             } else if(globalThis.fixtureFlow==='skill') {
               const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
               const declared=results.findLast(r=>r.name==='declare_task');
-              if(!declared || !declared.data.ok) tool('declare_task',{mode:'act',goal:'基于实际案例提炼并保存视觉特效指南Skill',userMessageIds:[ctx.currentUserId],steps:[
+              if(!declared || !declared.data.ok) tool('declare_task',{mode:'act',goal:'基于实际案例提炼并保存视觉特效指南Skill',steps:[
                 {operation:'read_case',targetId:'gym-case',requireComplete:true},{operation:'read_case_details',targetId:'gym-case'},
                 {operation:'save_skill',...(!declared?{targetId:'not-an-observed-resource'}:{})}]});
               else if(!results.some(r=>r.name==='read_case'))tool('read_case',{caseId:'gym-case',part:'body'});
@@ -40,7 +40,7 @@ def main():
             }
             else             if(!results.some(r=>r.name==='declare_task')) {
               const ctx=body.messages.map(m=>{try{return JSON.parse(m.content).runtimeContext;}catch{return null;}}).find(Boolean);
-              tool('declare_task',{mode:'act',goal:'打开库、查找健身并修改指定案例标题',userMessageIds:[ctx.currentUserId],steps:[
+              tool('declare_task',{mode:'act',goal:'打开库、查找健身并修改指定案例标题',steps:[
                 ...(canOpen?[{operation:'open_workspace'}]:[]),{operation:'search_cases'},{operation:'read_case_details'},{operation:'edit_case'}]});
             }
             else if(canOpen&&!results.some(r=>r.name==='open_workspace'))tool('open_workspace',{surface:'library'});
@@ -96,6 +96,9 @@ def main():
         final_turn=canonical['assistantState']['turns'][-1]['diagnostic']
         assert len([call for call in final_turn['toolCalls'] if call['name']=='read_case'])==1,'a repeat must reuse native evidence rather than read the library twice'
         assert final_turn['task']['state']=='completed' and final_turn['task']['pending']==[]
+        latest_human=next(message for message in reversed(canonical['messages']) if message['role']=='user')
+        assert final_turn['task']['currentUserId']==latest_human['id'],'authorization must bind the actual visible user message'
+        assert final_turn['task']['currentUserId']!=canonical['assistantState']['turns'][-1]['requestId'],'transport and human identities must stay separate'
         assert not canonical['assistantState'].get('lastError')
         # A long answer is fully visible once, including its final completion receipt.
         full_reply='已拿到原案例完整原文。\n\n## 整理结果\n\n'+'\n\n'.join([

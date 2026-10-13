@@ -83,6 +83,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
 
     }
     const priorContext = await sessionRuntime.loadContext?.() || [];
+    const frozenDirectories = new Set(priorContext.filter(record => record.name === 'read_capture' && record.data?.part === 'modules' && record.data?.ok !== false).map(record => record.data.captureId));
     diagnostic.context = captureDiagnosticValue(captureContextReferences(priorContext));
     const captureTools = {
       ...sessionRuntime,
@@ -143,6 +144,10 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
             if (args.tabId !== undefined && args.tabId !== tabId || args.captureId && args.captureId !== preview?.captureId) throw agentError('capture_scope_changed', '只能读取本轮采集网页');
             return { data: await call(name, { ...args, tabId }) };
           }
+          if (name === 'read_capture' && args.part === 'modules' && args.captureId !== preview?.captureId && frozenDirectories.has(args.captureId)) {
+            if (args.refresh) throw agentError('capture_scope_changed', '历史目录只读；刷新请使用当前目标预览');
+            return { data: await call(name, args) };
+          }
           if (name === 'update_capture') {
             for (const media of (args.candidates || []).flatMap(candidate => candidate.media || [])) {
               if (media.localTransferId && !captureFileIds.has(media.localTransferId)) throw agentError('capture_scope_changed', '只能选择本对话或当前人工预览实际提供的本机原件');
@@ -153,7 +158,15 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           if (name === 'read_capture') {
             if (['screenshot', 'image'].includes(args.part) && !service.vision) throw agentError('capture_vision_unsupported', '当前模型不支持图像输入，仍可读取网页文字和媒体链接');
             const data = await call(name, args);
-            if (data.revision && data.revision !== preview.revision) remember({ ...preview, revision: data.revision });
+            if (args.part === 'modules' && data.ok !== false) frozenDirectories.add(data.captureId);
+            const revision = data.captureRevision ?? data.revision;
+            if (revision && revision !== preview.revision) {
+              if (args.part === 'modules') {
+                const current = remember(await call(name, { captureId: preview.captureId, part: 'summary' }));
+                return { data: { ...data, captureRevision: current.revision, preview: current } };
+              }
+              remember({ ...preview, revision });
+            }
             if (data.dataUrl) {
               const { dataUrl, ...facts } = data;
               return { data: { ...facts, [data.part === 'image' ? 'imageObserved' : 'screenshotObserved']: true },
@@ -203,14 +216,14 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
       finally { event.finishedAt = new Date().toISOString(); }
     };
     taskRuntime = withAssistantTaskRuntime(captureTools, { messages: input.messages,
-      instruction: input.instruction, userMessageId: sessionRuntime.turnId,
+      instruction: input.instruction, userMessageId: input.userMessageId || sessionRuntime.turnId,
       context: { page: { tabId: input.tabId, url: input.sourceUrl, title: input.pageTitle },
         preview, manualPreview: capturePreviewReference(input.initialBatch), platform: hasPage ? capturePlatformGuidance(input.sourceUrl) : null,
         project: input.project || '', newProject: input.newCollectionName || '', captureMetadata: input.captureMetadata,
         attachments: [...attachments, ...(input.messages || []).filter(message => message.role === 'user').flatMap(message => message.attachments || [])],
         model: { imageInput: service.vision, nativeTools: service.nativeTools },
         interface: { conversations: { recentCount: 5, retained: 'all', changesOnNavigation: false },
-          codeCase: { cardPreview: 'interactive_saved_preview', previewLoads: 'visible_foreground_only', explicitCoverPreserved: true, openDetails: 'title_or_card_keyboard' },
+          codeCase: { contentTypeId: CONTENT_IDS.codeCase, cardPreview: 'interactive_saved_preview', previewLoads: 'visible_foreground_only', explicitCoverPreserved: true, openDetails: 'title_or_card_keyboard' },
           captureModeSwitch: true, diagnosticsExport: true, closeContinuesWork: true },
         replyPolicy: { conciseByDefault: true, requestedWorkUnabridged: true, fullTextVisible: true } } });
     const toolRuntime = taskRuntime;

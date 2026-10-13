@@ -287,3 +287,45 @@ test('duplicate module supplementation reports its existing id and preserves the
  assert.equal((await f.api.read({captureId:'preview'})).revision,selected.revision);
  assert.equal((await f.api.read({captureId:'preview'})).candidates.length,1);
 });
+
+test('a code module directory larger than a live-scene message is frozen and fully traversable without an arbitrary scope rejection',async()=>{
+ const f=fixture();let inventoryReads=0;
+ const modules=Array.from({length:153},(_,i)=>({title:'Effect '+i,selector:'body > main > section > div > div:nth-of-type('+(i+1)+')',sources:[0,1,2].map(j=>({selector:'body > main > section > div > div:nth-of-type('+(i+1)+') > div > div > pre:nth-of-type('+(j+1)+')',language:['css','react','prompt'][j],characters:100}))}));
+ assert(JSON.stringify(modules).length>49152);
+ f.options.chromeApi.scripting.executeScript=async({func})=>[{result:func.name==='readCapturePageContext'?(inventoryReads++,{ok:true,url:'https://example.test/work',title:'Effects',codeBlocks:[],textModules:[],modules}):{ok:true,url:'https://example.test/work',text:'Observed page',links:[],media:[]}}];
+ await f.api.execute('prepare_capture',{tabId:1},'large-directory',f.scope);
+ const scene=JSON.parse((await f.api.read({captureId:'large-directory',part:'context',includeHidden:true})).content);
+ assert.equal(scene.moduleCount,153);assert.equal(scene.moduleDirectory.part,'modules');
+ let offset=0,revision,all=[];
+ do {
+  const page=await f.api.read({captureId:'large-directory',part:'modules',offset,length:12000,...(revision?{expectedRevision:revision}:{})});
+  assert(page.modules.length>0);assert(JSON.stringify(page.modules).length<=12000);
+  all.push(...page.modules);offset=page.nextOffset;revision=page.revision;
+ }while(offset!==null);
+ assert.deepEqual(all,modules);
+ assert.equal(inventoryReads,2,'one live scene and one frozen directory snapshot; pagination must not rescan the page');
+});
+
+test('a page selector is not silently ignored and cannot make a whole-page result look like a targeted module read',async()=>{
+ const f=fixture();await f.api.execute('prepare_capture',{tabId:1},'selector-scope',f.scope);
+ await assert.rejects(f.api.read({captureId:'selector-scope',part:'page',selector:'#target'}),{code:'invalid_input'});
+});
+
+test('an unfinished frozen directory survives preview saves and automatic history cleanup without confusing selection revisions',async()=>{
+ const f=fixture();const api=createAgentCapturePreview({...f.options,budget:{maxAutomaticHistoryItems:2}});
+ const modules=Array.from({length:12},(_,i)=>({title:'Module '+i,selector:'#module-'+i,sources:[{selector:'#module-'+i+' pre',characters:10,language:'css'}]}));
+ f.options.chromeApi.scripting.executeScript=async({func})=>[{result:func.name==='readCapturePageContext'?{ok:true,url:'https://example.test/work',modules,codeBlocks:[],textModules:[]}:{ok:true,url:'https://example.test/work',text:'page',links:[],media:[]}}];
+ async function save(id){
+  const preview=await api.read({captureId:id});
+  const chosen=await api.execute('update_capture',{captureId:id,expectedRevision:preview.revision,selections:[{candidateId:'original',includeText:true,selectedMediaIds:[]}]},'select-'+id,f.scope);
+  return api.execute('save_capture',{captureId:id,expectedRevision:chosen.revision},'save-'+id,f.scope);
+ }
+ await api.execute('prepare_capture',{tabId:1},'directory-parent',f.scope);
+ const first=await api.read({captureId:'directory-parent',part:'modules',length:250});assert(first.nextOffset!==null);
+ const saved=await save('directory-parent');assert(saved.revision>first.captureRevision);
+ for(const id of ['other-1','other-2','other-3']){await api.execute('prepare_capture',{tabId:1},id,f.scope);await save(id);}
+ assert(f.data['agentCapture:directory-parent'],'an unread directory is unfinished work, even when its first case was saved');
+ const rest=await api.read({captureId:'directory-parent',part:'modules',offset:first.nextOffset,expectedRevision:first.revision,length:12000});
+ assert.equal(rest.revision,first.revision);assert.equal(rest.captureRevision,saved.revision);assert.equal(rest.nextOffset,null);
+ assert.equal(first.modules.length+rest.modules.length,12);
+});

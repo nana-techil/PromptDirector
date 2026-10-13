@@ -29,11 +29,14 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       const indexKey = `agentCaptureHistory:${record.libraryId}`;
       const history = (await storage.get(indexKey))[indexKey] || [];
       const policy = operationBudget(budget);
-      const next = [{ id: record.id, bytes: new Blob([JSON.stringify(record)]).size }, ...history.filter(item => item.id !== record.id)];
+      const next = [{ id: record.id, bytes: new Blob([JSON.stringify(record)]).size,
+        pendingDirectory: Boolean(record.moduleInventory && (record.moduleInventoryReadEnd || 0) < record.moduleInventory.length) }, ...history.filter(item => item.id !== record.id)];
       let bytes = next.reduce((total, item) => total + item.bytes, 0);
       const removed = [];
       while (next.length > 1 && (next.length > policy.maxAutomaticHistoryItems || bytes > policy.maxAutomaticHistoryBytes)) {
-        const old = next.pop(); bytes -= old.bytes; removed.push(key(old.id));
+        const index = next.findLastIndex((item, index) => index > 0 && !item.pendingDirectory);
+        if (index < 0) break;
+        const [old] = next.splice(index, 1); bytes -= old.bytes; removed.push(key(old.id));
       }
       if (removed.length) await storage.remove(removed);
       await storage.set({ [indexKey]: next });
@@ -79,20 +82,58 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         const tab = await chromeApi.tabs.get(tabId);
         if (record && tab.url !== record.batch.sourceUrl) throw agentError('page_changed', '采集网页已改变，请重新开始当前网页的采集');
         await permission(tab.url);
-        const [observed] = await chromeApi.scripting.executeScript({ target: { tabId }, func: readCapturePageContext, args: [input.query || '', Boolean(input.includeHidden)] });
+        const [observed] = await chromeApi.scripting.executeScript({ target: { tabId }, func: readCapturePageContext, args: [input.query || '', Boolean(input.includeHidden), input.selector || ''] });
         if (!observed?.result?.ok) throw agentError('capture_page_unavailable', observed?.result?.message || '当前网页现场未取得');
         if (observed.result.url !== tab.url || (await chromeApi.tabs.get(tabId)).url !== tab.url) throw agentError('page_changed', '读取期间网页已改变');
         const offset = input.offset ?? 0, length = input.length ?? 12000;
         requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
-        const text = JSON.stringify(captureSceneForModel(observed.result, length));
+        let scene = observed.result;
+        if (scene.modules && JSON.stringify(scene.modules).length > length) {
+          const { modules, ...visibleScene } = scene;
+          scene = { ...visibleScene, moduleCount: modules.length,
+            moduleDirectory: { part: 'modules', ...(record ? { captureId: record.id } : { requiresCapture: true }), scope: 'currently_loaded_dom' } };
+        }
+        const text = JSON.stringify(captureSceneForModel(scene, length));
         if (offset) throw agentError('invalid_input', '当前现场请重新读取或按模块名称缩小范围');
         if (text.length > length) throw agentError('capture_context_scope_required', '当前现场包含较多区域，请用模块名称查询或增加读取长度');
         return { ...(record ? { captureId: record.id, revision: record.revision } : {}), part: 'context', sourceUrl: tab.url,
           content: text, offset: 0, totalCharacters: text.length, nextOffset: null, platform: capturePlatformGuidance(tab.url), untrustedContent: true };
       }
       const record = await own(input.captureId);
-      version(record, input);
       const part = input.part ?? 'summary';
+      if (part === 'modules') {
+        const offset = input.offset ?? 0, length = input.length ?? 12000;
+        requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
+        if (offset && (!record.moduleInventory || input.expectedRevision === undefined)) throw agentError('capture_revision_required', '目录续读请携带首屏revision');
+        if (input.refresh && offset) throw agentError('invalid_input', '刷新目录请从第一页开始');
+        if (input.expectedRevision !== undefined) {
+          if (!record.moduleInventory) version(record, input);
+          else if (input.expectedRevision !== record.moduleInventoryRevision) throw agentError('capture_changed', '冻结目录已刷新，请从第一页重新读取');
+        }
+        if (!record.moduleInventory || input.refresh) {
+          const tab = await chromeApi.tabs.get(record.batch.tabId);
+          if (tab.url !== record.batch.sourceUrl) throw agentError('page_changed', '目标网页已改变，原目录保留');
+          await permission(tab.url);
+          const [observed] = await chromeApi.scripting.executeScript({ target: { tabId: tab.id }, func: readCapturePageContext, args: ['', true] });
+          if (!observed?.result?.ok || observed.result.url !== tab.url || (await chromeApi.tabs.get(tab.id)).url !== tab.url) throw agentError('page_changed', '目录读取期间网页已改变');
+          record.moduleInventory = observed.result.modules || [];
+          record.moduleInventoryRevision = (record.moduleInventoryRevision || 0) + 1;
+          record.moduleInventoryReadEnd = 0;
+        }
+        const modules = []; let characters = 2;
+        for (const module of record.moduleInventory.slice(offset)) {
+          const size = JSON.stringify(module).length + (modules.length ? 1 : 0);
+          if (characters + size > length) break;
+          modules.push(module); characters += size;
+        }
+        if (!modules.length && offset < record.moduleInventory.length) throw agentError('capture_context_scope_required', '单个目录项超过本次长度，请增加读取长度');
+        const next = offset + modules.length;
+        if (offset <= (record.moduleInventoryReadEnd || 0)) record.moduleInventoryReadEnd = Math.max(record.moduleInventoryReadEnd || 0, next);
+        await persist(record);
+        return { ok: true, captureId: record.id, revision: record.moduleInventoryRevision, captureRevision: record.revision, part, modules, offset, total: record.moduleInventory.length,
+          nextOffset: next < record.moduleInventory.length ? next : null, inventoryScope: 'currently_loaded_dom', sourceUrl: record.batch.sourceUrl, untrustedContent: true };
+      }
+      version(record, input);
       if (part === 'supplement') {
         const offset = input.offset ?? 0, length = input.length ?? 12000;
         requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
@@ -170,6 +211,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           sourceUrl: candidate.canonicalUrl, dataUrl: `data:${blob.type};base64,${bytesToBase64(new Uint8Array(await blob.arrayBuffer()))}`, untrustedContent: true };
       }
       if (!['page', 'candidate'].includes(part)) throw agentError('invalid_input', '采集读取部分无效');
+      if (part === 'page' && (input.selector || input.selectors)) throw agentError('invalid_input', 'page是冻结全页；读取指定模块请用source及实际selector，模块目录用modules');
       const offset = input.offset ?? 0, length = input.length ?? 12000;
       requireInteger(offset); requireInteger(length, { min: 1, max: AGENT_CHUNK_BYTES / 4 });
       if (offset && input.expectedRevision === undefined) throw agentError('capture_revision_required', '续读请携带首屏revision');
@@ -466,7 +508,12 @@ export function readCapturePageEvidence(selector = '') {
 }
 
 // Injected in isolation; all helpers deliberately stay inside this function.
-export function readCapturePageContext(query = '', includeHidden = false) {
+export function readCapturePageContext(query = '', includeHidden = false, selector = '') {
+  let root = document;
+  if (selector) {
+    try { root = document.querySelector(selector); } catch { return { ok: false, message: '区域选择器无效，请使用模块目录的实际selector' }; }
+    if (!root) return { ok: false, message: '指定区域未找到，请使用模块目录的实际selector' };
+  }
   const excluded = 'script,style,noscript,input,textarea,select,[data-promptdirector-capture-ui]';
   const visible = element => {
     if (element.closest('[hidden],[aria-hidden="true"]')) return false;
@@ -504,7 +551,7 @@ export function readCapturePageContext(query = '', includeHidden = false) {
     return null;
   }
   const needle = query.trim().toLocaleLowerCase();
-  const allCodeBlocks = [...document.querySelectorAll('pre')].filter(element => !element.closest('[data-promptdirector-capture-ui]')).map(element => {
+  const allCodeBlocks = [...(root.matches?.('pre') ? [root] : []), ...root.querySelectorAll('pre')].filter(element => !element.closest('[data-promptdirector-capture-ui]')).map(element => {
     const module = owner(element), shown = visible(element);
     return { selector: path(element), characters: element.textContent.length, visible: shown, module,
       ...(shown ? { content: element.textContent } : {}),
@@ -518,10 +565,10 @@ export function readCapturePageContext(query = '', includeHidden = false) {
     module.sources.push({ selector: block.selector, language: block.language, characters: block.characters });
     modules.set(module.selector, module);
   }
-  const dialogs = [...document.querySelectorAll('dialog[open],[role="dialog"]')].filter(visible).map(element => ({ selector: path(element),
+  const dialogs = [...root.querySelectorAll('dialog[open],[role="dialog"]')].filter(visible).map(element => ({ selector: path(element),
     title: element.querySelector(titleSelector)?.textContent.trim() || element.getAttribute('aria-label') || '' }));
   const active = document.activeElement;
-  const textRoots = [...document.querySelectorAll('article,[role="article"],p,blockquote,[lang]')].filter(element => {
+  const textRoots = [...root.querySelectorAll('article,[role="article"],p,blockquote,[lang]')].filter(element => {
     if (element === document.body || element === document.documentElement || element.closest('pre,code,nav,header,footer,' + excluded)) return false;
     const clone = element.cloneNode(true); clone.querySelectorAll(excluded).forEach(node => node.remove());
     const text = clone.textContent.trim();
@@ -535,6 +582,8 @@ export function readCapturePageContext(query = '', includeHidden = false) {
     return { selector: path(element), visible: visible(element), text: clone.textContent.trim(), completeness: truncated ? 'partial' : 'complete' };
   }).filter(item => item.text);
   return { ok: true, url: location.href, title: document.title, query,
+    scope: selector ? { selector } : query ? { query } : 'visible_scene', loadedCodeBlockCount: allCodeBlocks.length,
+    matchingCodeBlockCount: codeBlocks.length,
     selection: active?.matches('input,textarea,select') ? '' : String(getSelection() || ''), dialogs, codeBlocks, textModules,
     ...(includeHidden ? { modules: [...modules.values()], inventoryScope: 'currently_loaded_dom' } : {}),
     untrustedContent: true };
@@ -581,6 +630,7 @@ export function capturePlatformGuidance(url) {
     trustedMediaHosts: adapter.trustedMediaHosts,
     capabilities: { prepare: { operation: 'prepare_capture', modes: ['whole', 'loaded'], selector: true },
       locate: { operation: 'read_capture', part: 'context', query: true },
+      moduleDirectory: { operation: 'read_capture', part: 'modules', frozen: true, paging: true, revisionScope: 'directory' },
       originals: { operation: 'read_capture', part: 'source', selectors: true, paging: true, frozen: true },
       supplements: { operation: 'read_capture', part: 'supplement', discover: 'summary.candidates[].supplements' },
       visual: { operation: 'read_capture', parts: ['screenshot', 'image'], requiresVisionModel: true },

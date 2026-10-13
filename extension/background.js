@@ -820,8 +820,9 @@ async function executeAgentOperation(operation, input) {
     case "read_media": return agentLibrary.media(input);
     case 'read_capture': {
       // Freezing new originals changes the preview revision. Serialize those
-      // reads with selection/save; ordinary context and pagination stay read-only.
-      const freezesSource = ['source', 'supplement'].includes(input.part) && !input.offset || input.refresh;
+      // reads and directory checkpoints with selection/save; ordinary live
+      // context and source pagination stay read-only.
+      const freezesSource = ['source', 'supplement'].includes(input.part) && !input.offset || input.refresh || input.part === 'modules';
       return freezesSource ? enqueueCapture(() => agentCapturePreview.read(input)) : agentCapturePreview.read(input);
     }
     case "capture":

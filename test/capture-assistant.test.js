@@ -10,7 +10,7 @@ async function runCaptureAssistant(input, dependencies) {
     const context = await options.toolRuntime.context();
     const steps = input.fixtureSteps || options.toolRuntime.specs.filter(spec => !['declare_task', 'settle_task'].includes(spec.name)).map(spec => ({ operation: spec.name }));
     const declared = await options.toolRuntime.execute('declare_task', { mode: 'act', goal: input.instruction,
-      userMessageIds: [context.currentUserId], steps });
+      steps });
     assert.equal(declared.data.ok, true);
     return execute(request, settings, images, options);
   }) });

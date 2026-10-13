@@ -50,6 +50,9 @@ test('MCP uses the same capture schemas, waits for receipts and exposes no arbit
     assert.equal(calls.filter(item => item.operation === 'status').length, 1);
     assert.deepEqual(calls.filter(item => item.operation === 'get_task').map(item => item.input.requestId), ['prepare', 'select', 'save']);
     const read = server._registeredTools.promptdirector_read_capture;
+    const directory = read.inputSchema.parse({ captureId:'preview', part:'modules', offset:12, length:12000, expectedRevision:1 });
+    assert(!(await read.handler(directory)).isError);
+    assert.deepEqual(calls.find(item=>item.input?.part === 'modules').input, directory);
     const supplement = read.inputSchema.parse({ captureId:'preview', part:'supplement', candidateId:'post', supplementId:'comment', expectedRevision:2 });
     assert(!(await read.handler(supplement)).isError);
     assert.deepEqual(calls.find(item=>item.input?.part === 'supplement').input, supplement);

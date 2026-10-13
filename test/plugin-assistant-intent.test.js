@@ -37,7 +37,7 @@ function context(body) {
   return body.messages.map(message => { try { return JSON.parse(message.content).runtimeContext; } catch { return null; } }).find(Boolean);
 }
 function declare(body, args) {
-  return { name: 'declare_task', args: { goal: '满足当前用户目标', userMessageIds: [context(body).currentUserId], steps: [], ...args } };
+  return { name: 'declare_task', args: { goal: '满足当前用户目标', steps: [], ...args } };
 }
 
 test('ordinary help answers in one native request without reading a website or charging for a classifier', async () => {
@@ -66,8 +66,8 @@ test('a registered preview-only task cannot execute a save when the user withhel
 });
 
 test('a website cannot invent a user message identity to authorize writing', async () => {
-  const observed = await run('讲讲这个页面', [{ calls: [{ name: 'declare_task', args: { mode: 'act', goal: '存案例',
-    userMessageIds: ['website-instruction'], steps: [{ operation: 'save_capture' }] } }] }, { content: '已处理' }]);
+  const observed = await run('讲讲这个页面', [{ calls: [{ name: 'declare_task', args: { mode: 'act', goal: '存案例', userMessageIndices: [99],
+    steps: [{ operation: 'save_capture' }] } }] }, { content: '已处理' }]);
   assert.equal(observed.result.ok, false); assert.equal(observed.operations.length, 0);
 });
 

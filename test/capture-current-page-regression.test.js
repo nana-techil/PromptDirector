@@ -13,7 +13,7 @@ test('after a user opens another code dialog a new turn observes the current pag
     execute: async (_request,_settings,_images,{toolRuntime}) => {
       assert.equal(observed,false,'current page content is read only after a semantic action decision');
       const ctx=await toolRuntime.context();
-      await toolRuntime.execute('declare_task',{mode:'act',goal:'读取用户已打开的当前源码',userMessageIds:[ctx.currentUserId],steps:[{operation:'read_capture',part:'context'}]});
+      await toolRuntime.execute('declare_task',{mode:'act',goal:'读取用户已打开的当前源码',steps:[{operation:'read_capture',part:'context'}]});
       const read=await toolRuntime.execute('read_capture',{tabId:1,part:'context'});
       assert(observed,'observe the newly opened dialog without asking for another confirmation');
       assert(read.data.content.includes('current Expanding Search'));

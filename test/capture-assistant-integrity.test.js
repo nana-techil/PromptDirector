@@ -149,8 +149,7 @@ test('the first frozen X-comment correction reaches the strict provider and sele
       ?{state:'completed',result:await f.api.execute(name,args,args.requestId,f.scope)}:await f.api.read(args),
     execute:async (_request,_settings,_images,{toolRuntime})=>{
       const context = await toolRuntime.context();
-      await toolRuntime.execute('declare_task', { mode:'act', goal:_request.instruction, userMessageIds:[context.currentUserId],
-        steps:[{operation:'prepare_capture'},{operation:'update_capture'}] });
+      await toolRuntime.execute('declare_task', { mode:'act', goal:_request.instruction, steps:[{operation:'prepare_capture'},{operation:'update_capture'}] });
       const response=await runComposerToolLoop({body:{model:'deepseek-flash',messages:[{role:'user',content:'采集评论提示词'}]},protocol:'chat_completions',runtime:toolRuntime,
         request:async body=>{
           wire.push(structuredClone(body));requests++;
@@ -179,7 +178,7 @@ test('a first code-case save includes the interactive preview, frozen originals 
     call:async(name,args)=>['prepare_capture','update_capture','save_capture'].includes(name)?{state:'completed',result:await api.execute(name,args,args.requestId,f.scope)}:await api.read(args),
     execute:async(_req,_settings,_images,{toolRuntime})=>{
       const context=await toolRuntime.context();
-      await toolRuntime.execute('declare_task',{mode:'act',goal:_req.instruction,userMessageIds:[context.currentUserId],contentTypeId:'content:code-case',
+      await toolRuntime.execute('declare_task',{mode:'act',goal:_req.instruction,contentTypeId:'content:code-case',
         steps:[{operation:'prepare_capture'},{operation:'update_capture'},{operation:'save_capture'}]});
       const prepared=(await toolRuntime.execute('prepare_capture',{tabId:1})).data;
       const source=(await toolRuntime.execute('read_capture',{captureId:prepared.captureId,part:'source',selector:'#comment'})).data;

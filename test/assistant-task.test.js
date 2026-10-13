@@ -17,7 +17,7 @@ function fixture({ turnId = 'user-1', state = { toolContext: [] }, execute } = {
     await durable.recordToolResult({ name, args, data: result.data, callId: ctx.callId });
     return result;
   } }, { messages: [{ id: turnId, role: 'user', content: 'current instruction' }], instruction: 'current instruction', context: {cases:['case','chosen-case','chosen','first','second'].map(id=>({id}))} });
-  const declare = (steps, extra = {}) => runtime.execute('declare_task', { mode: 'act', goal: 'current goal', userMessageIds: [turnId], steps, ...extra });
+  const declare = (steps, extra = {}) => runtime.execute('declare_task', { mode: 'act', goal: 'current goal', steps, ...extra });
   return { runtime, calls, state, declare };
 }
 
@@ -25,7 +25,7 @@ test('a created material is complete for its actual source targets without repla
   const record=[];
   const runtime=withAssistantTaskRuntime({specs:[{name:'save_material',parameters:{properties:{requestId:{}}}}],execute:async(name,args)=>{record.push(name);return{data:{ok:true,results:[{status:'saved',entryId:'new-output',sourceCaseIds:args.sourceCaseIds}]}};}},
     {instruction:'Save this work',userMessageId:'new-user',context:{cases:[{id:'source-case'}]}});
-  await runtime.execute('declare_task',{mode:'act',goal:'Save new material based on selected source',userMessageIds:['new-user'],steps:[{operation:'save_material',targetId:'source-case',resultIds:['source-case']}]});
+  await runtime.execute('declare_task',{mode:'act',goal:'Save new material based on selected source',steps:[{operation:'save_material',targetId:'source-case',resultIds:['source-case']}]});
   await runtime.execute('save_material',{requestId:'once',sourceCaseIds:['source-case']},{callId:'saved'});
   assert.equal(await runtime.finishTurn({}),undefined);assert.equal(runtime.task.state,'completed');assert.deepEqual(record,['save_material']);
 });
@@ -36,7 +36,7 @@ test('a committed result at the token budget is delivered without another model 
     const action=runComposerToolLoop({protocol:'chat_completions',runtime:f.runtime,budget:{maxTotalTokens:10},body:{model:'fixture',messages:[{role:'user',content:'current instruction'}]},request:async()=>{
       requests++;
       return new Response(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[
-        {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Save this result',userMessageIds:['user-1'],steps:[{operation:'save_capture'}]})}},
+        {id:'plan',type:'function',function:{name:'declare_task',arguments:JSON.stringify({mode:'act',goal:'Save this result',steps:[{operation:'save_capture'}]})}},
         {id:'save',type:'function',function:{name:'save_capture',arguments:'{}'}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:9,completion_tokens:1,total_tokens:10}}));
     }});
     if(saved){const result=await action;assert(result.content.includes('Save this result'));assert.equal(f.runtime.task.state,'completed');}
@@ -124,7 +124,7 @@ for (const protocol of ['chat_completions', 'responses']) {
     const result = await runComposerToolLoop({ protocol, runtime: f.runtime,
       body: { model: 'fixture', ...(protocol === 'responses' ? { input: [{ role: 'user', content: 'change the title' }] } : { messages: [{ role: 'user', content: 'change the title' }] }) },
       request: async () => nativeResponse(protocol, requests++ ? [] : [
-        { id: 'register', name: 'declare_task', args: { mode: 'act', goal: 'change title', userMessageIds: ['user-1'], steps: [{ operation: 'edit_case', targetId: 'case' }] } },
+        { id: 'register', name: 'declare_task', args: { mode: 'act', goal: 'change title', steps: [{ operation: 'edit_case', targetId: 'case' }] } },
         { id: 'edit', name: 'edit_case', args: { caseId: 'case', requestId: 'stable-write' } }
       ], 'The title is updated.') });
     assert.equal(result.content, 'The title is updated.'); assert.equal(requests, 2);
@@ -135,7 +135,7 @@ for (const protocol of ['chat_completions', 'responses']) {
     const result = await runComposerToolLoop({ protocol, runtime: f.runtime,
       body: { model: 'fixture', ...(protocol === 'responses' ? { input: [{ role: 'user', content: 'help' }] } : { messages: [{ role: 'user', content: 'help' }] }) },
       request: async () => { requests++; return nativeResponse(protocol, [{ id: 'register', name: 'declare_task',
-        args: { mode: 'respond', goal: 'explain', userMessageIds: ['user-1'], steps: [], reply: 'Here is how it works.' } }]); } });
+        args: { mode: 'respond', goal: 'explain', steps: [], reply: 'Here is how it works.' } }]); } });
     assert.equal(result.content, 'Here is how it works.'); assert.equal(requests, 1); assert.equal(f.calls.length, 0);
   });
 }
@@ -143,7 +143,7 @@ for (const protocol of ['chat_completions', 'responses']) {
 test('a plan extension permits retrying a preflight-denied write without relaxing no-progress protection', async () => {
   const f = fixture(); let requests = 0;
   const args = { caseId: 'case', requestId: 'same-write' };
-  const declaration = steps => ({ name: 'declare_task', args: { mode: 'act', goal: 'current goal', userMessageIds: ['user-1'], steps } });
+  const declaration = steps => ({ name: 'declare_task', args: { mode: 'act', goal: 'current goal', steps } });
   const batches = [
     [declaration([{ operation: 'read_case' }]), { name: 'edit_case', args }],
     [declaration([{ operation: 'read_case' }, { operation: 'edit_case', targetId: 'case' }]), { name: 'edit_case', args }, { name: 'read_case', args: { caseId: 'case' } }],
@@ -159,7 +159,7 @@ test('identical words in a new human message retain a new task identity', async 
     messages: [{ id: 'old-message', role: 'user', content: 'same words' }], instruction: 'same words', userMessageId: 'new-message'
   });
   const context = await wrapped.context();
-  assert.equal(context.currentUserId, 'new-message'); assert.equal(context.userMessages.length, 2);
+  assert.equal(context.currentUserMessageIndex, 1); assert.equal(context.userMessages.length, 2);
   assert.equal(context.userMessages.at(-1).userMessageIndex, 1);
 });
 
@@ -200,7 +200,7 @@ test('an analysis receipt with failed items is not a completed task merely becau
 test('extending a plan does not permit replaying an already successful write with unchanged arguments', async () => {
   const f=fixture();let requests=0;
   const steps=[{operation:'edit_case',targetId:'case'}];
-  const declare=steps=>({name:'declare_task',args:{mode:'act',goal:'current goal',userMessageIds:['user-1'],steps}});
+  const declare=steps=>({name:'declare_task',args:{mode:'act',goal:'current goal',steps}});
   const write={name:'edit_case',args:{caseId:'case',requestId:'stable'}};
   const batches=[[declare(steps),write],[declare([...steps,{operation:'read_case'}]),write]];
   await assert.rejects(runComposerToolLoop({protocol:'chat_completions',runtime:f.runtime,body:{model:'fixture',messages:[{role:'user',content:'current instruction'}]},
@@ -211,7 +211,7 @@ test('extending a plan does not permit replaying an already successful write wit
 test('a genuine blocker terminates with its factual reason without a second model embellishment',async()=>{
   const f=fixture({execute:()=>({ok:false,code:'source_unavailable'})});let requests=0;
   const batches=[[
-    {name:'declare_task',args:{mode:'act',goal:'current goal',userMessageIds:['user-1'],steps:[{operation:'read_case'}]}},
+    {name:'declare_task',args:{mode:'act',goal:'current goal',steps:[{operation:'read_case'}]}},
     {name:'read_case',args:{caseId:'case'}}
   ],[{name:'settle_task',args:{state:'blocked',reason:'目标来源暂不可用，已取得的内容保留。',failedCallId:'block-0-1'}}]];
   const result=await runComposerToolLoop({protocol:'chat_completions',runtime:f.runtime,body:{model:'fixture',messages:[{role:'user',content:'current instruction'}]},
@@ -243,7 +243,7 @@ test('actual Skill identifiers are supported by the same target binding as cases
   const {withAssistantTaskRuntime}=await import('../extension/assistant-task.js');
   const runtime=withAssistantTaskRuntime({specs:[{name:'save_skill',parameters:{properties:{requestId:{},skillId:{}}}}],execute:async()=>({data:{ok:true,skillId:'actual-skill'}})},
     {messages:[{id:'u',role:'user',content:'update the method'}],instruction:'update the method',context:{skills:[{id:'actual-skill'}]}});
-  await runtime.execute('declare_task',{mode:'act',goal:'Update the chosen method',userMessageIds:['u'],steps:[{operation:'save_skill',targetId:'actual-skill'}]});
+  await runtime.execute('declare_task',{mode:'act',goal:'Update the chosen method',steps:[{operation:'save_skill',targetId:'actual-skill'}]});
   assert((await runtime.execute('save_skill',{skillId:'actual-skill'},{callId:'saved'})).data.ok);
   assert.equal(await runtime.finishTurn({}),undefined);
 });
@@ -253,7 +253,7 @@ for(const key of ['skillId','caseId','captureId','projectId','batchId','transfer
     const value=key==='tabId'?17:'actual-object';
     const runtime=withAssistantTaskRuntime({specs:[{name:'read_object',parameters:{properties:{[key]:{}}}}],execute:async()=>({data:{ok:true,[key]:value}})},
       {instruction:'Inspect the object',context:{objects:[{[key]:value}]}});
-    const context=await runtime.context();await runtime.execute('declare_task',{mode:'act',goal:'Inspect',userMessageIds:[context.currentUserId],steps:[{operation:'read_object',targetId:String(value)}]});
+    const context=await runtime.context();await runtime.execute('declare_task',{mode:'act',goal:'Inspect',steps:[{operation:'read_object',targetId:String(value)}]});
     await runtime.execute('read_object',{[key]:value},{callId:'read'});assert.equal(await runtime.finishTurn({}),undefined);
   });
 }
@@ -291,9 +291,9 @@ test('batched source reads and individual continuation pages share the same sour
 
 test('semantic goal wording may be refined while required outcomes and real user authorization stay fixed',async()=>{
   const f=fixture();await f.declare([{operation:'save_capture'}]);
-  const updated=await f.runtime.execute('declare_task',{mode:'act',goal:'Preserve the source and save the guide',userMessageIds:['user-1'],steps:[{operation:'save_capture'}]});
+  const updated=await f.runtime.execute('declare_task',{mode:'act',goal:'Preserve the source and save the guide',steps:[{operation:'save_capture'}]});
   assert(updated.data.ok);assert.equal((await f.runtime.finishTurn({})).action,'continue');
-  assert.equal((await f.runtime.execute('declare_task',{mode:'act',goal:'Just explain instead',userMessageIds:['user-1'],steps:[{operation:'read_case'}]})).data.code,'task_goal_changed');
+  assert.equal((await f.runtime.execute('declare_task',{mode:'act',goal:'Just explain instead',steps:[{operation:'read_case'}]})).data.code,'task_goal_changed');
 });
 
 test('actual successful analysis items survive a partial receipt and can complete after a failed-item retry',async()=>{
@@ -311,7 +311,7 @@ test('a project lookup step can continue using its actual name fragment filter w
   execute:async(name,args)=>({data:{ok:true,content:JSON.stringify([{id:'real-project',name:'Motion-effects'}]),nextOffset:null}})},
   {instruction:'Save the selected effects in the project',userMessageId:'project-user'});
  await runtime.loadContext();
- await runtime.execute('declare_task',{mode:'act',goal:'Save separate effects in the matching project',userMessageIds:['project-user'],steps:[{operation:'read_projects',selector:'motion'},{operation:'save_capture'}]});
+ await runtime.execute('declare_task',{mode:'act',goal:'Save separate effects in the matching project',steps:[{operation:'read_projects',selector:'motion'},{operation:'save_capture'}]});
  await runtime.execute('read_projects',{query:' MOTION '},{callId:'actual-project-search'});
  assert.deepEqual(runtime.task.pending,[{operation:'save_capture'}]);
  assert.equal((await runtime.finishTurn({content:'All saved.'})).action,'continue');

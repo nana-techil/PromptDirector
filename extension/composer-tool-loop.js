@@ -95,6 +95,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   const seen = new Map(resumed?.seen ?? []);
   const callIds = new Set(resumed?.callIds ?? []);
   const idleReadBatches = new Set(resumed?.idleReadBatches || []);
+  const rejectedStates = new Set();
   // These are API operation identifiers, never user-language intent rules.
   // Live browser/capture reads retain their own freshness and source-version checks.
   const readOperation = name => ['read_', 'search_', 'list_', 'inspect_', 'describe_', 'get_'].some(prefix => name.startsWith(prefix))
@@ -226,7 +227,14 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         }
         if (newlyRetained.length) await runtime.retainSkillVersions?.(newlyRetained);
         const output = JSON.stringify(result.data);
-        if (!prior || output !== JSON.stringify(prior.data)) batchProgress = true;
+        const scopeChanged = JSON.stringify(scope) !== JSON.stringify(runtime.executionScope?.());
+        const progressed = result.data?.ok !== false && (controlOperation(call.name) ? scopeChanged
+          : !prior || output !== JSON.stringify(prior.data));
+        if (progressed) { batchProgress = true; rejectedStates.clear(); }
+        const rejected = result.data?.ok === false && controlOperation(call.name)
+          ? JSON.stringify([call.name, result.data.code || result.data.message, scope]) : null;
+        const repeatedRejection = rejected && rejectedStates.has(rejected);
+        if (rejected) rejectedStates.add(rejected);
         if (protocol === "responses") {
           current.input.push({ type: "function_call_output", call_id: call.id, output });
           if (result.images?.length) current.input.push({ role: "user", content: result.images.flatMap(image => [
@@ -242,6 +250,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         callIds.add(call.id);
         pendingCalls.shift(); toolCalls++;
         uncertainCallId = '';
+        if (repeatedRejection) throw Object.assign(new Error('任务登记重复失败且没有新事实，已停止无效调用；已有内容和成果保留'), { code: 'AGENT_NO_PROGRESS' });
         if (workingBytes({ body: current, cache: [...seen.values()], pendingCalls }) > budget.workingBytes) {
           stop('工具结果达到本次工作内存预算；已保留成果和未执行动作，请调整本次处理规模或使用分批读取');
         }
