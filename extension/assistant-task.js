@@ -17,6 +17,29 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
   const operations = specs.map(spec => spec.name);
   const mutations = new Set(runtime.specs.filter(spec => spec.parameters.properties?.requestId && spec.name !== 'prepare_capture').map(spec => spec.name));
   let task, continuingTask, observations = [], terminalReply;
+  const inventoryRanges = new Map();
+  function inventoryProgress(record) {
+    const data = record.data;
+    if (record.name !== 'read_capture' || data?.ok === false || data?.part !== 'modules'
+      || !Array.isArray(data.modules) || !Number.isInteger(data.total)) return;
+    // A frozen directory is independent of the live tab and human turn. Only
+    // pages of this same capture/version contribute; sources and saves do not.
+    const key = JSON.stringify([data.captureId, data.revision, data.total]);
+    const previous = inventoryRanges.get(key);
+    const before = previous?.reduce((sum, [start, end]) => sum + end - start, 0);
+    const ranges = [...(inventoryRanges.get(key) || []), [data.offset || 0, (data.offset || 0) + data.modules.length]];
+    const merged = [];
+    for (const [start, end] of ranges.sort((a, b) => a[0] - b[0])) {
+      const last = merged.at(-1);
+      if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+      else merged.push([start, end]);
+    }
+    inventoryRanges.set(key, merged);
+    const read = merged.reduce((sum, [start, end]) => sum + end - start, 0);
+    const next = merged[0]?.[0] === 0 ? merged[0][1] : 0;
+    return { progressed: before === undefined || read > before,
+      data: { read, total: data.total, complete: next >= data.total, nextUnreadOffset: next >= data.total ? null : next } };
+  }
   const knownTargets = new Set();
   const targetFields = new Set(['id','entryId','caseId','captureId','projectId','collectionId','candidateId','skillId','batchId','transferId','referenceId','assetId','visualId','versionId','tabId']);
   function observeTargets(value) {
@@ -124,7 +147,7 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       if (state) task = structuredClone(state.data);
       const lastAction = records.findLast(record => record.name === 'assistant_task_state' && record.data?.currentUserId !== currentUserId && record.data?.mode === 'act')?.data;
       continuingTask = lastAction && ['active','waiting','blocked'].includes(lastAction.state) ? lastAction : undefined;
-      for (const record of records) observeRecord(record);
+      for (const record of records) { observeRecord(record); inventoryProgress(record); }
       observations = records.filter(record => record.turnId === (runtime.turnId || currentUserId) && !['declare_task', 'settle_task', 'assistant_task_state'].includes(record.name));
       return records;
     },
@@ -195,6 +218,9 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
         await recordState(task.state);
       }
       const observation = { callId: call.callId, name, args, data: result.data };
+      const progress = inventoryProgress(observation);
+      if (progress) result = { ...result, progressed: progress.progressed, data: { ...result.data, inventoryProgress: progress.data } };
+      observation.data = result.data;
       observations.push(observation); observeRecord(observation);
       return result;
     },

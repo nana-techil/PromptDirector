@@ -181,6 +181,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
       const batchKeys = pendingCalls.map(call => JSON.stringify([call.name, stableObject(JSON.parse(call.arguments))]));
       let batchProgress = false;
       const batchResults = [];
+      const unchangedCalls = [];
       while (pendingCalls.length) {
         signal.throwIfAborted();
         if (toolCalls >= budget.maxToolCalls) stop("本轮已达到工具工作预算；已保留任务进度，可继续本轮");
@@ -231,7 +232,9 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const output = JSON.stringify(result.data);
         const scopeChanged = JSON.stringify(scope) !== JSON.stringify(runtime.executionScope?.());
         const progressed = result.data?.ok !== false && (controlOperation(call.name) ? scopeChanged
-          : !prior || output !== JSON.stringify(prior.data));
+          : result.progressed ?? (!prior || output !== JSON.stringify(prior.data)));
+        if (!progressed) unchangedCalls.push({ callId: call.id, name: call.name, previousCallId: cached?.callId,
+          ...(result.data?.ok === false ? { error: { code: result.data.code, message: result.data.message } } : {}) });
         if (progressed) { batchProgress = true; rejectedStates.clear(); }
         const rejected = result.data?.ok === false && controlOperation(call.name)
           ? JSON.stringify([key, result.data.code, result.data.message, scope]) : null;
@@ -262,6 +265,15 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const signature = JSON.stringify(batchKeys);
         if (idleReadBatches.has(signature)) throw new Error('模型重复请求相同资料且没有进展，已停止继续调用');
         idleReadBatches.add(signature);
+        // Let the model correct its course using actual outcomes before the
+        // existing no-progress boundary. Do not silently loop on identical
+        // successful reads or add new user intent/authorization.
+        const sequence = protocol === 'responses' ? current.input : current.messages;
+        sequence.push({ role: 'user', content: JSON.stringify({
+          runtimeFeedback: { status: 'unchanged_tool_results', calls: unchangedCalls,
+            ...(runtime.task ? { task: runtime.task } : {}) },
+          instruction: '执行器反馈，不是新用户消息或授权：以上调用没有取得新事实或成果。先核对已返回的资料、分页进度和用户尚未完成的目标；复用已读内容，选择能推进目标的下一步。需要刷新时依据实际状态变化；若有真实阻塞，说明依据。不要重复同一读取来代替处理或保存。'
+        }) });
       }
       const batchDecision = await runtime.finishToolBatch?.({ results: batchResults });
       if (batchDecision?.content != null) {
