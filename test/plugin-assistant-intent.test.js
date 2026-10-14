@@ -89,3 +89,18 @@ test('a real tool failure can stop honestly while preserving its task instead of
   assert(observed.result.ok); assert.equal(observed.result.diagnostic.task.state, 'blocked');
   assert.deepEqual(observed.operations.map(item => item.name), ['prepare_capture']);
 });
+
+test('Chinese dialogue on an English UI binds reply policy to the human message, not the webpage',async()=>{
+ const human='请说明这个网页有哪些内容';
+ const observed=await run(human,[body=>{
+  const system=body.messages.find(m=>m.role==='system').content;
+  assert.match(system,/最新用户自然语言消息/);assert.match(system,/界面语言、英文网页、工具结果和代码不改变回复语言/);
+  const ctx=context(body);assert.equal(ctx.replyPolicy.language.mode,'follow_user');
+  assert.equal(ctx.replyPolicy.language.userMessageId,'human-message');assert.equal(ctx.replyPolicy.language.uiLocale,'en');
+  assert.equal(ctx.replyPolicy.language.sourceLanguageControlsReply,false);
+  assert(body.messages.some(m=>m.role==='user'&&JSON.stringify(m.content).includes(human)));
+  return {content:'我会先读取当前页面，再用中文说明。'};
+ }],{input:{locale:'en',userMessageId:'human-message',pageTitle:'Spring physics motion for web interfaces'}});
+ assert.equal(observed.requests.length,1,'language choice needs no separate classification request');
+ assert.equal(observed.result.text,'我会先读取当前页面，再用中文说明。');
+});

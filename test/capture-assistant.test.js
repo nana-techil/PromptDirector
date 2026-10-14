@@ -236,3 +236,17 @@ test('a code preview edit is checked against the committed case instead of repea
     assert(result.ok);assert.equal(observed[1][0],'read_case_details');assert.equal(observed[1][1].caseId,'code');
   }
 });
+
+test('continuing known source work adopts its observed preview instead of creating a competing scope',async()=>{
+ const calls=[];
+ const old={...preview,state:'completed',sourceUrl:input.sourceUrl,tabId:input.tabId};
+ const result=await runCaptureAssistant({...input,instruction:'continue the remaining cases'}, {
+  runtime,signal:new AbortController().signal,
+  sessionRuntime:{loadContext:async()=>[{name:'prepare_capture',callId:'old',data:old}]},
+  call:async(name,args)=>{calls.push({name,args});assert.equal(name,'read_capture','a known preview must not be replaced by an implicit prepare');return args.part==='source'?{captureId:old.captureId,content:'exact source',complete:true}:old;},
+  execute:async(_request,_settings,_images,{toolRuntime})=>{
+   const receipt=await toolRuntime.execute('read_capture',{captureId:old.captureId,part:'source',selectors:['#effect pre']});
+   assert.equal(receipt.data.content,'exact source');return {text:'source read'};
+  }});
+ assert.equal(result.ok,true);assert.equal(calls.length,2);
+});

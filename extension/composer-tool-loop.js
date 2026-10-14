@@ -63,7 +63,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     const bytes = workingBytes(working);
     const estimate = Number.isFinite(lastPromptTokens) ? lastPromptTokens + Math.max(0, bytes - lastRequestBytes) : bytes;
     const reserve = current.max_tokens || current.max_output_tokens || current.max_completion_tokens || 0;
-    const pressure = maxCharacters && requestCharacters(working) > maxCharacters
+    const pressure = outputLimitPending || maxCharacters && requestCharacters(working) > maxCharacters
       || runtime.contextLength && estimate + reserve >= runtime.contextLength;
     if (!pressure) return working;
     const key = protocol === 'responses' ? 'input' : 'messages';
@@ -118,6 +118,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   let segmentStart = requestCount;
   const segmentTokens = usage.totalTokens;
   let toolCalls = 0;
+  let outputLimitPending = resumed?.outputLimitPending || false;
+  let lastIncompleteResponse = resumed?.lastIncompleteResponse;
   let toolSegmentStart = 0;
   const committedEntries = new Set(captureRecords.flatMap(captureSavedEntries));
   let segmentProgress = committedEntries.size;
@@ -135,6 +137,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   armDeadline();
   const stop = message => { throw resourceBudgetError(message, { requestCount, toolCalls, resumable: true }); };
   const checkpoint = () => ({ protocol, body: current, pendingCalls, uncertainCallId, retainedSkillVersionIds: [...retainedSkillVersionIds],
+    outputLimitPending, lastIncompleteResponse,
     seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, name: value.name, callId: value.callId, terminate: value.terminate, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
     callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount, lastPromptTokens, lastRequestBytes });
   const canContinueTask = () => canIndex && runtime.saveContinuation && runtime.task?.mode === 'act' && runtime.task.state === 'active';
@@ -174,13 +177,34 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const previouslyKnown = usageKnown;
         usageKnown = false;
         const response = await request(projected, { signal });
-        const step = await readToolResponse(checkedResponse(response, budget.maxTextBytes, signal), protocol, onDelta, signal);
+        let step;
+        try { step = await readToolResponse(checkedResponse(response, budget.maxTextBytes, signal), protocol, onDelta, signal); }
+        catch (error) {
+          if (error.providerUsage) { addUsage(usage, error.providerUsage, protocol); usageKnown = previouslyKnown; }
+          await runtime.onRequest?.({ requestCount, usage: usageKnown ? usage : null, finishReason: error.finishReason, incompleteReason: error.incompleteReason });
+          throw error;
+        }
         usageKnown = previouslyKnown && step.usage != null;
         addUsage(usage, step.usage, protocol);
         lastPromptTokens = step.usage?.prompt_tokens ?? step.usage?.input_tokens;
         lastRequestBytes = workingBytes(projected);
-        await runtime.onRequest?.({ requestCount, usage: usageKnown ? usage : null });
+        await runtime.onRequest?.({ requestCount, usage: usageKnown ? usage : null, finishReason: step.finishReason, incompleteReason: step.incompleteReason });
         signal.throwIfAborted();
+        if (step.incompleteReason) {
+          // Keep the incomplete generation in the durable checkpoint, never as
+          // executable arguments or as a completed answer in the model history.
+          lastIncompleteResponse = { requestCount, ...step };
+          onDelta('', '');
+          if (outputLimitPending) throw Object.assign(new Error('模型连续达到输出长度限制，尚未产生新进展；已保存成果和任务保留'),
+            { code: 'AGENT_OUTPUT_LIMIT', finishReason: step.finishReason, incompleteReason: step.incompleteReason });
+          outputLimitPending = true;
+          const sequence = protocol === 'responses' ? current.input : current.messages;
+          sequence.push({ role: 'user', content: JSON.stringify({ runtimeFeedback: { code: 'model_output_limit',
+            finishReason: step.finishReason, reason: step.incompleteReason, toolsNotExecuted: step.calls.map(call => call.name),
+            ...(runtime.task ? { task: runtime.task } : {}) },
+            instruction: '执行器事实反馈，不是新用户要求或授权：上次生成达到服务长度限制，该响应中的工具均未执行。保留原任务、已保存成果和已读完整来源，拆分接下来的工具参数/批次，逐步提交可独立完成的内容，再继续剩余项。不要重复完整计划或重做已存项，不要删减原文或降低案例质量来凑长度；回复仍跟随用户语言。' }) });
+          continue;
+        }
         if (!step.calls.length) {
           if (!step.content.trim() && !(allowImageOutput && step.items.some(item => item.type === "image_generation_call" && item.result))) throw new Error("模型没有返回文字或有效的工具调用");
           const decision = await runtime.finishTurn?.({ content: step.content, toolCalls, requestCount });
@@ -280,7 +304,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
           : result.progressed ?? (!prior || output !== JSON.stringify(prior.data)));
         if (!progressed) unchangedCalls.push({ callId: call.id, name: call.name, previousCallId: cached?.callId,
           ...(result.data?.ok === false ? { error: { code: result.data.code, message: result.data.message } } : {}) });
-        if (progressed) { batchProgress = true; rejectedStates.clear(); }
+        if (progressed) { batchProgress = true; rejectedStates.clear(); outputLimitPending = false; }
         const rejected = result.data?.ok === false && controlOperation(call.name)
           ? JSON.stringify([key, result.data.code, result.data.message, scope]) : null;
         const repeatedRejection = rejected && rejectedStates.has(rejected);
@@ -334,7 +358,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     }
   } catch (error) {
     if (deadlineController.signal.aborted && !callerSignal?.aborted) error = deadlineController.signal.reason;
-    if (error?.code === 'RESOURCE_BUDGET_REACHED' || callIds.size || uncertainCallId) {
+    if (error?.code === 'RESOURCE_BUDGET_REACHED' || callIds.size || uncertainCallId || lastIncompleteResponse) {
       const saved = checkpoint();
       await runtime.saveContinuation?.(saved);
       error.checkpoint = saved;
@@ -396,7 +420,7 @@ export async function readToolResponse(response, protocol, onDelta = () => {}, s
   for await (const data of readEventStream(response, { signal })) {
     if (!data.trim() || data === "[DONE]") continue;
     const event = JSON.parse(data);
-    if (event.error || ["error", "response.failed", "response.incomplete"].includes(event.type)) throw new Error("工具调用连接失败或输出不完整，已停止本轮");
+    if (event.error || ["error"].includes(event.type)) throw new Error("工具调用连接失败或输出不完整，已停止本轮");
     if (protocol === "responses") {
       if (event.type === "response.output_text.delta") { text += event.delta; onDelta(event.delta, text); }
       if (event.type === "response.output_item.added") items.set(event.output_index, structuredClone(event.item));
@@ -405,7 +429,7 @@ export async function readToolResponse(response, protocol, onDelta = () => {}, s
         if (item) item.arguments = (item.arguments || "") + event.delta;
       }
       if (event.type === "response.output_item.done") items.set(event.output_index, event.item);
-      if (event.type === "response.completed") {
+      if (["response.completed", "response.incomplete", "response.failed"].includes(event.type)) {
         payload = { ...event.response, output: event.response.output?.length ? event.response.output : [...items.values()] };
         if (!payload.output_text && text) payload.output_text = text;
         terminal = true;
@@ -437,7 +461,11 @@ function normalizeResponse(payload, protocol, onDelta) {
   const message = payload.choices?.[0]?.message;
   if (Array.isArray(message?.tool_calls) && !message.tool_calls.length) delete message.tool_calls;
   const finishReason = protocol === "responses" ? payload.status : payload.choices?.[0]?.finish_reason;
-  if (payload.error || ["length", "content_filter", "incomplete", "failed"].includes(finishReason)) throw new Error("模型输出不完整，未执行工具调用");
+  const incompleteReason = finishReason === 'length' ? 'length'
+    : ['content_filter','incomplete','failed'].includes(finishReason) ? payload.incomplete_details?.reason || finishReason : undefined;
+  if (payload.error || incompleteReason && !['length','max_output_tokens'].includes(incompleteReason))
+    throw Object.assign(new Error('模型服务未完成响应，未执行工具调用'), {code:'AGENT_RESPONSE_INCOMPLETE', finishReason,
+      incompleteReason: incompleteReason || payload.error?.code, providerUsage: payload.usage});
   const items = payload.output ?? [];
   const calls = protocol === "responses"
     ? items.filter(item => item.type === "function_call").map(item => ({ id: item.call_id, name: item.name, arguments: item.arguments }))
@@ -446,5 +474,5 @@ function normalizeResponse(payload, protocol, onDelta) {
     ? payload.output_text || items.flatMap(item => item.content ?? []).filter(item => item.type === "output_text").map(item => item.text).join("")
     : message?.content || "";
   onDelta?.(content, content);
-  return { calls, content, items, message, finishReason, model: payload.model, usage: payload.usage };
+  return { calls, content, items, message, finishReason, incompleteReason, model: payload.model, usage: payload.usage };
 }

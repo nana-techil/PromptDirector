@@ -318,3 +318,35 @@ test('invalid JSON objects are recoverable but unchanged malformed calls cannot 
   assert.equal(saved.body.messages.filter(m=>m.role==='tool').length,2,'checkpoint retains paired errors for both invalid calls');
  }
 });
+
+test('provider output length is fed back so a smaller complete write can follow without executing partial calls',async()=>{
+ for(const protocol of ['chat_completions','responses']){
+  let requests=0;const executed=[],receipts=[];
+  const response=(args,limited=false)=>protocol==='responses'?new Response(JSON.stringify({status:limited?'incomplete':'completed',incomplete_details:limited?{reason:'max_output_tokens'}:undefined,usage:{input_tokens:5,output_tokens:3,total_tokens:8},output:[{type:'function_call',call_id:`r-${requests}`,name:'search_cases',arguments:args}]})):chat({role:'assistant',tool_calls:[{id:`r-${requests}`,type:'function',function:{name:'search_cases',arguments:args}}]},{choices:[{message:{role:'assistant',tool_calls:[{id:`r-${requests}`,type:'function',function:{name:'search_cases',arguments:args}}]},finish_reason:limited?'length':'tool_calls'}],usage:{prompt_tokens:5,completion_tokens:3,total_tokens:8}});
+  const result=await runComposerToolLoop({body:protocol==='responses'?{input:[{role:'user',content:'save remaining items'}]}:body(),protocol,
+   runtime:{specs:[spec],onRequest:async info=>receipts.push(info),execute:async(_name,args)=>{executed.push(args);return {data:{ok:true}}}},
+   request:async current=>{
+    requests++;if(requests===1)return response('{"query":"unfinished',true);
+    if(requests===2){assert(JSON.stringify(current).includes('model_output_limit'));assert(!JSON.stringify(current).includes('unfinished'),'partial unexecuted arguments must not poison the next request');return response('{"query":"complete small step"}');}
+    return protocol==='responses'?new Response(JSON.stringify({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'done'}]}],usage:{input_tokens:5,output_tokens:3,total_tokens:8}})):chat({role:'assistant',content:'done'},{usage:{prompt_tokens:5,completion_tokens:3,total_tokens:8}});
+   }});
+  assert.deepEqual(executed,[{query:'complete small step'}]);assert.equal(result.usage.totalTokens,24);assert.equal(receipts[0].incompleteReason,protocol==='responses'?'max_output_tokens':'length');
+ }
+});
+
+test('streamed output limits retain usage and incomplete checkpoints without bypassing explicit budgets or refusals',async()=>{
+ const lengthReply=()=>sse([{choices:[{delta:{tool_calls:[{index:0,id:'unfinished',function:{name:'search_cases',arguments:'{"query":"'}}]},finish_reason:'length'}]}, {usage:{prompt_tokens:5,completion_tokens:3,total_tokens:8}}]);
+ let checkpoint,requests=0;
+ const runtime={specs:[spec],execute:()=>assert.fail('partial output must never execute'),saveContinuation:async v=>checkpoint=v};
+ await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,budget:{maxTotalTokens:8},request:async()=>{requests++;return lengthReply()}}),{code:'RESOURCE_BUDGET_REACHED'});
+ assert.equal(requests,1);assert.equal(checkpoint.usage.totalTokens,8);assert.equal(checkpoint.lastIncompleteResponse.calls[0].arguments,'{"query":"');assert.equal(checkpoint.pendingCalls.length,0);
+ requests=0;
+ await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,request:async()=>{requests++;return lengthReply()}}),{code:'AGENT_OUTPUT_LIMIT'});
+ assert.equal(requests,2,'unchanged output exhaustion is not an infinite paid retry loop');
+ assert.equal(checkpoint.usage.totalTokens,16);
+ requests=0;
+ await assert.rejects(runComposerToolLoop({body:{input:[{role:'user',content:'save'}]},protocol:'responses',runtime,request:async()=>{requests++;return new Response(JSON.stringify({status:'incomplete',incomplete_details:{reason:'content_filter'},usage:{input_tokens:5,output_tokens:3,total_tokens:8}}))}}),{code:'AGENT_RESPONSE_INCOMPLETE',incompleteReason:'content_filter'});
+ assert.equal(requests,1,'a provider refusal must not be treated as a batch size problem');
+ const parsed=await readToolResponse(sse([{type:'response.incomplete',response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[],usage:{input_tokens:5,output_tokens:3,total_tokens:8}}}]),'responses');
+ assert.equal(parsed.incompleteReason,'max_output_tokens');assert.equal(parsed.usage.total_tokens,8);
+});

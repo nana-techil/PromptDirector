@@ -38,7 +38,7 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                   globalThis.longBatchPromise=(async()=>{
                   const {runCaptureAssistant,runComposerToolLoop,createAgentContextRuntime,call}=batchTest;
                   const expect=(yes,message)=>{if(!yes)throw new Error(message)};
-                  let stage=0,checkpoints=0,journal={}; const sizes=[];
+                  let stage=0,checkpoints=0,journal={}; const sizes=[],limitedStages=new Set();
                   const sessionRuntime=createAgentContextRuntime({turnId:'long-batch-turn',load:async()=>journal,
                     update:async fn=>{journal=fn(journal);await chrome.storage.local.set({batchTestJournal:journal});}});
                   const save=sessionRuntime.saveContinuation;sessionRuntime.saveContinuation=async value=>{checkpoints++;await save(value)};
@@ -51,6 +51,10 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                         globalThis.longBatchStage=stage;sizes.push(JSON.stringify(body).length);
                         const latest=body.messages.findLast(m=>m.role==='tool');const data=latest?JSON.parse(latest.content):null;
                         if(data?.ok===false)throw new Error(JSON.stringify(data));
+                        if([3,7].includes(stage)&&!limitedStages.has(stage)) {
+                          limitedStages.add(stage);
+                          return new Response(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'limited-'+stage,type:'function',function:{name:'update_capture',arguments:'{"candidates":['}}]},finish_reason:'length'}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}}));
+                        }
                         let calls=[];const tool=(name,args)=>calls.push({id:'call-'+stage,type:'function',function:{name,arguments:JSON.stringify(args)}});
                         if(stage===0)tool('declare_task',{mode:'act',goal:'Save all '+count+' independent effects',steps:[{operation:'prepare_capture'},{operation:'read_capture',part:'source'},{operation:'update_capture'},{operation:'save_capture',resultIds:ids}],contentTypeId:'content:code-case'});
                         else if(stage<=count*2){
@@ -62,7 +66,7 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                         }
                         stage++;return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:calls.length?'':'All requested effects saved',...(calls.length?{tool_calls:calls}:{})}}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}}));
                       }});
-                      expect(output.requestCount===count*2+2,'unexpected request count');expect(output.usage.totalTokens===output.requestCount*12,'usage reset at checkpoint');return {text:output.content};
+                      expect(output.requestCount===count*2+2+limitedStages.size,'unexpected request count');expect(output.usage.totalTokens===output.requestCount*12,'usage reset at checkpoint');return {text:output.content};
                     }});
                   expect(result.ok,result.message);expect(result.taskState==='completed','target ledger incomplete');
                   const receipts=journal.toolContext.filter(r=>r.name==='save_capture');
@@ -70,7 +74,8 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                   expect(receipts.every(r=>r.data.results.every(i=>i.originalVerification.status==='verified')),'unverified originals');
                   const tabs=(await chrome.tabs.query({})).filter(t=>t.url===url);
                   expect(tabs.length===1,'source tab multiplication');
-                  return {requests:stage,checkpoints,sourceTabs:tabs.length,receipts:receipts.length,journalRecords:journal.toolContext.length,requestCharacters:sizes};
+                  expect(result.diagnostic.requests.filter(r=>r.incompleteReason==='length').length===2,'missing output-limit diagnostics');
+                  return {requests:sizes.length,outputLimitsRecovered:limitedStages.size,checkpoints,sourceTabs:tabs.length,receipts:receipts.length,journalRecords:journal.toolContext.length,requestCharacters:sizes};
                   })();globalThis.longBatchDone=false;longBatchPromise.finally(()=>longBatchDone=true).catch(()=>{});
                 }''',{'url':url,'tab':tab,'count':COUNT})
                 last=None;started=time.monotonic()

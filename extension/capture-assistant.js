@@ -33,7 +33,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     if (result.images?.length && !service.vision) throw agentError('capture_vision_unsupported', '当前模型不能接收图片，请选择支持图像的已配置模型，附件已保留');
     return result;
   }
-  const diagnostic = { startedAt: new Date().toISOString(), model: aiProfile.model, sourceUrl: input.sourceUrl, tabId: input.tabId, calls: [], toolCalls: [] };
+  const diagnostic = { startedAt: new Date().toISOString(), model: aiProfile.model, sourceUrl: input.sourceUrl, tabId: input.tabId, calls: [], toolCalls: [], requests: [] };
   const invoke = call;
   call = async (operation, args) => {
     const event = { operation, args: captureDiagnosticValue(args), startedAt: new Date().toISOString() };
@@ -93,10 +93,16 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
 
     }
     const priorContext = await sessionRuntime.loadContext?.() || [];
+    const knownCaptures = new Set(priorContext.filter(record => record.data?.captureId && record.data.sourceUrl === input.sourceUrl).map(record => record.data.captureId));
     const frozenDirectories = new Set(priorContext.filter(record => record.name === 'read_capture' && record.data?.part === 'modules' && record.data?.ok !== false).map(record => record.data.captureId));
     diagnostic.context = captureDiagnosticValue(captureContextReferences(priorContext));
     const captureTools = {
       ...sessionRuntime,
+      onRequest: async info => {
+        diagnostic.requests.push(captureDiagnosticValue(info));
+        await sessionRuntime.onRequest?.(info);
+        if (info.incompleteReason === 'length' || info.incompleteReason === 'max_output_tokens') onStatus('正在调整批次并继续…');
+      },
       loadContext: async () => await sessionRuntime.loadContext?.() || priorContext,
       recordToolResult: async record => {
         await sessionRuntime.recordToolResult?.(record);
@@ -171,6 +177,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
               if (media.localTransferId && !captureFileIds.has(media.localTransferId)) throw agentError('capture_scope_changed', '只能选择本对话或当前人工预览实际提供的本机原件');
             }
           }
+          if (!preview && knownCaptures.has(args.captureId)) remember(await call('read_capture', {captureId:args.captureId,part:'summary'}));
           if (!preview) await prepare();
           if (args.captureId !== preview.captureId) throw agentError('capture_scope_changed', '只能操作本轮采集预览');
           if (name === 'read_capture') {
@@ -224,7 +231,12 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           if (signal.aborted) throw error;
           if (name === 'read_capture' && args.captureId === preview?.captureId
             && ['capture_failed', 'capture_page_unavailable', 'page_changed'].includes(error.code || 'capture_failed')) previewReadFailed = true;
-          return { data: { ok: false, code: error.code || 'capture_failed', message: error.message } };
+          return { data: { ok: false, code: error.code || 'capture_failed', message: error.message,
+            ...(['capture_scope_changed','capture_not_editable'].includes(error.code) ? {
+              currentPreview: preview ? {captureId:preview.captureId,revision:preview.revision,state:preview.state,sourceUrl:preview.sourceUrl,tabId:preview.tabId} : null,
+              recovery: {operation:'prepare_capture', arguments:{...(preview?.sourceUrl ? {url:preview.sourceUrl} : {tabId:input.tabId})},
+                reason:'读取当前预览状态；已保存预览只读，剩余模块需新批次。使用实际返回的captureId与revision，不改旧ID反复重试。'}
+            } : {}) } };
         }
       }
     };
@@ -238,7 +250,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
         interface: { conversations: { recentCount: 5, retained: 'all', changesOnNavigation: false },
           codeCase: { contentTypeId: CONTENT_IDS.codeCase, cardPreview: 'interactive_saved_preview', previewLoads: 'visible_foreground_only', explicitCoverPreserved: true, openDetails: 'title_or_card_keyboard' },
           captureModeSwitch: true, diagnosticsExport: true, closeContinuesWork: true },
-        replyPolicy: { conciseByDefault: true, requestedWorkUnabridged: true, fullTextVisible: true } } });
+        replyPolicy: { language: {mode:'follow_user', userMessageId:input.userMessageId || sessionRuntime.turnId, uiLocale:input.locale || '', sourceLanguageControlsReply:false}, conciseByDefault: true, requestedWorkUnabridged: true, fullTextVisible: true } } });
     const executeTool = taskRuntime.execute;
     taskRuntime.execute = async (name, args, context) => {
       const event = { callId: context?.callId, name, args: captureDiagnosticValue(args), startedAt: new Date().toISOString() }; diagnostic.toolCalls.push(event);
@@ -273,7 +285,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     saveResult = aggregateCaptureSaves(taskRuntime?.observations, saveResult);
     return { ok: false, ...(preview ? { captureId: preview.captureId, revision: preview.revision } : {}), ...(saveResult ? { saveResult } : {}),
       message: signal.aborted ? signal.reason?.message || '采集助手已停止，已有预览保留' : error.message,
-      diagnostic: { ...diagnostic, task: taskRuntime?.task, ...(error.checkpoint ? { interruptedTools: captureDiagnosticValue({ requestCount: error.checkpoint.requestCount, usage: error.checkpoint.usageKnown ? error.checkpoint.usage : null, pendingCalls: error.checkpoint.pendingCalls, uncertainCallId: error.checkpoint.uncertainCallId }) } : {}), finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message } } };
+      diagnostic: { ...diagnostic, task: taskRuntime?.task, ...(error.checkpoint ? { interruptedTools: captureDiagnosticValue({ requestCount: error.checkpoint.requestCount, usage: error.checkpoint.usageKnown ? error.checkpoint.usage : null, pendingCalls: error.checkpoint.pendingCalls, uncertainCallId: error.checkpoint.uncertainCallId, lastIncompleteResponse:error.checkpoint.lastIncompleteResponse }) } : {}), finishedAt: new Date().toISOString(), error: { code: error.code, message: error.message, finishReason:error.finishReason, incompleteReason:error.incompleteReason } } };
   }
 }
 
