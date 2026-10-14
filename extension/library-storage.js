@@ -1,3 +1,4 @@
+import { assistantChatViews } from './assistant-chat-view.js';
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, updateLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { jsonBytes, startPhase } from "./perf-trace.js";
 import { assertLibraryWritable } from "./library-version-guard.js";
@@ -34,7 +35,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     ? { ...update, [CASE_LIBRARY_REVISION_KEY]: revision() } : update;
   const withSummary = async update => {
     update = withRevision(update);
-    if (Object.hasOwn(update, 'composerSessions')) update = { ...update, composerSessionSummaries: composerSessionSummaries(update.composerSessions) };
+    if (Object.hasOwn(update, 'composerSessions')) update = { ...update, composerSessionSummaries: composerSessionSummaries(update.composerSessions), assistantChatViews: assistantChatViews(update.composerSessions) };
     if (!LIBRARY_VIEW_SUMMARY_SOURCES.some(key => Object.hasOwn(update, key))) return update;
     const stored = await backend.get(LIBRARY_VIEW_SUMMARY_KEY);
     return { ...update, [LIBRARY_VIEW_SUMMARY_KEY]: updateLibraryViewSummary(update[LIBRARY_VIEW_SUMMARY_KEY] || stored[LIBRARY_VIEW_SUMMARY_KEY], update) };
@@ -386,7 +387,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
       // them from the retained source instead of advertising a deleted undo.
       return backend.remove([...new Set([...removed, ...caseKeys,
         ...(removed.some(key => LIBRARY_VIEW_SUMMARY_SOURCES.includes(key)) ? [LIBRARY_VIEW_SUMMARY_KEY] : []),
-        ...(removed.includes('composerSessions') ? ['composerSessionSummaries'] : []),
+        ...(removed.includes('composerSessions') ? ['composerSessionSummaries', 'assistantChatViews'] : []),
         ...(touchesCaseLibrary(removed) ? [CASE_LIBRARY_REVISION_KEY] : [])
       ])]);
     }),

@@ -118,3 +118,15 @@ test('removing history or sessions invalidates their summaries without touching 
   await run.storage.remove(['composerSessions']);
   assert.deepEqual(run.data, { unrelated: true });
 });
+
+test('chat opening projection commits with sessions and never contains their full runtime or diagnostics', async()=>{
+ const run=fixture();const original='complete original source'.repeat(100000);
+ await run.storage.set({composerSessions:[{id:'chat',title:'capture',messages:[{role:'user',content:'save'}],assistantState:{turns:[{requestId:'old',diagnostic:{original}}]},toolContext:[{original}]}]});
+ const view=run.data.assistantChatViews;
+ assert.equal(view?.version,1);
+ assert.equal(view.chats[0].messages[0].content,'save');
+ assert(JSON.stringify(view).length<1000,'chat display must not scale with tool source bodies');
+ assert.equal(run.data.composerSessions[0].toolContext[0].original,original);
+ assert.equal(run.calls.length,1,'projection and full records commit atomically');
+ await run.storage.set({composerSessions:[]});assert.deepEqual(run.data.assistantChatViews.chats,[]);
+});

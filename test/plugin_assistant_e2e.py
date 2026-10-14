@@ -94,7 +94,9 @@ def main():
         assert '# Visual guide' in skill_body['data']['content'],skill_body
         canonical=panel.evaluate("async id=>(await chrome.runtime.sendMessage({type:'GET_COMPOSER_SESSION',sessionId:id})).session",chat_id)
         final_turn=canonical['assistantState']['turns'][-1]['diagnostic']
-        assert len([call for call in final_turn['toolCalls'] if call['name']=='read_case'])==1,'a repeat must reuse native evidence rather than read the library twice'
+        reads=[call for call in final_turn['toolCalls'] if call['name']=='read_case']
+        assert len(reads)==2,'both native tool call receipts must remain in the diagnostic'
+        assert len([call for call in reads if call.get('startedAt')])==1,'a repeat must reuse native evidence rather than execute another library read'
         assert final_turn['task']['state']=='completed' and final_turn['task']['pending']==[]
         latest_human=next(message for message in reversed(canonical['messages']) if message['role']=='user')
         assert final_turn['task']['currentUserId']==latest_human['id'],'authorization must bind the actual visible user message'

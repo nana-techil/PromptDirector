@@ -40,3 +40,15 @@ test('automatic titles follow confirmed results while a studio title edited by t
  const manual={...completed,title:'My named research chat'};
  assert.equal(assistantChatSession({id:'chat',messages},manual).title,manual.title);
 });
+
+test('ordinary sidebar views exclude heavy diagnostics while saving a draft preserves every old turn',()=>{
+ const turns=[{requestId:'old',diagnostic:{source:'original'.repeat(100000)}}];
+ const previous=assistantChatSession({id:'chat',messages:[{role:'user',content:'capture'}],turns});
+ const view=assistantChatView(previous);
+ assert.equal(view.turns,undefined,'opening the sidebar must not transfer diagnostic source bodies');
+ const next=assistantChatSession({...view,draft:'new input',turns:[{requestId:'new',diagnostic:{ok:true}}]},previous);
+ assert.deepEqual(next.assistantState.turns,[...turns,{requestId:'new',diagnostic:{ok:true}}]);
+ const again=assistantChatSession({...view,turns:[{requestId:'new',diagnostic:{ok:true}}]},next);
+ assert.equal(again.assistantState.turns.length,2);
+ assert.deepEqual(assistantChatView(again,{includeDiagnostics:true}).turns,next.assistantState.turns);
+});

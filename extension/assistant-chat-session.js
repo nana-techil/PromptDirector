@@ -4,6 +4,9 @@ import { createComposerSession } from './composer.js';
 // view/task metadata is additional; page previews remain in the capture store.
 export function assistantChatSession(chat, previous) {
   const { messages = [], pendingBatch, aiProfile, draft, id, chatRevision, ...view } = chat;
+  const turns = new Map((previous?.assistantState?.turns || []).map(turn => [turn.requestId || turn, turn]));
+  for (const turn of view.turns || []) turns.set(turn.requestId || turn, turn);
+  if (turns.size) view.turns = [...turns.values()];
   const firstRequest = messages.find(message => message.role === 'user')?.content?.trim();
   const receiptTitle = messages.filter(message => message.role === 'result')
     .flatMap(message => message.result?.results || []).filter(item => item.status === 'saved').at(-1)?.title;
@@ -30,13 +33,7 @@ export function assistantChatSession(chat, previous) {
       : { ...previous?.messages?.find(item => item.id === message.id), ...message, type: message.role === 'assistant' ? 'chat' : 'request' }),
     updatedAt: new Date().toISOString() });
 }
-export function assistantChatView(session) {
-  return { ...session.assistantState, id: session.id, aiProfile: session.aiProfile,
-    chatRevision: session.chatRevision, draft: session.currentInstruction, title: session.title, updatedAt: session.updatedAt,
-    messages: session.messages.map(message => message.captureReceipt
-      ? { ...message, role: 'result', result: message.captureReceipt }
-      : message), requestId: session.assistantState?.requestId || '', captureId: session.assistantState?.captureId || '' };
-}
+export { assistantChatView, assistantChatViews } from './assistant-chat-view.js';
 
 export function assistantChatContent(session) {
   return JSON.stringify([session.messages,session.currentInstruction,session.title,session.aiProfile,

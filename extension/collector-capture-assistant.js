@@ -79,32 +79,36 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     return chip;
   }
   window.addEventListener('pagehide', () => { attachmentUrls.forEach(url => URL.revokeObjectURL(url)); attachmentUrls.clear(); });
-  function persist() {
+  function persist({ saveChat = true } = {}) {
     if (!switching) state.projectDraft = organizationDraft();
     const index = sessions.conversations.findIndex(item => item.id === state.id);
     if (index >= 0) sessions.conversations[index] = state;
     if (state.sourceUrl) sessions.pages[state.sourceUrl] = pageWork(state);
-    pendingWrites.set(state.id, state);
+    pendingWrites.set(state.id, {owner:state, saveChat:saveChat || pendingWrites.get(state.id)?.saveChat});
     if (writing) return persistTail;
     writing = true;
     persistTail = persistTail.catch(() => {}).then(async () => {
       while (pendingWrites.size) {
-        const [id, owner] = pendingWrites.entries().next().value; pendingWrites.delete(id);
+        const [id, {owner, saveChat}] = pendingWrites.entries().next().value; pendingWrites.delete(id);
         for (const message of owner.messages) message.id ||= crypto.randomUUID();
         // Page originals live in pageWork. Typing a chat draft must not copy
         // every webpage's preview or send the same batch to the background again.
         const { pendingBatch: _pendingBatch, ...view } = owner;
+        const sentTurns = new Set(owner.turns || []);
         const chat = structuredClone(view);
         const changedPages = Object.entries(sessions.pages).filter(([url, work]) => !samePageWork(persistedPages.get(url), work));
         const snapshot = { schema: 'shared-chat', pages: Object.fromEntries(changedPages.map(([url, work]) => [url, structuredClone(work)])), activeId: sessions.activeId, activeUrl: sessions.activeUrl,
           emptyChat: !chat.messages.length && !chat.draft && !chat.attachments?.length
             ? {id:chat.id,aiProfile:chat.aiProfile,messages:[],sourceUrl:chat.sourceUrl,tabId:chat.tabId,pageTitle:chat.pageTitle,projectDraft:chat.projectDraft} : null };
-        if (chat.userCreated || chat.messages.length || chat.draft || chat.attachments?.length) {
+        if (saveChat && (chat.userCreated || chat.messages.length || chat.draft || chat.attachments?.length)) {
           chat.chatRevision = chatRevisions.get(chat.id) ?? owner.chatRevision ?? chat.chatRevision;
           const response = await chrome.runtime.sendMessage({ type: 'UPSERT_ASSISTANT_CHAT', chat, activate:state.id === owner.id });
           if (!response?.ok) throw new Error(response?.message || t('无法保存创作草稿'));
           owner.chatRevision = response.session.chatRevision; owner.updatedAt = response.session.updatedAt; owner.title = response.session.title;
           chatRevisions.set(chat.id, response.session.chatRevision);
+          // The canonical conversation now owns these diagnostics. Keep only
+          // newly arrived turns in the UI until their next successful write.
+          if (owner.turns) owner.turns = owner.turns.filter(turn => !sentTurns.has(turn));
         }
         const dialog = JSON.stringify([snapshot.activeId, snapshot.activeUrl, snapshot.emptyChat]);
         if (changedPages.length || dialog !== persistedDialog) await storage.update(stateKey, stored => ({[stateKey]: {
@@ -162,7 +166,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
         baseBatch = getBatch(); state.pendingBatch = baseBatch;
         field.value = state.draft || ''; feedback(state.lastError || '', Boolean(state.lastError));
       }
-      if (previousUrl !== state.sourceUrl || previousId !== state.id) await persist();
+      if (previousUrl !== state.sourceUrl || previousId !== state.id) await persist({saveChat:false});
       render();
     });
     return syncTail;
@@ -398,7 +402,9 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     try {
       await persist();
       if (!await confirmAppAction({ title: t('导出对话诊断？'), description: t('诊断包包含各网页的多轮对话、采集步骤和失败原因，不包含 API Key 或媒体文件。'), confirmLabel: t('导出') })) return;
-      const diagnostic = buildCaptureDiagnostic(sessions, state);
+      const full = await chrome.runtime.sendMessage({type:'GET_ASSISTANT_CHATS',activeId:state.id,includeDiagnostics:true});
+      if (!full?.ok) throw new Error(full?.message || t('无法读取对话'));
+      const diagnostic = buildCaptureDiagnostic({...sessions,conversations:full.chats}, state);
       diagnostic.capture.tasks = await Promise.all(sessions.conversations.filter(page => page.requestId).map(async page => {
         const receipt = await chrome.runtime.sendMessage({ type: 'GET_CAPTURE_ASSIST_TASK', requestId: page.requestId, waitMs: 0 });
         return captureDiagnosticValue({ requestId: page.requestId, sourceUrl: page.sourceUrl, receipt });

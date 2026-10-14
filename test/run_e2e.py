@@ -15,6 +15,7 @@ SCRIPTS = [
     "agent_capture_preview_e2e.py",
     "plugin_assistant_e2e.py",
     "capture_assistant_feedback_e2e.py",
+    "assistant_chat_loading_e2e.py",
     "capture_assistant_recovery_e2e.py",
     "capture_assistant_batch_ui_e2e.py",
     "capture_assistant_long_batch_e2e.py",

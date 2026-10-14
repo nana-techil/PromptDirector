@@ -205,7 +205,17 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         pendingCalls = step.calls;
         latestBatch = new Set(step.calls.map(call => call.id));
       }
-      const batchKeys = pendingCalls.map(call => JSON.stringify([call.name, stableObject(JSON.parse(call.arguments))]));
+      const parsedCalls = pendingCalls.map(call => {
+        try {
+          const args = JSON.parse(call.arguments);
+          if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be a JSON object');
+          return { args };
+        } catch (error) {
+          return { args: call.arguments, invalid: { data: { ok: false, code: 'invalid_tool_arguments',
+            message: `Arguments were not executed: ${error.message}. Submit a corrected JSON object for this tool.` } } };
+        }
+      });
+      const batchKeys = pendingCalls.map((call, index) => JSON.stringify([call.name, stableObject(parsedCalls[index].args)]));
       let batchProgress = false;
       const batchResults = [];
       const unchangedCalls = [];
@@ -216,29 +226,26 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const call = pendingCalls[0];
         if (!call.id || !specs.some(spec => spec.name === call.name)) throw new Error("模型调用了当前不可用的工具");
         if (callIds.has(call.id)) throw new Error("模型重复使用了工具调用编号，已停止本轮");
-        let args;
-        try { args = JSON.parse(call.arguments); } catch { throw new Error("工具参数不完整，本次没有读取资料"); }
-        if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("工具参数必须是对象");
+        let { args, invalid } = parsedCalls.shift();
         const key = JSON.stringify([call.name, stableObject(args)]);
         const scope = runtime.executionScope?.();
         const cached = seen.get(key);
         const denied = cached?.denied;
         const retryDenied = denied && JSON.stringify(cached.scope) !== JSON.stringify(scope);
         const reusable = cached && (reusableRead(call.name) || controlOperation(call.name));
-        if (cached && cached.requestCount !== requestCount && !retryDenied && !reusable && !readOperation(call.name)) throw new Error("模型重复请求相同资料且没有进展，已停止继续调用");
+        if (cached && !invalid && cached.requestCount !== requestCount && !retryDenied && !reusable && !readOperation(call.name)) throw new Error("模型重复请求相同资料且没有进展，已停止继续调用");
         uncertainCallId = call.id;
         const prior = cached && resultFor(cached);
         // A denied plan or failed read is not a durable fact: new context or a
         // transient recovery may make the same operation valid on its next try.
         const failedReadOrControl = prior?.data?.ok === false && (readOperation(call.name) || controlOperation(call.name));
         const reuse = prior && !retryDenied && !failedReadOrControl && (reusable || cached.requestCount === requestCount);
-        let invalid;
-        try { validate(specs.find(spec => spec.name === call.name).parameters, args, call.name); }
+        try { if (!invalid) validate(specs.find(spec => spec.name === call.name).parameters, args, call.name); }
         catch (error) { invalid = { data: { ok: false, code: 'invalid_tool_arguments', message: error.message } }; }
         const result = invalid || (reuse ? prior : await runtime.execute(call.name, args, { callId: call.id, signal }));
         if (!result) throw new Error('此前读取回执不可用，已有资料保留');
         if (!reuse) {
-          if (!readOperation(call.name) && !controlOperation(call.name) || args.expectedRevision && result.data?.ok === false) {
+          if (!readOperation(call.name) && !controlOperation(call.name) || args?.expectedRevision && result.data?.ok === false) {
             for (const [oldKey, value] of seen) if (readOperation(value.name || JSON.parse(oldKey)[0])) seen.delete(oldKey);
           }
         }

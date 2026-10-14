@@ -278,3 +278,43 @@ test('resuming an old corrective checkpoint removes empty calls without replayin
     runtime:{specs:[spec],execute:()=>assert.fail('no previously completed read/write may replay')}});
   assert.equal(result.content,'Continue.');assert.deepEqual(checkpoint.body.messages[1].tool_calls,[]);
 });
+
+test('malformed tool JSON returns a native error so the model can correct it without losing sibling saves', async () => {
+  for (const protocol of ['chat_completions','responses']) {
+    const executed=[],records=[];let requests=0;
+    const nativeCall=(id,args)=>protocol==='responses'?{type:'function_call',call_id:id,name:'search_cases',arguments:args}:{id,type:'function',function:{name:'search_cases',arguments:args}};
+    const response=calls=>protocol==='responses'?new Response(JSON.stringify({output:calls,usage:{input_tokens:1,output_tokens:1}})):chat({role:'assistant',tool_calls:calls});
+    await runComposerToolLoop({body:protocol==='responses'?{input:[{role:'user',content:'continue'}]}:body(),protocol,
+      runtime:{specs:[spec],execute:async(name,args)=>{executed.push(args);return {data:{ok:true}}},recordToolResult:async r=>records.push(r)},
+      request:async current=>{
+        requests++;
+        if(requests===1)return response([nativeCall('bad','{"query":"target","task":: '),nativeCall('good','{"query":"sibling"}')]);
+        if(requests===2){const outputs=(current.messages||current.input).filter(x=>x.role==='tool'||x.type==='function_call_output');assert.equal(outputs.length,2);assert.equal(JSON.parse(outputs[0].content||outputs[0].output).code,'invalid_tool_arguments');return response([nativeCall('fixed','{"query":"target"}')]);}
+        return protocol==='responses'?new Response(JSON.stringify({output:[{type:'message',role:'assistant',content:[{type:'output_text',text:'done'}]}]})):chat({role:'assistant',content:'done'});
+      }});
+    assert.deepEqual(executed,[{query:'sibling'},{query:'target'}]);assert.equal(records[0].data.ok,false);
+  }
+});
+
+test('an old checkpoint containing malformed arguments can recover without replaying committed calls',async()=>{
+ const original=body(); original.messages.push({role:'assistant',tool_calls:[call('bad',{})]});
+ original.messages.at(-1).tool_calls[0].function.arguments='{"query"::';
+ const continuation={protocol:'chat_completions',body:original,pendingCalls:[{id:'bad',name:'search_cases',arguments:'{"query"::'}],callIds:['already-saved'],requestCount:4};
+ let writes=0;
+ await runComposerToolLoop({body:body(),protocol:'chat_completions',continuation,
+  runtime:{specs:[spec],execute:async()=>{writes++;return {data:{ok:true}}}},
+  request:async current=>{assert.equal(JSON.parse(current.messages.find(m=>m.tool_call_id==='bad').content).code,'invalid_tool_arguments');return chat({role:'assistant',content:'Corrected task report'});}});
+ assert.equal(writes,0,'invalid pending writes must never reach the library');
+});
+
+test('invalid JSON objects are recoverable but unchanged malformed calls cannot loop forever',async()=>{
+ for(const raw of ['{"query"::','null','[]','"text"',undefined,null]){
+  let requests=0,writes=0;let saved;
+  await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',
+   runtime:{specs:[spec],execute:async()=>{writes++;return {data:{ok:true}}},saveContinuation:async v=>saved=v},
+   request:async()=>chat({role:'assistant',tool_calls:[{id:`invalid-${++requests}`,type:'function',function:{name:'search_cases',arguments:raw}}]})
+  }),/没有进展/);
+  assert.equal(writes,0);assert.equal(requests,2);assert.equal(saved.pendingCalls.length,0);
+  assert.equal(saved.body.messages.filter(m=>m.role==='tool').length,2,'checkpoint retains paired errors for both invalid calls');
+ }
+});

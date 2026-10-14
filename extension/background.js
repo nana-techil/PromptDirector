@@ -2,7 +2,7 @@ import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
 import { createAgentCapturePreview } from './agent-capture-preview.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { runCaptureAssistant } from './capture-assistant.js';
-import { assistantChatSession, assistantChatView, assistantChatContent } from './assistant-chat-session.js';
+import { assistantChatSession, assistantChatView, assistantChatViews, assistantChatContent } from './assistant-chat-session.js';
 import { restoreCaptureSessions } from './capture-assistant-sessions.js';
 import { createComposerToolProgress } from './composer-tool-progress.js';
 import { readAssistantCaseMedia } from './assistant-case-media.js';
@@ -1426,11 +1426,14 @@ async function handleMessage(message, interaction = {}) {
     case "GET_COMPOSER_SESSION":
       return enqueue(async () => getComposerSession(message.sessionId));
     case "GET_ASSISTANT_CHATS":
-      return enqueue(async () => getAssistantChats(message.activeId));
+      return enqueue(async () => getAssistantChats(message.activeId, message.includeDiagnostics === true));
     case "UPSERT_ASSISTANT_CHAT":
       return enqueue(async () => {
         const previous = (await getComposerSession(message.chat.id)).session;
-        return upsertComposerSession(assistantChatSession(message.chat, previous), {activate:message.activate});
+        const result = await upsertComposerSession(assistantChatSession(message.chat, previous), {activate:message.activate});
+        if (!result.ok) return result;
+        const {id,chatRevision,updatedAt,title} = result.session;
+        return {ok:true,session:{id,chatRevision,updatedAt,title}};
       });
     case "START_CREATIVE_JOB":
       return enqueue(async () => startCreativeJobAction(message.request, message.jobId));
@@ -1718,16 +1721,17 @@ async function captureWorkspace() {
     STORAGE_KEYS.taxonomy,
     STORAGE_KEYS.classificationRules,
     STORAGE_KEYS.organizerState,
-    STORAGE_KEYS.activeCreativeResult,
-    STORAGE_KEYS.composerSessions
+    STORAGE_KEYS.activeCreativeResult
   ]);
+  const activeCreativeResult = normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]);
+  const activeSession = activeCreativeResult ? (await getComposerSession(activeCreativeResult.sessionId)).session : null;
   const state = {
     entries: Array.isArray(stored[STORAGE_KEYS.entries]) ? stored[STORAGE_KEYS.entries] : [],
     taxonomy: normalizeTaxonomy(stored[STORAGE_KEYS.taxonomy]),
     classificationRules: Array.isArray(stored[STORAGE_KEYS.classificationRules]) ? stored[STORAGE_KEYS.classificationRules] : [],
     organizerState: normalizeOrganizerState(stored[STORAGE_KEYS.organizerState]),
-    activeCreativeResult: normalizeActiveCreativeResult(stored[STORAGE_KEYS.activeCreativeResult]),
-    composerSessions: normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions])
+    activeCreativeResult,
+    composerSessions: activeSession ? [activeSession] : []
   };
   const compound = normalizeCompoundCases(stored[STORAGE_KEYS.compoundCases], state.entries)
     .find((item) => item.id === draft.targetCaseId);
@@ -3968,11 +3972,27 @@ async function deleteCreativeSkillAction(skillId) {
 
 async function getComposerSession(sessionId) {
   const stored = await libraryStorage.get(STORAGE_KEYS.composerSessions);
-  const session = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]).find((item) => item.id === sessionId);
+  const value = (Array.isArray(stored[STORAGE_KEYS.composerSessions]) ? stored[STORAGE_KEYS.composerSessions] : []).find(item => item.id === sessionId);
+  const session = value && createComposerSession(value);
   return session ? { ok: true, session } : { ok: false, message: "没有找到这份创作草稿" };
 }
 
-async function getAssistantChats(activeId) {
+async function getAssistantChats(activeId, includeDiagnostics = false) {
+  if (!includeDiagnostics) {
+    let stored = await libraryStorage.get(['assistantChatViews', 'captureAssistantDialog']);
+    if (stored.captureAssistantDialog?.schema === 'shared-chat') {
+      if (stored.assistantChatViews?.version !== 1) {
+        // One-time projection for existing installs; build under the writer
+        // lock so a concurrent chat edit cannot publish an obsolete view.
+        await libraryStorage.update('composerSessions', latest => ({assistantChatViews: assistantChatViews(latest.composerSessions)}));
+        stored = await libraryStorage.get('assistantChatViews');
+      }
+      const chats = [...stored.assistantChatViews.chats].sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+      const recent = chats.slice(0,5), active = chats.find(chat => chat.id === activeId);
+      if (active && !recent.includes(active)) recent.splice(4,1,active);
+      return {ok:true,chats:recent};
+    }
+  }
   const stored = await libraryStorage.get(['composerSessions', 'captureAssistantDialog']);
   let sessions = normalizeComposerSessions(stored.composerSessions);
   if (stored.captureAssistantDialog?.schema !== 'shared-chat') {
@@ -3999,7 +4019,7 @@ async function getAssistantChats(activeId) {
   const recent = sessions.slice(0, 5);
   const active = sessions.find(session => session.id === activeId);
   if (active && !recent.includes(active)) recent.splice(4, 1, active);
-  return { ok: true, chats: recent.map(assistantChatView) };
+  return { ok: true, chats: recent.map(session => assistantChatView(session, {includeDiagnostics})) };
 }
 
 async function startCreativeJobAction(request, jobId) {
@@ -5301,7 +5321,8 @@ async function updateComposerSettings(message) {
 async function upsertComposerSession(value, {activate = false} = {}) {
   let response;
   await libraryStorage.update(['composerSessions', 'syncMeta', ...(activate ? ['captureAssistantDialog'] : [])], stored => {
-    const sessions = normalizeComposerSessions(stored.composerSessions);
+    // Other canonical chats are unchanged; do not clone their tool journals for a draft edit.
+    const sessions = Array.isArray(stored.composerSessions) ? stored.composerSessions : [];
     const session = createComposerSession(value);
     const previous = sessions.find(item => item.id === session.id);
     if (!previous && session.assistantState && session.chatRevision > 0) {
@@ -5318,8 +5339,8 @@ async function upsertComposerSession(value, {activate = false} = {}) {
     session.toolContext = previous?.toolContext || session.toolContext;
     session.toolSkillVersionIds = previous?.toolSkillVersionIds || [];
     if (!isMeaningfulComposerSession(session)) { response = { ok: false, message: '空白新对话不会保存到历史' }; return {}; }
-    const next = normalizeComposerSessions([session, ...sessions.filter(item => item.id !== session.id)]);
-    response = { ok: true, session, summaries: next.map(sessionSummary) };
+    const next = [session, ...sessions.filter(item => item.id !== session.id)].sort((a,b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    response = { ok: true, session, summaries: composerSessionSummaries(next) };
     return { composerSessions: next, ...(activate ? {captureAssistantDialog:{...stored.captureAssistantDialog,schema:'shared-chat',activeId:session.id,emptyChat:null}} : {}), ...(!syncApplyInProgress ? {syncMeta:markSyncMetaDirty(stored.syncMeta)} : {}) };
   });
   return response;
