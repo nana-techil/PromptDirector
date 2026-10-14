@@ -199,12 +199,12 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           const perSource = Math.max(1, Math.floor(length / input.selectors.length));
           return { captureId: record.id, revision: record.revision, part, sourceUrl: record.batch.sourceUrl, appearance: record.sources[input.selectors[0]]?.appearance,
             sources: input.selectors.map(selector => { const source = record.sources[selector];
-              return { selector, content: source.text.slice(0, perSource), totalCharacters: source.text.length,
+              return { selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), content: source.text.slice(0, perSource), totalCharacters: source.text.length,
                 nextOffset: source.text.length > perSource ? perSource : null }; }), untrustedContent: true };
         }
         const source = record.sources?.[input.selector];
         if (!source) throw agentError('capture_source_required', '请先读取这段实际原文');
-        return { captureId: record.id, revision: record.revision, part, selector: input.selector, sourceUrl: source.url, appearance: source.appearance,
+        return { captureId: record.id, revision: record.revision, part, selector: input.selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), sourceUrl: source.url, appearance: source.appearance,
           content: source.text.slice(offset, offset + length), offset, totalCharacters: source.text.length,
           nextOffset: offset + length < source.text.length ? offset + length : null, completeness: source.completeness || 'unverified', untrustedContent: true };
       }
@@ -417,7 +417,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
             catch (error) { receipt.warnings = [...(receipt.warnings || []), `保存读回未完成：${error.message}`]; }
           }
           receipt.originalVerification = { status: matches && !partial ? 'verified' : partial ? 'partial' : 'unverified', sourceCount: sources.length,
-            sources: sources.map(source => ({ selector: source.selector, totalCharacters: source.text.length, completeness: source.completeness || 'unverified' })) };
+            sources: sources.map(source => ({ selector: source.selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), totalCharacters: source.text.length, completeness: source.completeness || 'unverified' })) };
           if (partial || readSavedText && !matches) {
             receipt.status = 'partial'; receipt.warnings = [...new Set([...(receipt.warnings || []), partial ? '来源正文仍被折叠，尚未取得全文' : '已保存内容与完整来源不一致，请补采后核对'])];
           }
@@ -430,7 +430,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           && record.results.every(item => item.entryId && ['saved', 'duplicate'].includes(item.status)) ? 'completed' : 'preview';
         record.revision++;
         await persist(record);
-        return { ...result, results: record.results, captureId: record.id, revision: record.revision, state: record.state };
+        return { ...result, results: record.results, captureId: record.id, revision: record.revision, state: record.state, saveMode: record.batch.saveMode };
       } catch (error) {
         await scope.assertCurrent(); record.state = 'preview'; record.revision++; await persist(record);
         throw error;
@@ -607,6 +607,18 @@ export function readCapturePageContext(query = '', includeHidden = false, select
 }
 
 export function readCaptureSource(selector, moduleSelectors = []) {
+  // Same DOM identity as the module directory. Injected functions cannot use
+  // module-level helpers; retain the requested selector as the binding key.
+  const path = element => {
+    const parts = [];
+    while (element && element !== document.body) {
+      if (element.id && document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) return ['#' + CSS.escape(element.id), ...parts].join(' > ');
+      const siblings = [...(element.parentElement?.children || [])].filter(peer => peer.localName === element.localName);
+      parts.unshift(element.localName + (siblings.length > 1 ? `:nth-of-type(${siblings.indexOf(element) + 1})` : ''));
+      element = element.parentElement;
+    }
+    return ['body', ...parts].join(' > ');
+  };
   const style = element => {
     const computed = getComputedStyle(element);
     return Object.fromEntries(['background-color', 'background-image', 'color', 'font-family', 'border-radius']
@@ -630,7 +642,7 @@ export function readCaptureSource(selector, moduleSelectors = []) {
   // for understanding; a source-backed save uses this complete frozen original.
   const post = element.closest('article,[role="article"]');
   const truncated = Boolean(post?.querySelector('[data-testid="tweet-text-show-more-link"]'));
-  return { ok: true, url: location.href, selector, text: clone.textContent, completeness: truncated ? 'partial' : 'complete',
+  return { ok: true, url: location.href, selector, resolvedSelector: path(element), text: clone.textContent, completeness: truncated ? 'partial' : 'complete',
     format: element.matches('pre,code') ? 'code' : 'text', untrustedContent: true };
   }
   if (!Array.isArray(selector)) return { ...read(selector), appearance };
