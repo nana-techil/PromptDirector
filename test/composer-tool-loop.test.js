@@ -36,8 +36,8 @@ test('a durable batch crosses the default 100 requests with receipt progress, pr
 });
 
 test('verified batch progress never overrides an explicit request cap or a cumulative token cap', async () => {
-  for(const budget of [{maxRequests:2},{maxTotalTokens:24}]) {
-    const {runtime}=batchRuntime();let count=0;
+  for(const planned of [true,false]) for(const budget of [{maxRequests:2},{maxTotalTokens:24}]) {
+    const {runtime}=batchRuntime();if(!planned)delete runtime.task;let count=0;
     await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,budget,
       request:async()=>chat({role:'assistant',tool_calls:[{id:`save-${++count}`,type:'function',function:{name:'save_capture',arguments:JSON.stringify({captureId:`saved-${count}`})}}]}, {usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}})
     }),{code:'RESOURCE_BUDGET_REACHED'});
@@ -66,15 +66,15 @@ test('a failed item does not erase independent successful receipts when continui
   assert.equal(count,102);assert.equal(checkpoints.length,1);
 });
 
-test('a stopped batch cannot auto-resume and repeated existing-case receipts cannot fund endless segments', async () => {
-  const controller=new AbortController();const {runtime}=batchRuntime();const execute=runtime.execute;
+for(const planned of [true,false]) test(`a stopped batch cannot auto-resume and repeated existing-case receipts cannot fund endless segments (plan=${planned})`, async () => {
+  const controller=new AbortController();const {runtime}=batchRuntime();if(!planned)delete runtime.task;const execute=runtime.execute;
   runtime.execute=async(...args)=>{const result=await execute(...args);controller.abort();return result};
   let requests=0;
   await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime,signal:controller.signal,
     request:async()=>{requests++;return chat({role:'assistant',tool_calls:[{id:'stop-save',type:'function',function:{name:'save_capture',arguments:'{"captureId":"saved"}'}}]})}
   }),{name:'AbortError'});
   assert.equal(requests,1);
-  const repeated=batchRuntime();let count=0;
+  const repeated=batchRuntime();if(!planned)delete repeated.runtime.task;let count=0;
   repeated.runtime.execute=async(_name,args)=>({data:{captureId:args.captureId,state:'completed',results:[{entryId:'same-existing',status:'duplicate'}]}});
   await assert.rejects(runComposerToolLoop({body:body(),protocol:'chat_completions',runtime:repeated.runtime,
     request:async()=>chat({role:'assistant',tool_calls:[{id:`same-${++count}`,type:'function',function:{name:'save_capture',arguments:JSON.stringify({captureId:`retry-${count}`})}}]})
@@ -349,4 +349,25 @@ test('streamed output limits retain usage and incomplete checkpoints without byp
  assert.equal(requests,1,'a provider refusal must not be treated as a batch size problem');
  const parsed=await readToolResponse(sse([{type:'response.incomplete',response:{status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[],usage:{input_tokens:5,output_tokens:3,total_tokens:8}}}]),'responses');
  assert.equal(parsed.incompleteReason,'max_output_tokens');assert.equal(parsed.usage.total_tokens,8);
+});
+
+for(const protocol of ['chat_completions','responses']) test(`${protocol}: identical preparation arguments start later saved batches without requiring a model-authored plan`,async()=>{
+ const {runtime,journal,checkpoints}=batchRuntime();delete runtime.task;
+ runtime.specs.push({name:'prepare_capture',parameters:{type:'object',properties:{requestId:{type:'string'},url:{type:'string'}},required:['requestId','url']}});
+ let prepared=0,requests=0;
+ const execute=runtime.execute;runtime.execute=async(name,args)=>name==='prepare_capture'
+  ? {data:{captureId:'batch-'+(++prepared),revision:1,state:'preview'}} : execute(name,args);
+ const response=(calls=[])=>protocol==='responses'?new Response(JSON.stringify({status:'completed',output:calls.length?calls.map(c=>({type:'function_call',call_id:c.id,name:c.function.name,arguments:c.function.arguments})):[{type:'message',content:[{type:'output_text',text:'done'}]}]})):chat({role:'assistant',content:calls.length?'':'done',...(calls.length?{tool_calls:calls}:{})});
+ await runComposerToolLoop({protocol,body:protocol==='responses'?{model:'fixture-model',input:[{role:'user',content:'Save all requested modules'}]}:body(),runtime,
+  request:async()=>{const index=requests++;return response(index<104?[{id:'step-'+index,type:'function',function:{name:index%2?'save_capture':'prepare_capture',arguments:JSON.stringify(index%2?{captureId:'batch-'+prepared}:{requestId:'prepare-again',url:'https://example.test/effects'})}}]:[]);}});
+ assert.equal(prepared,52);assert.equal(requests,105);assert.equal(journal.filter(r=>r.name==='save_capture').length,52);
+ assert.equal(checkpoints.length,1,'real save progress can continue across a default segment without an optional plan tool');
+});
+
+test('preparing an unchanged preview still stops on repeated observed lack of progress',async()=>{
+ let requests=0,executions=0;
+ const runtime={specs:[{name:'prepare_capture',parameters:{type:'object',properties:{},additionalProperties:true}}],execute:async()=>{executions++;return {data:{captureId:'unchanged',revision:1,state:'preview'}};}};
+ await assert.rejects(runComposerToolLoop({protocol:'chat_completions',body:body(),runtime,request:async()=>chat({role:'assistant',tool_calls:[{id:'prepare-'+(++requests),type:'function',function:{name:'prepare_capture',arguments:'{}'}}]})}),/没有进展/);
+ assert.equal(executions,3,'preparation is checked against current preview facts instead of blocked as a repeated library mutation');
+ assert.equal(requests,3);
 });

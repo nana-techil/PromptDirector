@@ -99,10 +99,12 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   const rejectedStates = new Set();
   // These are API operation identifiers, never user-language intent rules.
   // Live browser/capture reads retain their own freshness and source-version checks.
-  const readOperation = name => ['read_', 'search_', 'list_', 'inspect_', 'describe_', 'get_'].some(prefix => name.startsWith(prefix))
+  // Preparing observes/reuses the live draft or starts the next batch after
+  // a save. Identical arguments do not imply a repeated library write.
+  const readOperation = name => name === 'prepare_capture' || ['read_', 'search_', 'list_', 'inspect_', 'describe_', 'get_'].some(prefix => name.startsWith(prefix))
     && (!specs.find(spec => spec.name === name)?.parameters.properties?.requestId || name === 'get_task');
   const controlOperation = name => ['declare_task','settle_task'].includes(name);
-  const reusableRead = name => readOperation(name) && !name.startsWith('read_live_') && !name.startsWith('read_workspace_') && !['read_capture','get_task'].includes(name);
+  const reusableRead = name => readOperation(name) && !name.startsWith('read_live_') && !name.startsWith('read_workspace_') && !['prepare_capture','read_capture','get_task'].includes(name);
   const resultFor = cached => {
     if (cached.result) return cached.result;
     const sequence = protocol === 'responses' ? current.input : current.messages;
@@ -140,7 +142,8 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
     outputLimitPending, lastIncompleteResponse,
     seen: [...seen].map(([key, value]) => [key, { requestCount: value.requestCount, scope: value.scope, denied: value.denied, name: value.name, callId: value.callId, terminate: value.terminate, ...(pendingCalls.length && value.result ? { result: value.result } : {}) }]),
     callIds: [...callIds], idleReadBatches: [...idleReadBatches], usage, usageKnown, requestCount, lastPromptTokens, lastRequestBytes });
-  const canContinueTask = () => canIndex && runtime.saveContinuation && runtime.task?.mode === 'act' && runtime.task.state === 'active';
+  const canContinueTask = () => canIndex && runtime.saveContinuation
+    && (!runtime.task || runtime.task.mode === 'act' && runtime.task.state === 'active');
   const continueSegment = async () => {
     if (!canContinueTask() || committedEntries.size <= segmentProgress) return false;
     await runtime.saveContinuation(checkpoint());

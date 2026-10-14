@@ -1,5 +1,5 @@
 """More than one default Agent work segment, real multi-case saves, no paid API."""
-import json, tempfile, threading, time
+import json, sys, tempfile, threading, time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from e2e_support import EXTENSION_DIR, extension_session
@@ -13,7 +13,7 @@ class Server(BaseHTTPRequestHandler):
         self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(HTML.encode())
     def log_message(self,*_): pass
 
-def main():
+def main(register_plan=True):
     server=ThreadingHTTPServer(('127.0.0.1',0),Server);threading.Thread(target=server.serve_forever,daemon=True).start()
     url=f'http://127.0.0.1:{server.server_port}/'
     try:
@@ -34,11 +34,11 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                 tab=panel.evaluate('async url=>(await chrome.tabs.query({})).find(t=>t.url===url).id',url)
                 worker=run.context.service_workers[0]
                 worker.on('console',lambda message: print(message.text,flush=True) if message.text.startswith('batch-test:') else None)
-                worker.evaluate(r'''({url,tab,count})=>{
+                worker.evaluate(r'''({url,tab,count,registerPlan})=>{
                   globalThis.longBatchPromise=(async()=>{
                   const {runCaptureAssistant,runComposerToolLoop,createAgentContextRuntime,call}=batchTest;
                   const expect=(yes,message)=>{if(!yes)throw new Error(message)};
-                  let stage=0,checkpoints=0,journal={},postSaveProbe=0,savedPreview; const sizes=[],limitedStages=new Set();
+                  let stage=registerPlan?0:1,checkpoints=0,journal={},postSaveProbe=0,savedPreview; const sizes=[],limitedStages=new Set();
                   const sessionRuntime=createAgentContextRuntime({turnId:'long-batch-turn',load:async()=>journal,
                     update:async fn=>{journal=fn(journal);await chrome.storage.local.set({batchTestJournal:journal});}});
                   const save=sessionRuntime.saveContinuation;sessionRuntime.saveContinuation=async value=>{checkpoints++;await save(value)};
@@ -70,25 +70,25 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                         if(stage===0)tool('declare_task',{mode:'act',goal:'Save all '+count+' independent effects',steps:[{operation:'prepare_capture'},{operation:'read_capture',part:'source'},{operation:'update_capture'},{operation:'save_capture',resultIds:ids}],contentTypeId:'content:code-case'});
                         else if(stage<=count*2){
                           const batch=Math.floor((stage-1)/4);const phase=(stage-1)%4;const current=ids.slice(batch*2,batch*2+2);
-                          if(phase===0)tool('prepare_capture',{requestId:'prepare-'+batch,url});
+                          if(phase===0)tool('prepare_capture',{requestId:'prepare-again',url});
                           if(phase===1){expect(data.tabId===tab,'batch opened another tab');tool('read_capture',{captureId:data.captureId,part:'source',selectors:current.map(id=>'#'+id+' pre')});}
                           if(phase===2)tool('update_capture',{requestId:'select-'+batch,captureId:data.captureId,expectedRevision:data.revision,candidates:current.map(id=>({id,title:id,canonicalUrl:url,textSources:[{selector:'#'+id+' pre',target:'text'}],codePreview:{html:'<style>button:hover{transform:scale(1.1)}</style><button>'+id+'</button>'}})),selections:current.map(candidateId=>({candidateId,includeText:true,selectedMediaIds:[]})),saveMode:'multiple'});
                           if(phase===3)tool('save_capture',{requestId:'save-'+batch,captureId:data.captureId,expectedRevision:data.revision,contentTypeId:'content:code-case'});
                         }
                         stage++;return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:calls.length?'':'All requested effects saved',...(calls.length?{tool_calls:calls}:{})}}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}}));
                       }});
-                      expect(output.requestCount===count*2+2+limitedStages.size+postSaveProbe,'unexpected request count');expect(output.usage.totalTokens===output.requestCount*12,'usage reset at checkpoint');return {text:output.content};
+                      expect(output.requestCount===count*2+1+Number(registerPlan)+limitedStages.size+postSaveProbe,'unexpected request count');expect(output.usage.totalTokens===output.requestCount*12,'usage reset at checkpoint');return {text:output.content};
                     }});
-                  expect(result.ok,JSON.stringify({message:result.message,task:result.diagnostic?.task,failures:result.diagnostic?.toolCalls?.filter(c=>c.result?.data?.ok===false).map(c=>({name:c.name,code:c.result.data.code})),receipts:journal.toolContext.filter(r=>r.name==='save_capture').map(r=>r.data.results?.map(i=>({id:i.candidateId,status:i.status})))}));expect(result.taskState==='completed','target ledger incomplete');
+                  expect(result.ok,JSON.stringify({message:result.message,task:result.diagnostic?.task,failures:result.diagnostic?.toolCalls?.filter(c=>c.result?.data?.ok===false).map(c=>({name:c.name,code:c.result.data.code})),receipts:journal.toolContext.filter(r=>r.name==='save_capture').map(r=>r.data.results?.map(i=>({id:i.candidateId,status:i.status})))}));if(registerPlan)expect(result.taskState==='completed','target ledger incomplete');
                   const receipts=journal.toolContext.filter(r=>r.name==='save_capture');
                   expect(receipts.flatMap(r=>r.data.results).length===count,'missing receipts');
                   expect(receipts.every(r=>r.data.results.every(i=>i.originalVerification.status==='verified')),'unverified originals');
                   const tabs=(await chrome.tabs.query({})).filter(t=>t.url===url);
                   expect(tabs.length===1,'source tab multiplication');
                   expect(result.diagnostic.requests.filter(r=>r.incompleteReason==='length').length===2,'missing output-limit diagnostics');
-                  return {requests:sizes.length,postSaveResultsVisible:postSaveProbe,outputLimitsRecovered:limitedStages.size,checkpoints,sourceTabs:tabs.length,receipts:receipts.length,journalRecords:journal.toolContext.length,requestCharacters:sizes};
+                  return {registeredPlan:registerPlan,requests:sizes.length,postSaveResultsVisible:postSaveProbe,outputLimitsRecovered:limitedStages.size,checkpoints,sourceTabs:tabs.length,receipts:receipts.length,journalRecords:journal.toolContext.length,requestCharacters:sizes};
                   })();globalThis.longBatchDone=false;longBatchPromise.finally(()=>longBatchDone=true).catch(()=>{});
-                }''',{'url':url,'tab':tab,'count':COUNT})
+                }''',{'url':url,'tab':tab,'count':COUNT,'registerPlan':register_plan})
                 last=None;started=time.monotonic()
                 while not worker.evaluate('Boolean(globalThis.longBatchDone)'):
                     stage=worker.evaluate('globalThis.longBatchStage')
@@ -106,4 +106,6 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                 assert not run.page_errors,run.page_errors
                 print(json.dumps({**proof,'savedReadback':len(entries),'paidApiCalls':0,'realLibraryWrites':0}))
     finally: server.shutdown()
-if __name__=='__main__': main()
+if __name__=='__main__':
+    for register_plan in ([False] if '--without-plan' in sys.argv else [True, False]):
+        main(register_plan=register_plan)
