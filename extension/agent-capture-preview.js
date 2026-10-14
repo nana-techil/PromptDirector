@@ -123,18 +123,25 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           record.moduleInventoryRevision = (record.moduleInventoryRevision || 0) + 1;
           record.moduleInventoryReadEnd = 0;
         }
-        const modules = []; let characters = 2;
-        for (const module of record.moduleInventory.slice(offset)) {
+        const normalizeTitle = value => value.trim().replace(/\s+/gu, ' ').toLowerCase();
+        const titles = input.moduleTitles && new Set(input.moduleTitles.map(normalizeTitle));
+        const matches = record.moduleInventory.map((module, index) => ({ module, index }))
+          .filter(({ module }) => !titles || titles.has(normalizeTitle(module.title || '')));
+        const modules = [], moduleIndices = []; let characters = 2;
+        for (const { module, index } of matches.slice(offset)) {
           const size = JSON.stringify(module).length + (modules.length ? 1 : 0);
           if (characters + size > length) break;
-          modules.push(module); characters += size;
+          modules.push(module); moduleIndices.push(index); characters += size;
         }
-        if (!modules.length && offset < record.moduleInventory.length) throw agentError('capture_context_scope_required', '单个目录项超过本次长度，请增加读取长度');
+        if (!modules.length && offset < matches.length) throw agentError('capture_context_scope_required', '单个目录项超过本次长度，请增加读取长度');
         const next = offset + modules.length;
-        if (offset <= (record.moduleInventoryReadEnd || 0)) record.moduleInventoryReadEnd = Math.max(record.moduleInventoryReadEnd || 0, next);
+        if (!titles && offset <= (record.moduleInventoryReadEnd || 0)) record.moduleInventoryReadEnd = Math.max(record.moduleInventoryReadEnd || 0, next);
         await persist(record);
-        return { ok: true, ...readIdentity(record), revision: record.moduleInventoryRevision, captureRevision: record.revision, part, modules, offset, total: record.moduleInventory.length,
-          nextOffset: next < record.moduleInventory.length ? next : null, inventoryScope: 'currently_loaded_dom', sourceUrl: record.batch.sourceUrl, untrustedContent: true };
+        const foundTitles = titles && new Set(matches.map(({ module }) => normalizeTitle(module.title)));
+        return { ok: true, ...readIdentity(record), revision: record.moduleInventoryRevision, captureRevision: record.revision, part, modules, offset, total: matches.length,
+          ...(titles ? { moduleTitles: [...titles].sort(), moduleIndices, inventoryTotal: record.moduleInventory.length,
+            unmatchedTitles: input.moduleTitles.filter(title => !foundTitles.has(normalizeTitle(title))) } : {}),
+          nextOffset: next < matches.length ? next : null, inventoryScope: 'currently_loaded_dom', sourceUrl: record.batch.sourceUrl, untrustedContent: true };
       }
       version(record, input);
       if (part === 'supplement') {
@@ -199,9 +206,17 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           if (changed) await persist(record);
         }
         if (input.selectors) {
-          const perSource = Math.max(1, Math.floor(length / input.selectors.length));
+          // Short sources release unused space to longer ones. Keep source order
+          // and independent paging, without wasting the shared response budget.
+          const sizes = new Map(); let remaining = length;
+          const bySize = [...input.selectors].sort((a, b) => record.sources[a].text.length - record.sources[b].text.length);
+          bySize.forEach((selector, index) => {
+            const size = Math.min(record.sources[selector].text.length, Math.floor(remaining / (bySize.length - index)));
+            sizes.set(selector, size); remaining -= size;
+          });
           return { ...readIdentity(record), part, sourceUrl: record.batch.sourceUrl, appearance: record.sources[input.selectors[0]]?.appearance,
             sources: input.selectors.map(selector => { const source = record.sources[selector];
+              const perSource = sizes.get(selector);
               return { selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), content: source.text.slice(0, perSource), totalCharacters: source.text.length,
                 nextOffset: source.text.length > perSource ? perSource : null }; }), untrustedContent: true };
         }

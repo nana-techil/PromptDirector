@@ -6,12 +6,13 @@ export function captureInventories(records) {
     if (record.name !== 'read_capture' || data?.ok === false || data?.part !== 'modules'
       || !data.captureId || !Array.isArray(data.modules) || !Number.isInteger(data.total)) continue;
     const revision = data.revision ?? data.captureRevision;
+    const total = data.inventoryTotal ?? data.total;
     let inventory = inventories.get(data.captureId);
-    if (!inventory || inventory.revision !== revision || inventory.total !== data.total) {
-      inventory = { captureId: data.captureId, revision, sourceUrl: data.sourceUrl, total: data.total, positions: new Map() };
+    if (!inventory || inventory.revision !== revision || inventory.total !== total) {
+      inventory = { captureId: data.captureId, revision, sourceUrl: data.sourceUrl, total, positions: new Map() };
       inventories.set(data.captureId, inventory);
     }
-    data.modules.forEach((module, index) => inventory.positions.set((data.offset || 0) + index, module));
+    data.modules.forEach((module, index) => inventory.positions.set(data.moduleIndices?.[index] ?? (data.offset || 0) + index, module));
   }
   return [...inventories.values()].map(({ positions, ...inventory }) => ({ ...inventory,
     complete: Array.from({ length: inventory.total }, (_, index) => positions.has(index)).every(Boolean),

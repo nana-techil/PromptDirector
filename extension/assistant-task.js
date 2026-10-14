@@ -35,7 +35,7 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       || !Array.isArray(data.modules) || !Number.isInteger(data.total)) return;
     // A frozen directory is independent of the live tab and human turn. Only
     // pages of this same capture/version contribute; sources and saves do not.
-    const key = JSON.stringify([data.captureId, data.revision, data.total]);
+    const key = JSON.stringify([data.captureId, data.revision, data.total, data.moduleTitles || []]);
     const previous = inventoryRanges.get(key);
     const before = previous?.reduce((sum, [start, end]) => sum + end - start, 0);
     const ranges = [...(inventoryRanges.get(key) || []), [data.offset || 0, (data.offset || 0) + data.modules.length]];

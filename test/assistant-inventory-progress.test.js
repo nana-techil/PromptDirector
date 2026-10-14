@@ -31,6 +31,20 @@ test('reading the final page alone never claims the whole directory was read', a
   assert.deepEqual(result.data.inventoryProgress, { read: 1, total: 3, complete: false, nextUnreadOffset: 0 });
 });
 
+test('separate named target lookups cannot fill each other\'s missing pages or appear to be an unchanged read', async () => {
+  const runtime=withAssistantTaskRuntime({specs:[spec],execute:async(_name,args)=>({data:{
+    ...directory(args.offset,1),total:2,moduleTitles:args.moduleTitles,inventoryTotal:153,
+    moduleIndices:[args.moduleTitles[0]==='first'?10+args.offset:80+args.offset]
+  }})},{instruction:'Save the named targets'});
+  const first=await runtime.execute('read_capture',{captureId:'page-a',part:'modules',moduleTitles:['first'],offset:0});
+  const other=await runtime.execute('read_capture',{captureId:'page-a',part:'modules',moduleTitles:['second'],offset:1});
+  assert.equal(first.progressed,true);assert.equal(other.progressed,true);
+  assert.equal(other.data.inventoryProgress.complete,false);
+  assert.equal(other.data.inventoryProgress.nextUnreadOffset,0);
+  const end=await runtime.execute('read_capture',{captureId:'page-a',part:'modules',moduleTitles:['first'],offset:1});
+  assert.equal(end.data.inventoryProgress.complete,true);
+});
+
 for (const protocol of ['chat_completions', 'responses']) test(`${protocol}: unchanged reads receive corrective facts before stopping and can proceed to a save`, async () => {
   let requests = 0, writes = 0;
   const call = (id, name, args) => protocol === 'responses'

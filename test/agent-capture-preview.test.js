@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentCapturePreview } from '../extension/agent-capture-preview.js';
 import { applyPageCaptureSelections } from '../extension/page-capture.js';
+import { CAPTURE_OPERATION_SPECS } from '../extension/capture-operation-specs.js';
+import { validate } from '../extension/case-operation-specs.js';
+import { captureInventories, captureScopeProgress } from '../extension/agent-capture-inventory.js';
 
 function fixture() {
   const data = {}, commits = []; let allowed = true, url = 'https://example.test/work', libraryId = 'library-a';
@@ -19,6 +22,62 @@ function fixture() {
   return { data, commits, options, scope, api: createAgentCapturePreview(options),
     permission: value => { allowed = value; }, navigate: () => { url = 'https://example.test/elsewhere'; }, changeLibrary: () => { libraryId = 'library-b'; } };
 }
+
+test('twenty named targets in a large directory are located together without reading unrelated modules or claiming full-site coverage', async () => {
+  const f = fixture(); let scans = 0;
+  const modules = Array.from({length:153}, (_, i) => ({title:'Effect '+i, selector:'#effect-'+i,
+    sources:[{selector:'#effect-'+i+' pre',characters:10,language:'css'}]}));
+  f.options.chromeApi.scripting.executeScript = async ({func}) => [{result:func.name==='readCapturePageContext'
+    ? (scans++,{ok:true,url:'https://example.test/work',modules}) : {ok:true,url:'https://example.test/work',text:'page',links:[],media:[]}}];
+  await f.api.execute('prepare_capture',{tabId:1},'directory',f.scope);
+  const targets = modules.filter((_,i)=>i%7===0).slice(0,20);
+  const args = {captureId:'directory',part:'modules',moduleTitles:targets.map(m=>m.title),length:12000};
+  validate(CAPTURE_OPERATION_SPECS.find(s=>s.name==='read_capture').parameters,args);
+  const data = await f.api.read(args);
+  assert.deepEqual(data.modules,targets); assert.equal(data.total,20); assert.equal(data.nextOffset,null);
+  assert.equal(data.inventoryTotal,153); assert.deepEqual(data.moduleIndices,targets.map(m=>modules.indexOf(m)));
+  const records = [{name:'read_capture',args,data}];
+  const inventory = captureInventories(records)[0];
+  assert.equal(inventory.total,153); assert.equal(inventory.complete,false);
+  const progress = captureScopeProgress(records,{captureId:'directory',selectors:targets.map(m=>m.selector),project:'',saveMode:'multiple'});
+  assert.equal(progress.valid,true); assert.equal(progress.pending.length,20);
+  const all = await f.api.read({captureId:'directory',part:'modules',length:12000});
+  const merged = captureInventories([...records,{name:'read_capture',args:{},data:all}])[0];
+  assert.equal(merged.total,153); assert(merged.modules.every(m=>modules.includes(m) || modules.some(v=>v.selector===m.selector)));
+  assert(targets.every(target=>merged.modules.some(m=>m.selector===target.selector)),'unfiltered pages must not overwrite distant filtered matches at the wrong positions');
+  assert.equal(scans,1,'name selection and later paging reuse the same frozen directory');
+  assert.equal(f.data['agentCapture:directory'].moduleInventoryReadEnd,all.modules.length,'a filtered lookup is not a contiguous full-directory read');
+});
+
+test('named module lookup preserves duplicate titles, missing names and filtered pagination identities', async () => {
+  const f=fixture();
+  const modules=[{title:'Shared name',selector:'#one',sources:[]},{title:'Other',selector:'#other',sources:[]},{title:'Shared name',selector:'#two',sources:[]}];
+  f.options.chromeApi.scripting.executeScript=async({func})=>[{result:func.name==='readCapturePageContext'
+    ? {ok:true,url:'https://example.test/work',modules} : {ok:true,url:'https://example.test/work',text:'page'}}];
+  await f.api.execute('prepare_capture',{tabId:1},'directory',f.scope);
+  const args={captureId:'directory',part:'modules',moduleTitles:[' shared   NAME ','Missing'],length:JSON.stringify([modules[0]]).length};
+  const first=await f.api.read(args);
+  assert.equal(first.nextOffset,1); assert.deepEqual(first.moduleIndices,[0]); assert.deepEqual(first.unmatchedTitles,['Missing']);
+  const second=await f.api.read({...args,offset:first.nextOffset,expectedRevision:first.revision});
+  assert.deepEqual(second.moduleIndices,[2]); assert.equal(second.nextOffset,null); assert.equal(second.total,2);
+  const empty=await f.api.read({...args,moduleTitles:['Not here']});
+  assert.deepEqual(empty.modules,[]); assert.deepEqual(empty.unmatchedTitles,['Not here']); assert.equal(empty.total,0);
+});
+
+test('a mixed batch of twenty source regions uses spare capacity instead of truncating long sources to an equal share', async () => {
+  const f=fixture();await f.api.execute('prepare_capture',{tabId:1},'preview',f.scope);
+  const sources=Array.from({length:20},(_,i)=>({ok:true,selector:'#source-'+i,text:String(i).repeat(i===19?500:10),format:'code',url:'https://example.test/work'}));
+  f.options.chromeApi.scripting.executeScript=async()=>[{result:{ok:true,url:'https://example.test/work',sources}}];
+  const size=sources.reduce((sum,source)=>sum+source.text.length,0);
+  const args={captureId:'preview',part:'source',selectors:sources.map(s=>s.selector)};
+  const read=await f.api.read({...args,length:size});
+  assert.deepEqual(read.sources.map(s=>s.content),sources.map(s=>s.text));
+  assert(read.sources.every(s=>s.nextOffset===null));
+  const partial=await f.api.read({...args,length:100});
+  assert.equal(partial.sources.reduce((sum,s)=>sum+s.content.length,0),100);
+  assert(partial.sources.some(s=>s.nextOffset!==null));
+  assert(sources.every(s=>f.data['agentCapture:preview'].sources[s.selector].text===s.text),'understanding pagination never truncates stored originals');
+});
 
 test('new batches reuse the same exact webpage without opening or focusing another tab', async () => {
   const f = fixture(); const url = 'https://example.test/work';
