@@ -316,16 +316,25 @@ export function captureSourceSelectionCheck(calls, preview, task) {
   const requiredSources = new Set(task.steps.filter(step => step.operation === 'read_capture' && ['source','supplement'].includes(step.part) && step.selector).map(step => step.selector));
   const selected = new Set(preview?.selections?.filter(item => item.includeText).map(item => item.candidateId));
   const bindings = (preview?.candidates || []).filter(candidate => selected.has(candidate.id)).flatMap(candidate => candidate.textSources || []);
-  const missing = calls.filter(call => call.name === 'read_capture' && ['source', 'supplement'].includes(call.args?.part)
-    && call.result?.data?.ok !== false && call.result?.data).flatMap(call => (call.result.data.sources || [call.result.data])
-      .map(source => ({ ...source, captureId: call.result.data.captureId || call.args.captureId })))
-    .filter(source => (!requiredSources.size || requiredSources.has(source.selector))
+  const sources = calls.flatMap((call, index) => call.name === 'read_capture' && ['source', 'supplement'].includes(call.args?.part)
+    && call.result?.data?.ok !== false && call.result?.data ? (call.result.data.sources || [call.result.data])
+      .map(source => ({ ...source, captureId: call.result.data.captureId || call.args.captureId,
+        sourceUrl: source.sourceUrl || call.result.data.sourceUrl, observedIndex: index })) : []);
+  const verifiedSave = (source, afterRead = false) => calls.some((call, index) => call.name === 'save_capture'
+    && (!afterRead || index > source.observedIndex) && call.result?.data?.captureId === source.captureId
+    && call.result.data.results?.some(receipt => receipt.entryId && ['saved','duplicate'].includes(receipt.status)
+      && receipt.originalVerification?.status === 'verified' && receipt.originalVerification.sources?.some(binding =>
+        binding.selector === source.selector && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial')));
+  // A source can be inspected on a completed preview and committed in the next
+  // batch. Match observed originals, not merely selectors or equal text lengths.
+  const committedSources = sources.filter(source => verifiedSave(source, true));
+  const missing = sources.filter(source => (!requiredSources.size || requiredSources.has(source.selector))
       && !((!source.captureId || !preview?.captureId || source.captureId === preview.captureId) && bindings.some(binding => binding.selector === source.selector
         && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'))
-      && !calls.some(call => call.name === 'save_capture' && call.result?.data?.captureId === source.captureId
-        && call.result.data.results?.some(receipt => receipt.entryId && ['saved','duplicate'].includes(receipt.status)
-          && receipt.originalVerification?.status === 'verified' && receipt.originalVerification.sources?.some(binding =>
-            binding.selector === source.selector && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'))));
+      && !verifiedSave(source)
+      && !committedSources.some(saved => source.sourceUrl && saved.sourceUrl === source.sourceUrl
+        && saved.selector === source.selector && saved.totalCharacters === source.totalCharacters
+        && (saved.offset || 0) === (source.offset || 0) && typeof source.content === 'string' && saved.content === source.content));
   if (missing.length) return { revision: preview?.revision, missing: [...new Set(missing.map(source => source.selector))] };
 }
 

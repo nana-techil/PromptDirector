@@ -316,3 +316,17 @@ test('a project lookup step can continue using its actual name fragment filter w
  assert.deepEqual(runtime.task.pending,[{operation:'save_capture'}]);
  assert.equal((await runtime.finishTurn({content:'All saved.'})).action,'continue');
 });
+
+test('preparing the next batch on the same source fulfills the old preparation target and rebinds pending writes',async()=>{
+ const runtime=withAssistantTaskRuntime({specs:['prepare_capture','update_capture','save_capture'].map(name=>({name,parameters:{properties:{requestId:{}}}})),
+  execute:async(name,args)=>({data:name==='prepare_capture'?{ok:true,captureId:'next-batch',replacesCaptureId:'saved-batch',state:'preview'}:{ok:true,captureId:args.captureId,results:[{entryId:'next-case',status:'saved'}]}})},
+  {instruction:'Continue saving remaining modules',userMessageId:'current-user',context:{preview:{captureId:'saved-batch',state:'completed'}}});
+ await runtime.execute('declare_task',{mode:'act',goal:'Continue remaining modules',steps:['prepare_capture','update_capture','save_capture'].map(operation=>({operation,targetId:'saved-batch'}))});
+ await runtime.execute('prepare_capture',{url:'https://example.test/'},{callId:'next-preview'});
+ assert(!runtime.task.pending.some(step=>step.operation==='prepare_capture'),'same-source preparation is a real completed step, not a permanent missing old handle');
+ assert(runtime.task.pending.every(step=>step.targetId==='next-batch'));
+ await runtime.execute('update_capture',{captureId:'next-batch'},{callId:'next-write'});
+ await runtime.execute('save_capture',{captureId:'next-batch'},{callId:'next-save'});
+ assert.equal(await runtime.finishTurn({}),undefined);
+ assert.equal(runtime.task.state,'completed');
+});

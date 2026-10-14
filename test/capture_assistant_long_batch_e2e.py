@@ -38,7 +38,7 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                   globalThis.longBatchPromise=(async()=>{
                   const {runCaptureAssistant,runComposerToolLoop,createAgentContextRuntime,call}=batchTest;
                   const expect=(yes,message)=>{if(!yes)throw new Error(message)};
-                  let stage=0,checkpoints=0,journal={}; const sizes=[],limitedStages=new Set();
+                  let stage=0,checkpoints=0,journal={},postSaveProbe=0,savedPreview; const sizes=[],limitedStages=new Set();
                   const sessionRuntime=createAgentContextRuntime({turnId:'long-batch-turn',load:async()=>journal,
                     update:async fn=>{journal=fn(journal);await chrome.storage.local.set({batchTestJournal:journal});}});
                   const save=sessionRuntime.saveContinuation;sessionRuntime.saveContinuation=async value=>{checkpoints++;await save(value)};
@@ -50,6 +50,17 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                       const output=await runComposerToolLoop({runtime:toolRuntime,protocol:'chat_completions',body:{model:'fixture',messages:[{role:'user',content:'Save every effect separately'}]},request:async body=>{
                         globalThis.longBatchStage=stage;sizes.push(JSON.stringify(body).length);
                         const latest=body.messages.findLast(m=>m.role==='tool');const data=latest?JSON.parse(latest.content):null;
+                        // Reuse a completed preview to inspect the next module, just as
+                        // a real model does before preparing its next writable batch.
+                        if(stage===5&&postSaveProbe<3) {
+                          let args;
+                          if(postSaveProbe===0){savedPreview=data;args={captureId:data.captureId,part:'source',selector:'#effect-2 pre',expectedRevision:data.revision};}
+                          if(postSaveProbe===1){expect(data.content?.includes('.effect-2:hover'),'fresh post-save source disappeared from model request');args={captureId:savedPreview.captureId,part:'source',selector:'#effect-3 pre',expectedRevision:1};}
+                          if(postSaveProbe===2){expect(data.code==='capture_changed','post-save revision error disappeared from model request');args={captureId:savedPreview.captureId,part:'summary'};}
+                          postSaveProbe++;
+                          return new Response(JSON.stringify({choices:[{message:{role:'assistant',tool_calls:[{id:'post-save-'+postSaveProbe,type:'function',function:{name:'read_capture',arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}}));
+                        }
+                        if(stage===5)expect(data.state==='completed'&&data.revision===savedPreview.revision,'current preview state disappeared from model request');
                         if(data?.ok===false)throw new Error(JSON.stringify(data));
                         if([3,7].includes(stage)&&!limitedStages.has(stage)) {
                           limitedStages.add(stage);
@@ -66,16 +77,16 @@ globalThis.batchTest={runCaptureAssistant:longBatchAssistant,runComposerToolLoop
                         }
                         stage++;return new Response(JSON.stringify({choices:[{message:{role:'assistant',content:calls.length?'':'All requested effects saved',...(calls.length?{tool_calls:calls}:{})}}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}}));
                       }});
-                      expect(output.requestCount===count*2+2+limitedStages.size,'unexpected request count');expect(output.usage.totalTokens===output.requestCount*12,'usage reset at checkpoint');return {text:output.content};
+                      expect(output.requestCount===count*2+2+limitedStages.size+postSaveProbe,'unexpected request count');expect(output.usage.totalTokens===output.requestCount*12,'usage reset at checkpoint');return {text:output.content};
                     }});
-                  expect(result.ok,result.message);expect(result.taskState==='completed','target ledger incomplete');
+                  expect(result.ok,JSON.stringify({message:result.message,task:result.diagnostic?.task,failures:result.diagnostic?.toolCalls?.filter(c=>c.result?.data?.ok===false).map(c=>({name:c.name,code:c.result.data.code})),receipts:journal.toolContext.filter(r=>r.name==='save_capture').map(r=>r.data.results?.map(i=>({id:i.candidateId,status:i.status})))}));expect(result.taskState==='completed','target ledger incomplete');
                   const receipts=journal.toolContext.filter(r=>r.name==='save_capture');
                   expect(receipts.flatMap(r=>r.data.results).length===count,'missing receipts');
                   expect(receipts.every(r=>r.data.results.every(i=>i.originalVerification.status==='verified')),'unverified originals');
                   const tabs=(await chrome.tabs.query({})).filter(t=>t.url===url);
                   expect(tabs.length===1,'source tab multiplication');
                   expect(result.diagnostic.requests.filter(r=>r.incompleteReason==='length').length===2,'missing output-limit diagnostics');
-                  return {requests:sizes.length,outputLimitsRecovered:limitedStages.size,checkpoints,sourceTabs:tabs.length,receipts:receipts.length,journalRecords:journal.toolContext.length,requestCharacters:sizes};
+                  return {requests:sizes.length,postSaveResultsVisible:postSaveProbe,outputLimitsRecovered:limitedStages.size,checkpoints,sourceTabs:tabs.length,receipts:receipts.length,journalRecords:journal.toolContext.length,requestCharacters:sizes};
                   })();globalThis.longBatchDone=false;longBatchPromise.finally(()=>longBatchDone=true).catch(()=>{});
                 }''',{'url':url,'tab':tab,'count':COUNT})
                 last=None;started=time.monotonic()

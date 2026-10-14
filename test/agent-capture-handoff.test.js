@@ -35,3 +35,22 @@ test('mixed messages and unmatched calls never lose their native pairing', () =>
   const pending={messages:[{role:'assistant',tool_calls:[{id:'old'}]}]};
   assert.strictEqual(projectCaptureHandoff(pending,'chat_completions',records),pending);
 });
+
+for (const protocol of ['chat_completions', 'responses']) test(`${protocol}: reading the next module after a save keeps fresh sources, revision errors and recovery state visible`, () => {
+  const records = [
+    {callId:'prepared',name:'prepare_capture',args:{},data:{captureId:'batch',revision:1}},
+    {callId:'saved',name:'save_capture',args:{captureId:'batch'},data:{captureId:'batch',revision:4,state:'completed',results:[{entryId:'saved-effect',status:'saved'}]}},
+    {callId:'next-source',name:'read_capture',args:{captureId:'batch',part:'source',selector:'#next pre'},data:{captureId:'batch',revision:4,content:'next module original code'}},
+    {callId:'stale-read',name:'read_capture',args:{captureId:'batch',part:'source',expectedRevision:1},data:{ok:false,code:'capture_changed',message:'Read current revision'}},
+    {callId:'current-state',name:'read_capture',args:{captureId:'batch',part:'summary'},data:{captureId:'batch',revision:4,state:'completed'}}
+  ];
+  const pair = record => protocol === 'responses'
+    ? [{type:'function_call',call_id:record.callId,name:record.name,arguments:JSON.stringify(record.args)},{type:'function_call_output',call_id:record.callId,output:JSON.stringify(record.data)}]
+    : [{role:'assistant',tool_calls:[{id:record.callId,type:'function',function:{name:record.name,arguments:JSON.stringify(record.args)}}]},{role:'tool',tool_call_id:record.callId,content:JSON.stringify(record.data)}];
+  const key = protocol === 'responses' ? 'input' : 'messages';
+  const body = {[key]:records.flatMap(pair)};
+  const projected = projectCaptureHandoff(body,protocol,records);
+  assert.deepEqual(projected[key].slice(-6),records.slice(2).flatMap(pair), 'post-save work is not part of the committed transaction');
+  assert(!projected[key].some(item => (item.call_id || item.tool_call_id) === 'prepared'),'committed inputs still leave working context');
+  assert.deepEqual(body[key],records.flatMap(pair),'full provider history stays intact');
+});

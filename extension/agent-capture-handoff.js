@@ -12,13 +12,18 @@ export function completedCapture(record) {
 }
 
 export function projectCaptureHandoff(body, protocol, records, task) {
-  const closed = new Set(records.filter(completedCapture).map(record => record.data.captureId));
+  const closed = new Map();
+  for (const [index, record] of records.entries()) {
+    if (completedCapture(record)) closed.set(record.data.captureId, index);
+  }
   if (!closed.size) return body;
   const candidates = new Map();
   const removable = new Map();
-  for (const record of records) {
+  for (const [index, record] of records.entries()) {
     const captureId = record.args?.captureId || record.data?.captureId;
-    if (!closed.has(captureId)) continue;
+    // A committed preview remains readable. Later reads/errors can belong to
+    // the next batch, so only retire work before its actual save receipt.
+    if (!closed.has(captureId) || index >= closed.get(captureId)) continue;
     if (record.name === 'update_capture') {
       for (const [index, item] of (record.args.candidates || []).entries()) {
         const key = JSON.stringify([captureId, item.id]);

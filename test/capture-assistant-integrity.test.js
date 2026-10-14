@@ -221,3 +221,14 @@ test('separate batch previews recognize earlier verified saves without forcing t
  save.result.data.results[0].originalVerification.status='verified';save.result.data.captureId='wrong-preview';
  assert.deepEqual(captureSourceSelectionCheck([...reads,save],preview,task).missing,['#first']);
 });
+
+test('the same original read across batch boundaries is satisfied by its later verified save, not by matching length alone',()=>{
+ const read=(captureId,content='exact original',sourceUrl='https://example.test/effects')=>({name:'read_capture',args:{captureId,part:'source',selector:'#next pre'},result:{data:{captureId,sourceUrl,selector:'#next pre',content,offset:0,totalCharacters:14,nextOffset:null}}});
+ const save={name:'save_capture',args:{captureId:'next'},result:{data:{captureId:'next',results:[{entryId:'saved-next',status:'saved',originalVerification:{status:'verified',sources:[{selector:'#next pre',totalCharacters:14}]}}]}}};
+ const task={steps:[{operation:'save_capture'}]},preview={captureId:'last',candidates:[],selections:[]};
+ assert.equal(captureSourceSelectionCheck([read('old'),read('next'),save],preview,task),undefined);
+ for(const other of [read('next','changed source'),read('next','exact original','https://other.test/effects')]) {
+  assert.deepEqual(captureSourceSelectionCheck([read('old'),other,save],preview,task).missing,['#next pre']);
+ }
+ assert(captureSourceSelectionCheck([read('old'),save,read('next')],preview,task),'a read made after saving cannot prove that source was committed');
+});
