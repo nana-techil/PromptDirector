@@ -47,8 +47,11 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       throw agentError('capture_changed', '采集预览已改变，请重新读取后继续');
     }
   }
+  function readIdentity(record) {
+    return { captureId: record.id, revision: record.revision, state: record.state, readOnly: record.state !== 'preview' };
+  }
   function summary(record) {
-    return { ok: true, captureId: record.id, revision: record.revision, state: record.state,
+    return { ok: true, ...readIdentity(record),
       sourceUrl: record.batch.sourceUrl, tabId: record.batch.tabId,
       platform: capturePlatformGuidance(record.batch.sourceUrl),
       candidates: record.batch.candidates.map(item => ({ id: item.id, title: item.title,
@@ -130,7 +133,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         const next = offset + modules.length;
         if (offset <= (record.moduleInventoryReadEnd || 0)) record.moduleInventoryReadEnd = Math.max(record.moduleInventoryReadEnd || 0, next);
         await persist(record);
-        return { ok: true, captureId: record.id, revision: record.moduleInventoryRevision, captureRevision: record.revision, part, modules, offset, total: record.moduleInventory.length,
+        return { ok: true, ...readIdentity(record), revision: record.moduleInventoryRevision, captureRevision: record.revision, part, modules, offset, total: record.moduleInventory.length,
           nextOffset: next < record.moduleInventory.length ? next : null, inventoryScope: 'currently_loaded_dom', sourceUrl: record.batch.sourceUrl, untrustedContent: true };
       }
       version(record, input);
@@ -152,7 +155,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         record.sources[item.id] = { text: supplement.text, selector: item.id, url: supplement.sourceUrl, format: 'text', completeness: supplement.partial ? 'partial' : 'complete' };
         candidate.supplements = candidate.supplements.map(value => value.id === item.id ? supplement : value);
         if (!input.offset) { record.revision++; await persist(record); }
-        return { captureId: record.id, revision: record.revision, part, selector: item.id, sourceUrl: supplement.sourceUrl,
+        return { ...readIdentity(record), part, selector: item.id, sourceUrl: supplement.sourceUrl,
           content: supplement.text.slice(offset, offset + length), offset, totalCharacters: supplement.text.length,
           nextOffset: offset + length < supplement.text.length ? offset + length : null, completeness: record.sources[item.id].completeness, untrustedContent: true };
       }
@@ -197,14 +200,14 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         }
         if (input.selectors) {
           const perSource = Math.max(1, Math.floor(length / input.selectors.length));
-          return { captureId: record.id, revision: record.revision, part, sourceUrl: record.batch.sourceUrl, appearance: record.sources[input.selectors[0]]?.appearance,
+          return { ...readIdentity(record), part, sourceUrl: record.batch.sourceUrl, appearance: record.sources[input.selectors[0]]?.appearance,
             sources: input.selectors.map(selector => { const source = record.sources[selector];
               return { selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), content: source.text.slice(0, perSource), totalCharacters: source.text.length,
                 nextOffset: source.text.length > perSource ? perSource : null }; }), untrustedContent: true };
         }
         const source = record.sources?.[input.selector];
         if (!source) throw agentError('capture_source_required', '请先读取这段实际原文');
-        return { captureId: record.id, revision: record.revision, part, selector: input.selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), sourceUrl: source.url, appearance: source.appearance,
+        return { ...readIdentity(record), part, selector: input.selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), sourceUrl: source.url, appearance: source.appearance,
           content: source.text.slice(offset, offset + length), offset, totalCharacters: source.text.length,
           nextOffset: offset + length < source.text.length ? offset + length : null, completeness: source.completeness || 'unverified', untrustedContent: true };
       }
@@ -216,7 +219,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
         if (!media.localAssetId) await permission(media.url);
         const blob = await readImage?.(media);
         if (!blob?.type?.startsWith('image/')) throw agentError('capture_page_unavailable', '图片原件未取得，不能用封面代替');
-        return { captureId: record.id, revision: record.revision, part, candidateId: candidate.id, mediaId: media.id,
+        return { ...readIdentity(record), part, candidateId: candidate.id, mediaId: media.id,
           sourceUrl: candidate.canonicalUrl, dataUrl: `data:${blob.type};base64,${bytesToBase64(new Uint8Array(await blob.arrayBuffer()))}`, untrustedContent: true };
       }
       if (!['page', 'candidate'].includes(part)) throw agentError('invalid_input', '采集读取部分无效');
@@ -227,7 +230,7 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       const candidate = part === 'candidate' ? record.batch.candidates.find(item => item.id === input.candidateId) : null;
       if (part === 'candidate' && !candidate) throw agentError('capture_candidate_not_found', '没有找到这项采集内容');
       const text = JSON.stringify(part === 'page' ? record.page : candidate);
-      return { captureId: record.id, revision: record.revision, part, content: text.slice(offset, offset + length),
+      return { ...readIdentity(record), part, content: text.slice(offset, offset + length),
         offset, totalCharacters: text.length, nextOffset: offset + length < text.length ? offset + length : null,
         untrustedContent: true };
     },

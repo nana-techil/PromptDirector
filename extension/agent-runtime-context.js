@@ -35,7 +35,7 @@ export function agentContextReferences(records = []) {
 export const AGENT_CONTEXT_READ_SPEC = {
   name: 'read_tool_result', description: '按会话索引的真实turnId/callId/path读取此前冻结工具返回，保留完整分页；不再次执行原动作。path支持对象字段和数组索引，直接读取所需字段更轻；对象返回JSON，分页须完整拼接才能解析。origin保留原读取的分页标志；取完一个历史片段不等于底层来源全文。历史资料不证明当前网页或案例版本，需要当前状态时用正式网页/案例读取工具。',
   parameters: { type: 'object', properties: { callId: { type: 'string', minLength: 1 }, turnId: { type: 'string', minLength: 1 },
-    path: { type: 'array', items: { type: 'string' } }, offset: { type: 'integer', minimum: 0 },
+    path: { type: 'array', items: { type: ['string', 'integer'], minimum: 0 } }, offset: { type: 'integer', minimum: 0 },
     length: { type: 'integer', minimum: 1, maximum: AGENT_CHUNK_BYTES / 4 } }, required: ['callId'], additionalProperties: false }
 };
 export function readAgentToolResult(records, args) {

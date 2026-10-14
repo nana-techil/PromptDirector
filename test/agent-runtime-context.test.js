@@ -115,3 +115,25 @@ test('composer uses the same durable fact runtime, and session normalization ret
   assert.equal((await runtime.loadContext())[0].data.content, '完整原文');
   assert.equal(createComposerSession(state.composerSessions[0]).toolContext[0].data.content, '完整原文');
 });
+
+for (const protocol of ['chat_completions', 'responses']) test(`${protocol}: model numeric array paths retrieve archived batch sources without a rejection loop`, async () => {
+  const sources = ['css', 'react', 'prompt'].map(name => ({ content: name + ' complete source' }));
+  let state = { toolContext: [{ turnId: 'prior', callId: 'frozen-sources', name: 'read_capture', args: {}, data: { sources } }] };
+  const durable = createAgentContextRuntime({ turnId: 'resume', load: async () => state, update: async fn => { state = fn(state); } });
+  let requests = 0;
+  const calls = sources.map((_, i) => ({ id: 'source-' + i, name: 'read_tool_result', arguments: JSON.stringify({ callId: 'frozen-sources', turnId: 'prior', path: ['data', 'sources', i, 'content'] }) }));
+  const runtime = withAssistantTaskRuntime({ ...durable, specs: [spec], execute: () => assert.fail('archived sources require no page reread') }, { instruction: 'Continue with the frozen sources', userMessageId: 'resume' });
+  await runComposerToolLoop({ protocol, runtime, body: protocol === 'responses' ? { model: 'fixture', input: [{ role: 'user', content: 'Continue with the frozen sources' }] } : body(),
+    request: async actual => {
+      if (++requests === 1) return protocol === 'responses'
+        ? new Response(JSON.stringify({ status: 'completed', output: calls.map(c => ({ type: 'function_call', call_id: c.id, name: c.name, arguments: c.arguments })) }))
+        : response({ role: 'assistant', tool_calls: calls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments } })) });
+      const messages = actual[protocol === 'responses' ? 'input' : 'messages'];
+      for (let i = 0; i < sources.length; i++) {
+        const result = messages.find(m => (m.call_id || m.tool_call_id) === calls[i].id && (m.type === 'function_call_output' || m.role === 'tool'));
+        assert.equal(JSON.parse(result.output || result.content).content, sources[i].content);
+      }
+      return protocol === 'responses' ? new Response(JSON.stringify({ status: 'completed', output_text: 'Sources retrieved.' })) : response({ role: 'assistant', content: 'Sources retrieved.' });
+    } });
+  assert.equal(requests, 2);
+});

@@ -389,3 +389,21 @@ test('independent source reads in one model call do not invalidate each other; c
   await assert.rejects(f.api.execute('update_capture', { captureId: 'preview', expectedRevision: 1, selections: selected }, 'stale', f.scope), { code: 'capture_changed' });
   assert.equal((await f.api.read({ captureId: 'preview', part: 'source', selector: '#third', expectedRevision: 2, offset: 1 })).content, '#thirdoriginal'.slice(1));
 });
+
+test('reading more sources after saving exposes the read-only batch before an agent attempts another edit', async () => {
+  const f = fixture();
+  await f.api.execute('prepare_capture', { tabId: 1 }, 'preview', f.scope);
+  f.options.chromeApi.scripting.executeScript = async ({ func }) => [{ result: func.name === 'readCapturePageContext'
+    ? { ok: true, url: 'https://example.test/work', modules: [{ selector: '#next', sources: [] }] }
+    : { ok: true, url: 'https://example.test/work', selector: 'pre', text: 'next module original', format: 'code' } }];
+  const before = await f.api.read({ captureId: 'preview', part: 'source', selector: 'pre' });
+  assert.equal(before.state, 'preview'); assert.equal(before.readOnly, false);
+  const selected = await f.api.execute('update_capture', { captureId: 'preview', expectedRevision: before.revision,
+    selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: [] }] }, 'select', f.scope);
+  await f.api.execute('save_capture', { captureId: 'preview', expectedRevision: selected.revision }, 'save', f.scope);
+  for (const args of [{ part: 'source', selector: 'pre' }, { part: 'source', selectors: ['pre'] }, { part: 'modules' }, { part: 'page' }]) {
+    const read = await f.api.read({ captureId: 'preview', ...args });
+    assert.equal(read.state, 'completed'); assert.equal(read.readOnly, true);
+  }
+  assert.equal(f.commits.length, 1, 'reading next sources must not save or reopen the old transaction');
+});
