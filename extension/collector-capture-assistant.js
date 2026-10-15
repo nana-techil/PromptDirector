@@ -79,36 +79,39 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     return chip;
   }
   window.addEventListener('pagehide', () => { attachmentUrls.forEach(url => URL.revokeObjectURL(url)); attachmentUrls.clear(); });
-  function persist({ saveChat = true } = {}) {
+  function persist({ saveChat = true, draftOnly = false } = {}) {
     if (!switching) state.projectDraft = organizationDraft();
     const index = sessions.conversations.findIndex(item => item.id === state.id);
     if (index >= 0) sessions.conversations[index] = state;
     if (state.sourceUrl) sessions.pages[state.sourceUrl] = pageWork(state);
-    pendingWrites.set(state.id, {owner:state, saveChat:saveChat || pendingWrites.get(state.id)?.saveChat});
+    const pending = pendingWrites.get(state.id);
+    pendingWrites.set(state.id, {owner:state, saveChat:saveChat || pending?.saveChat,
+      draftOnly: !(saveChat && !draftOnly || pending?.saveChat && !pending.draftOnly)});
     if (writing) return persistTail;
     writing = true;
     persistTail = persistTail.catch(() => {}).then(async () => {
       while (pendingWrites.size) {
-        const [id, {owner, saveChat}] = pendingWrites.entries().next().value; pendingWrites.delete(id);
+        const [id, {owner, saveChat, draftOnly}] = pendingWrites.entries().next().value; pendingWrites.delete(id);
         for (const message of owner.messages) message.id ||= crypto.randomUUID();
         // Page originals live in pageWork. Typing a chat draft must not copy
         // every webpage's preview or send the same batch to the background again.
         const { pendingBatch: _pendingBatch, ...view } = owner;
         const sentTurns = new Set(owner.turns || []);
-        const chat = structuredClone(view);
+        const smallDraft = draftOnly && chatRevisions.has(owner.id);
+        const chat = smallDraft ? {id:owner.id,draft:owner.draft,chatRevision:owner.chatRevision} : structuredClone(view);
         const changedPages = Object.entries(sessions.pages).filter(([url, work]) => !samePageWork(persistedPages.get(url), work));
         const snapshot = { schema: 'shared-chat', pages: Object.fromEntries(changedPages.map(([url, work]) => [url, structuredClone(work)])), activeId: sessions.activeId, activeUrl: sessions.activeUrl,
-          emptyChat: !chat.messages.length && !chat.draft && !chat.attachments?.length
-            ? {id:chat.id,aiProfile:chat.aiProfile,messages:[],sourceUrl:chat.sourceUrl,tabId:chat.tabId,pageTitle:chat.pageTitle,projectDraft:chat.projectDraft} : null };
-        if (saveChat && (chat.userCreated || chat.messages.length || chat.draft || chat.attachments?.length)) {
+          emptyChat: !owner.messages.length && !owner.draft && !owner.attachments?.length
+            ? {id:owner.id,aiProfile:owner.aiProfile,messages:[],sourceUrl:owner.sourceUrl,tabId:owner.tabId,pageTitle:owner.pageTitle,projectDraft:owner.projectDraft} : null };
+        if (saveChat && (chatRevisions.has(owner.id) || owner.userCreated || owner.messages.length || owner.draft || owner.attachments?.length)) {
           chat.chatRevision = chatRevisions.get(chat.id) ?? owner.chatRevision ?? chat.chatRevision;
-          const response = await chrome.runtime.sendMessage({ type: 'UPSERT_ASSISTANT_CHAT', chat, activate:state.id === owner.id });
+          const response = await chrome.runtime.sendMessage({ type: 'UPSERT_ASSISTANT_CHAT', chat, draftOnly:smallDraft, activate:state.id === owner.id });
           if (!response?.ok) throw new Error(response?.message || t('无法保存创作草稿'));
           owner.chatRevision = response.session.chatRevision; owner.updatedAt = response.session.updatedAt; owner.title = response.session.title;
           chatRevisions.set(chat.id, response.session.chatRevision);
           // The canonical conversation now owns these diagnostics. Keep only
           // newly arrived turns in the UI until their next successful write.
-          if (owner.turns) owner.turns = owner.turns.filter(turn => !sentTurns.has(turn));
+          if (!smallDraft && owner.turns) owner.turns = owner.turns.filter(turn => !sentTurns.has(turn));
         }
         const dialog = JSON.stringify([snapshot.activeId, snapshot.activeUrl, snapshot.emptyChat]);
         if (changedPages.length || dialog !== persistedDialog) await storage.update(stateKey, stored => ({[stateKey]: {
@@ -126,11 +129,11 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     const stored = (await storage.get(stateKey))[stateKey] || {};
     const response = await chrome.runtime.sendMessage({type:'GET_ASSISTANT_CHATS', activeId:stored.activeId});
     if (!response?.ok) throw new Error(response?.message || t('无法读取对话'));
+    response.chats.forEach(chat => chatRevisions.set(chat.id, chat.chatRevision || 0));
     const latest = (await storage.get(stateKey))[stateKey] || stored;
     if (latest.emptyChat?.id === latest.activeId && !response.chats.some(chat => chat.id === latest.activeId)) response.chats.push(latest.emptyChat);
     sessions = restoreCaptureSessions({...latest, conversations:response.chats}); loaded = true;
     Object.entries(sessions.pages).forEach(([url, work]) => persistedPages.set(url, work));
-    sessions.conversations.forEach(chat => chatRevisions.set(chat.id, chat.chatRevision || 0));
   }
   function organizationDraft() {
     const draft = getDraft() || {};
@@ -450,7 +453,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   chats.addEventListener('change', async () => {
     if (busy()) return;
     const selected = chats.value;
-    await persist();
+    await persist({saveChat:false});
     if (selected === 'all') {
       await chrome.tabs.create({url:chrome.runtime.getURL(`composer.html?session=${encodeURIComponent(state.id)}`)}); render(); return;
     }
@@ -458,7 +461,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     state = sessions.conversations.find(session => session.id === sessions.activeId);
     // Restore the chosen conversation; its next turn observes the current tab.
     renderedMessages = null; field.value = state.draft || ''; feedback(state.lastError || '', Boolean(state.lastError));
-    await syncPage(); await persist(); render(); field.focus();
+    await syncPage(); await persist({saveChat:false}); render(); field.focus();
   });
   fresh.addEventListener('click', async () => {
     if (busy()) return; localEdits++; state.pendingBatch = getBatch(); state = newCaptureConversation(sessions, state); field.value = ''; baseBatch = getBatch();
@@ -467,7 +470,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   });
   composer.addEventListener('submit', event => { event.preventDefault(); void submit(field.value.trim()); });
   field.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); if (!busy()) void submit(field.value.trim()); } });
-  field.addEventListener('input', () => { localEdits++; state.draft = field.value; void persist().catch(error => feedback(error.message,true)); });
+  field.addEventListener('input', () => { localEdits++; state.draft = field.value; void persist({draftOnly:true}).catch(error => feedback(error.message,true)); });
   model.addEventListener('change', () => { localEdits++; state.aiProfile = JSON.parse(model.value); void persist().catch(error => feedback(error.message,true)); });
   stop.addEventListener('click', async () => {
     const response = await chrome.runtime.sendMessage({ type: 'CANCEL_CAPTURE_ASSIST', requestId: state.requestId });
@@ -502,7 +505,6 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
         sessions.conversations = response.chats; sessions.activeId = '';
         sessions = restoreCaptureSessions(sessions);
         state = captureSessionForPage(sessions,(await chrome.tabs.query({active:true,currentWindow:true}))[0]);
-        chatRevisions.set(state.id,state.chatRevision || 0);
         field.value = state.draft || ''; renderedMessages = null; render(); return;
       }
       if (saved && saved.chatRevision > Math.max(state.chatRevision || 0,chatRevisions.get(id) || 0)) {

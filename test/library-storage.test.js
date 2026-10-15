@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLibraryStorage, createLibraryCommitter } from '../extension/library-storage.js';
 import { markSyncMetaDirty } from '../extension/sync-model.js';
+import { assistantDraftUpdate, COMPOSER_DRAFTS_KEY } from '../extension/composer-session-drafts.js';
 
 function fixture(initial = {}) {
   const data = structuredClone(initial), listeners = new Set(), calls = [];
@@ -25,6 +26,48 @@ function fixture(initial = {}) {
   return { data, calls, backend, lock, storage, fail: error => { failure = error; },
     emit: (update, area) => { for (const listener of listeners) listener(update, area); } };
 }
+
+test('typing a shared draft writes only its patch and readback/export retain full history', async () => {
+  const history = { toolContext: [{ data: { original: 'original source'.repeat(1000) } }], assistantState: { turns: [{ requestId: 'old', diagnostic: { source: 'unaltered' } }] } };
+  const run = fixture();
+  await run.storage.set({ composerSessions: [{ id: 'chat', chatRevision: 1, currentInstruction: '', messages: [{ role: 'user', content: 'save' }], ...history }] });
+  const writesBefore = run.calls.length;
+  const get = run.backend.get;
+  run.backend.get = keys => {
+    assert(!JSON.stringify(keys).includes('"composerSessions"'), 'draft saves must not load diagnostics');
+    return get(keys);
+  };
+  await run.storage.update([COMPOSER_DRAFTS_KEY, 'assistantChatViews', 'composerSessionSummaries'], stored => {
+    const result = assistantDraftUpdate(stored, { id: 'chat', draft: 'continue', chatRevision: 1 }, 'now');
+    assert.equal(result.response.ok, true); return result.update;
+  });
+  const write = run.calls[writesBefore];
+  assert.equal(write.composerSessions, undefined);
+  assert(JSON.stringify(write).length < 1000);
+  run.backend.get = get;
+  const session = (await run.storage.get('composerSessions')).composerSessions[0];
+  assert.equal(session.currentInstruction, 'continue'); assert.equal(session.chatRevision, 2);
+  assert.deepEqual(session.toolContext, history.toolContext); assert.deepEqual(session.assistantState, history.assistantState);
+  const exported = await run.storage.get(null);
+  assert.deepEqual(exported.composerSessions[0], session);
+  assert.equal(exported[COMPOSER_DRAFTS_KEY], undefined, 'exports have a complete canonical conversation, not a patch requiring another key');
+  await run.storage.update('composerSessions', stored => ({ composerSessions: stored.composerSessions.map(s => ({ ...s, title: 'Edited' })) }));
+  assert.deepEqual(run.data[COMPOSER_DRAFTS_KEY], {});
+  assert.equal(run.data.composerSessions[0].currentInstruction, 'continue');
+  const stale = assistantDraftUpdate(await run.storage.get(['assistantChatViews', COMPOSER_DRAFTS_KEY]), { id: 'chat', draft: 'stale', chatRevision: 1 }, 'later');
+  assert.equal(stale.response.code, 'chat_conflict'); assert.equal(stale.update, undefined);
+  await run.storage.set({ composerSessions: [] });
+  assert.deepEqual((await run.storage.get('composerSessions')).composerSessions, []);
+  assert.equal(assistantDraftUpdate(await run.storage.get('assistantChatViews'), {id:'chat',draft:'resurrect',chatRevision:2}, 'later').response.code, 'chat_deleted');
+});
+
+test('explicit conversation replacement and deletion clear pending drafts without resurrecting them', async () => {
+  const run = fixture({ composerSessions: [{id:'chat',chatRevision:1}], [COMPOSER_DRAFTS_KEY]: {chat:{chatRevision:2,currentInstruction:'new draft'}} });
+  await run.storage.set({composerSessions:[{id:'chat',chatRevision:1,currentInstruction:'restored draft'}]});
+  assert.equal((await run.storage.get('composerSessions')).composerSessions[0].currentInstruction, 'restored draft');
+  await run.storage.remove('composerSessions');
+  assert.equal(run.data[COMPOSER_DRAFTS_KEY], undefined);
+});
 
 test('legacy snapshots retain unknown keys, missing/default semantics and exact body text', async () => {
   const run = fixture({ entries: [{ text: '\uFEFF正文\r\n  ', future: [false, 0, null] }], unknown: 'keep' });

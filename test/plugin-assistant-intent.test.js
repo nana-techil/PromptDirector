@@ -49,6 +49,16 @@ test('ordinary help answers in one native request without reading a website or c
   assert(!observed.requests[0].messages[0].content.includes('https://example.test/'));
 });
 
+test('the actual assistant request does not contradict native execution with the composer chat-only method', async () => {
+  const { requests } = await run('核对项目中的案例，接着完成剩余项', [{ content: '已核对。' }]);
+  const user = requests[0].messages.findLast(message => message.role === 'user');
+  const payload = JSON.parse(user.content[0].text);
+  assert.equal(payload.routeMode, undefined);
+  assert.equal(payload.route, undefined);
+  assert.equal(payload.taskMethod, undefined);
+  assert.equal(user.content.at(-1).text, '核对项目中的案例，接着完成剩余项');
+});
+
 test('a semantic save task must obtain an actual receipt even when the model never says a recognized success word', async () => {
   const observed = await run('把这个收进库里吧', [body => ({ calls: [declare(body, { mode: 'act', steps: [{ operation: 'save_capture' }] })] }),
     { content: '好，事情都搞定了。' }]);

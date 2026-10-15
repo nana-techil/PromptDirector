@@ -337,6 +337,13 @@ function bindEvents() {
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
   getLibraryStorage().subscribe((changes) => {
+    const draft = changes.composerSessionDrafts?.newValue?.[composerSession?.id];
+    if (draft && !activeOperation && draft.chatRevision > (composerSession.chatRevision || 0)
+      && elements.composerInstruction.value === (composerSession.currentInstruction || '')) {
+      composerSession = { ...composerSession, ...draft };
+      elements.composerInstruction.value = draft.currentInstruction;
+      resizeComposerInput(); renderSendState();
+    }
     if (changes.aiProviderRegistry || changes.aiTaskAssignments || changes.aiPreferences) safely(refreshComposerServiceSettings)();
     if (changes.creativeRuns || changes.creativeJobs || changes.composerSessions || changes.entries || changes.compoundCases || changes.creativeExperimentSettings || changes.creativeSkills) {
       if (!composerInitializationComplete) creativeStateRefreshPending = true;
@@ -458,6 +465,7 @@ async function initializeComposer() {
       composerSession = createComposerSession(recovered);
       composerSession = await saveSession(composerSession).catch(() => composerSession);
     }
+    if (composerSession.assistantState) elements.composerInstruction.value = composerSession.currentInstruction || '';
   }
   if (!composerSession) {
     const requestedIds = uniqueIds((params.get("references") ?? "").split(","));
@@ -2054,6 +2062,7 @@ async function loadComposerSession(sessionId) {
   const response = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId });
   if (!response?.ok) return composerFeedback(response?.message || t("没有找到这份创作草稿"), true);
   composerSession = response.session;
+  if (composerSession.assistantState && !currentComposerOperation()) elements.composerInstruction.value = composerSession.currentInstruction || '';
   replaceComposerSessionUrl(sessionId);
   elements.composerShell.classList.remove("nav-open");
   closeReferenceWorkspace();

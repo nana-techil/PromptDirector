@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentContextRuntime, mergeAgentToolContext, projectAgentToolContext, readAgentToolResult } from '../extension/agent-runtime-context.js';
+
+test('prior library counts are explicitly historical snapshots, while exact source identities stay usable', () => {
+  const records = [{callId:'old-project',turnId:'old',name:'read_projects',args:{name:'Motion'},data:{content:JSON.stringify([{id:'project',caseCount:82}])}},
+    {callId:'old-search',turnId:'old',name:'search_cases',args:{project:'project'},data:{total:82,cases:[{caseId:'kept'}]}}];
+  const evidence=projectAgentToolContext(records).untrustedToolEvidence;
+  assert(evidence.every(record=>record.historical===true));
+  assert.match(projectAgentToolContext(records).instruction,/数量.*当前/);
+  assert.equal(JSON.parse(evidence[0].data.content)[0].id,'project');
+  assert.equal(evidence[1].data.cases[0].caseId,'kept');
+  assert.equal(records[0].historical,undefined,'the durable receipt remains original');
+});
 import { runComposerToolLoop } from '../extension/composer-tool-loop.js';
 import { createComposerToolProgress } from '../extension/composer-tool-progress.js';
 import { createComposerSession } from '../extension/composer.js';

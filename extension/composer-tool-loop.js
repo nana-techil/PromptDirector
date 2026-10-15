@@ -4,6 +4,7 @@ import { readEventStream } from "./event-stream.js";
 import { operationBudget, resourceBudgetError } from "./resource-policy.js";
 import { appendAgentContext, agentContextReferences, stableAgentArguments as stableObject } from './agent-runtime-context.js';
 import { captureSavedEntries, projectCaptureHandoff } from './agent-capture-handoff.js';
+import { removeComposerRouting } from './composer-conversation.js';
 
 export async function runComposerToolLoop({ body, protocol, request, runtime, signal: callerSignal, onDelta = () => {}, maxCharacters, allowImageOutput = false, budget: budgetValue, continuation }) {
   const explicitBudget = budgetValue ?? runtime.budget ?? {};
@@ -13,6 +14,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   const source = resumed?.body ?? body;
   if (workingBytes(source) > budget.workingBytes) throw resourceBudgetError("本次请求超过当前运行内存预算；完整资料保留，请分批处理", { workingBytes: budget.workingBytes });
   const current = structuredClone(source);
+  if (runtime.systemInstruction) removeComposerRouting(current, protocol);
   if (protocol !== 'responses') {
     // Older corrective checkpoints may contain a text-only streamed response.
     for (const message of current.messages) {

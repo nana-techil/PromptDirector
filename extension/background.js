@@ -3,6 +3,7 @@ import { createAgentCapturePreview } from './agent-capture-preview.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { runCaptureAssistant } from './capture-assistant.js';
 import { assistantChatSession, assistantChatView, assistantChatViews, assistantChatContent } from './assistant-chat-session.js';
+import { COMPOSER_DRAFTS_KEY, assistantDraftUpdate } from './composer-session-drafts.js';
 import { restoreCaptureSessions } from './capture-assistant-sessions.js';
 import { createComposerToolProgress } from './composer-tool-progress.js';
 import { readAssistantCaseMedia } from './assistant-case-media.js';
@@ -1429,6 +1430,7 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => getAssistantChats(message.activeId, message.includeDiagnostics === true));
     case "UPSERT_ASSISTANT_CHAT":
       return enqueue(async () => {
+        if (message.draftOnly) return saveAssistantDraft(message.chat);
         const previous = (await getComposerSession(message.chat.id)).session;
         const result = await upsertComposerSession(assistantChatSession(message.chat, previous), {activate:message.activate});
         if (!result.ok) return result;
@@ -3975,6 +3977,16 @@ async function getComposerSession(sessionId) {
   const value = (Array.isArray(stored[STORAGE_KEYS.composerSessions]) ? stored[STORAGE_KEYS.composerSessions] : []).find(item => item.id === sessionId);
   const session = value && createComposerSession(value);
   return session ? { ok: true, session } : { ok: false, message: "没有找到这份创作草稿" };
+}
+
+async function saveAssistantDraft(chat) {
+  let response;
+  await libraryStorage.update([COMPOSER_DRAFTS_KEY, 'assistantChatViews', 'composerSessionSummaries', 'syncMeta'], stored => {
+    const result = assistantDraftUpdate(stored, chat, new Date().toISOString());
+    response = result.response;
+    return result.update ? { ...result.update, ...(!syncApplyInProgress ? {syncMeta:markSyncMetaDirty(stored.syncMeta)} : {}) } : {};
+  });
+  return response;
 }
 
 async function getAssistantChats(activeId, includeDiagnostics = false) {

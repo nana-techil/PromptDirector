@@ -97,11 +97,14 @@ test('one merged case cannot satisfy independent cases, and separate cases do no
 });
 
 test('new user scope correction may select fewer targets; old verified saves need no repeat write', async () => {
-  const { runtime } = fixture([inventory, prior, ...save('a')], 'Only keep the first one; do not save the second'); await runtime.loadContext();
-  assert.equal((await declare(runtime, { captureScope: { ...scope, selectors: ['#a'] } })).data.ok, true);
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope } };
+  const { runtime, state } = fixture([inventory, previous, ...save('a')], 'Only keep the first one; do not save the second'); await runtime.loadContext();
+  assert.equal((await declare(runtime, { taskRelation: 'replace', captureScope: { ...scope, selectors: ['#a'] } })).data.ok, true);
   assert.equal(await runtime.finishTurn({}), undefined);
   assert.equal(runtime.task.state, 'completed');
   assert.equal(runtime.observations.length, 0);
+  const later = withAssistantTaskRuntime({ specs: [], loadContext: async () => state.toolContext }, {instruction:'Explain what happened',userMessageId:'later'});
+  await later.loadContext(); assert.equal((await later.context()).continuingTask, undefined);
 });
 
 test('a batch with a known directory and no target list gets a completion check without blocking its writes', async () => {
@@ -126,6 +129,41 @@ test('resume carries the frozen scope and actual progress across a human turn, n
   assert.deepEqual(context.continuingTask.captureProgress.pending.map(item => item.selector), ['#b']);
   assert.equal(context.continuingTask.captureProgress.saved[0].entryId, 'entry-a');
   assert.equal(runtime.task, undefined, 'latest human intent must still determine whether to resume');
+});
+
+test('continuing a batch inherits its entire scope even if the new checklist omits it', async () => {
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope } };
+  const { runtime } = fixture([inventory, previous, ...save('a')]); await runtime.loadContext();
+  assert.equal((await declare(runtime, { captureScope: undefined })).data.ok, true);
+  assert.deepEqual(runtime.task.captureScope, scope);
+  assert.equal((await runtime.finishTurn({ content: 'This batch is done' })).action, 'continue');
+});
+
+test('a new turn cannot silently replace a larger unfinished scope with its last batch', async () => {
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope } };
+  const { runtime } = fixture([inventory, previous, ...save('a')]); await runtime.loadContext();
+  assert.equal((await declare(runtime, { captureScope: { ...scope, selectors: ['#a'] } })).data.code, 'task_goal_changed');
+});
+
+test('a completed smaller legacy batch cannot conceal the unresolved original scope', async () => {
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope } };
+  const smaller = { ...prior, callId: 'smaller-task', data: { ...prior.data, currentUserId:'smaller', state:'completed', captureScope:{...scope,selectors:['#a']} } };
+  const { runtime } = fixture([inventory, previous, ...save('a'), smaller], 'Check the actual total'); await runtime.loadContext();
+  const context = await runtime.context();
+  assert.deepEqual(context.continuingTask.captureScope, scope);
+  assert.deepEqual(context.continuingTask.captureProgress.pending.map(item=>item.selector), ['#b']);
+  assert.equal((await runtime.finishTurn({content:'Previously saved a, so everything is done'})).action,'continue');
+});
+
+test('explicit cancellation retires a pending goal, while an unrelated action retains it', async () => {
+  for (const relation of ['cancel','independent']) {
+    const previous = {...prior,data:{...prior.data,captureScope:scope}};
+    const {runtime,state}=fixture([inventory,previous]);await runtime.loadContext();
+    const result=await declare(runtime,{taskRelation:relation,mode:'respond',captureScope:undefined,steps:[],reply:'Understood'});
+    assert.equal(result.data.ok,true);
+    const later=withAssistantTaskRuntime({specs:[],loadContext:async()=>state.toolContext},{instruction:'Next',userMessageId:'later'});
+    await later.loadContext();assert.equal(Boolean((await later.context()).continuingTask),relation==='independent');
+  }
 });
 
 test('large failed historical arguments are references, never corrupted executable schemas', () => {

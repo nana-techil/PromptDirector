@@ -1,4 +1,5 @@
 import { assistantChatViews } from './assistant-chat-view.js';
+import { COMPOSER_DRAFTS_KEY, withComposerDrafts, withAssistantChatDrafts } from './composer-session-drafts.js';
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, updateLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { jsonBytes, startPhase } from "./perf-trace.js";
 import { assertLibraryWritable } from "./library-version-guard.js";
@@ -35,7 +36,10 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     ? { ...update, [CASE_LIBRARY_REVISION_KEY]: revision() } : update;
   const withSummary = async update => {
     update = withRevision(update);
-    if (Object.hasOwn(update, 'composerSessions')) update = { ...update, composerSessionSummaries: composerSessionSummaries(update.composerSessions), assistantChatViews: assistantChatViews(update.composerSessions) };
+    if (Object.hasOwn(update, 'composerSessions')) {
+      const sessions = update.composerSessions;
+      update = { ...update, composerSessions: sessions, [COMPOSER_DRAFTS_KEY]: {}, composerSessionSummaries: composerSessionSummaries(sessions), assistantChatViews: assistantChatViews(sessions) };
+    }
     if (!LIBRARY_VIEW_SUMMARY_SOURCES.some(key => Object.hasOwn(update, key))) return update;
     const stored = await backend.get(LIBRARY_VIEW_SUMMARY_KEY);
     return { ...update, [LIBRARY_VIEW_SUMMARY_KEY]: updateLibraryViewSummary(update[LIBRARY_VIEW_SUMMARY_KEY] || stored[LIBRARY_VIEW_SUMMARY_KEY], update) };
@@ -93,9 +97,21 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     }
     throw Object.assign(new Error("资料库正在连续写入，暂时读不到一致的案例；请稍后重试"), { code: "CASE_RECORDS_BUSY" });
   };
+  const readComposerDrafts = async keys => {
+    const names = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : Object.keys(keys || {});
+    const wantsSessions = keys == null || names.includes('composerSessions');
+    const wantsViews = keys == null || names.includes('assistantChatViews');
+    const requested = keys == null ? keys : wantsSessions || wantsViews ? [...new Set([...names, COMPOSER_DRAFTS_KEY])] : keys;
+    const stored = await backend.get(requested);
+    if (wantsSessions && Object.hasOwn(stored, 'composerSessions')) stored.composerSessions = withComposerDrafts(stored.composerSessions, stored[COMPOSER_DRAFTS_KEY]);
+    if (wantsViews && Object.hasOwn(stored, 'assistantChatViews')) stored.assistantChatViews = withAssistantChatDrafts(stored.assistantChatViews, stored[COMPOSER_DRAFTS_KEY]);
+    if (!names.includes(COMPOSER_DRAFTS_KEY)) delete stored[COMPOSER_DRAFTS_KEY];
+    if (keys && !Array.isArray(keys) && typeof keys === 'object') for (const [key, value] of Object.entries(keys)) if (!Object.hasOwn(stored, key)) stored[key] = value;
+    return stored;
+  };
   const read = async (keys, readonlyEntries = false) => {
     if (keys == null) {
-      const all = await backend.get(keys);
+      const all = await readComposerDrafts(keys);
       if (!all[CASE_INDEX_KEY]) {
         if (readonlyEntries) freezeCaseSnapshot(all[ENTRIES_KEY]);
         return Object.fromEntries(Object.entries(all).filter(([key]) => !isCaseRecordKey(key) && !isBrowseKey(key) && key !== CASE_INDEX_KEY));
@@ -109,8 +125,8 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     }
     const defaults = typeof keys === 'object' && !Array.isArray(keys) ? keys : null;
     const names = typeof keys === 'string' ? [keys] : defaults ? Object.keys(defaults) : keys;
-    if (!names.includes(ENTRIES_KEY)) return backend.get(keys);
-    const fetch = () => backend.get([...new Set([...names, CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY])]);
+    if (!names.includes(ENTRIES_KEY)) return readComposerDrafts(keys);
+    const fetch = () => readComposerDrafts([...new Set([...names, CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY])]);
     const stored = await fetch();
     const result = stored[CASE_INDEX_KEY] ? await withCases(stored, true, fetch, readonlyEntries) : stored;
     if (!names.includes(CASE_INDEX_KEY)) delete result[CASE_INDEX_KEY];
@@ -126,7 +142,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     if (!names || !names.includes(ENTRIES_KEY)) throw new Error('分批读取需要指定案例列表');
     if (typeof backend.getKeys !== 'function') { yield { requiresFullRead: true }; return; }
     const [stored, storageKeys] = await Promise.all([
-      backend.get([...new Set([...names.filter(key => key !== ENTRIES_KEY), 'schemaVersion', CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, ...(useBrowseIndex ? [BROWSE_PROJECTION_META_KEY] : [])])]),
+      readComposerDrafts([...new Set([...names.filter(key => key !== ENTRIES_KEY), 'schemaVersion', CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, ...(useBrowseIndex ? [BROWSE_PROJECTION_META_KEY] : [])])]),
       backend.getKeys()
     ]);
     const indexed = indexedCaseIds(stored[CASE_INDEX_KEY]);
@@ -387,7 +403,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
       // them from the retained source instead of advertising a deleted undo.
       return backend.remove([...new Set([...removed, ...caseKeys,
         ...(removed.some(key => LIBRARY_VIEW_SUMMARY_SOURCES.includes(key)) ? [LIBRARY_VIEW_SUMMARY_KEY] : []),
-        ...(removed.includes('composerSessions') ? ['composerSessionSummaries', 'assistantChatViews'] : []),
+        ...(removed.includes('composerSessions') ? ['composerSessionSummaries', 'assistantChatViews', COMPOSER_DRAFTS_KEY] : []),
         ...(touchesCaseLibrary(removed) ? [CASE_LIBRARY_REVISION_KEY] : [])
       ])]);
     }),
