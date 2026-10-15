@@ -14,6 +14,7 @@ import { availableAiModelChoicesForTask } from './ai-provider-registry.js';
 import { composerProfileForTaskAssignment } from './composer.js';
 import { composerLibraryToolService } from './composer-service.js';
 import { getMediaBlob } from './media-store.js';
+import { captureReceiptText } from './assistant-chat-session.js';
 const storage = getLibraryStorage();
 const stateKey = 'captureAssistantDialog';
 
@@ -178,6 +179,15 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     if (state.requestId) { feedback(t('正在回复…'), false, true); void check(); }
     else if (state.pendingRevision) { await applyPendingPreview(); await persist(); render(); }
   }
+  function applyAssistantBatch(batch) {
+    // Collector rendering calls refresh synchronously. Restoring the assistant's
+    // own preview is not a manual edit and must retain its capture identity.
+    switching = true;
+    try { applyBatch(batch); }
+    finally { switching = false; }
+    baseBatch = getBatch();
+    state.pendingBatch = baseBatch;
+  }
   function feedback(text, error = false, pending = false) {
     setTaskFeedbackState(status, { pending, error }); status.textContent = translateUiMessage(text || '');
   }
@@ -292,7 +302,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       if (state.requestId) { feedback(t('正在回复…'), false, true); void check(); }
       else if (state.pendingRevision) { await applyPendingPreview(); await persist(); }
       else if (state.pendingBatch && !getBatch() && tab?.id === state.pendingBatch.tabId && tab.url === state.pendingBatch.sourceUrl) {
-        applyBatch(state.pendingBatch); baseBatch = getBatch();
+        applyAssistantBatch(state.pendingBatch);
       }
       field.value = state.draft || ''; render(); field.focus();
     } catch (error) { feedback(error.message, true); }
@@ -316,7 +326,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       const attachments = [...(state.attachments || [])];
       const userMessageId = crypto.randomUUID();
       const input = { instruction: instruction || t('请查看附件'), userMessageId, attachments, sessionId: state.id, aiProfile: state.aiProfile, messages: state.messages.map(message => message.role === 'result'
-        ? { role: 'assistant', content: JSON.stringify({ saveReceipt: message.result }) } : message), ...(Number.isInteger(target.id) ? { tabId: target.id } : {}),
+        ? { role: 'assistant', content: captureReceiptText(message.result) } : message), ...(Number.isInteger(target.id) ? { tabId: target.id } : {}),
         sourceUrl: target.url || '', pageTitle: target.title || '', locale: currentLocale(), project: metadata.collectionId || '', newCollectionName: metadata.newCollectionName || '', captureMetadata: getMetadata(),
         ...(state.captureId ? { captureId: state.captureId } : reusableBatch ? { initialBatch: baseBatch } : {}) };
       state = { ...state, requestId, awaitingAutomaticPreview: isAutomaticCapturing(), previewEditVersion: getBatchEditVersion(), committing: false, tabId: target.id, sourceUrl: target.url || '', pendingRevision: null, draft: '', attachments: [], lastError: '', messages: [...state.messages, { id: userMessageId, role: 'user', content: input.instruction, attachments }] };
@@ -396,7 +406,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       state.projectDraft = organizationDraft();
     }
     state.pendingBatch = preview.state === 'completed' ? null : preview.batch;
-    applyBatch(state.pendingBatch);
+    applyAssistantBatch(state.pendingBatch);
     baseBatch = getBatch(); state.pendingRevision = null; state.lastError = '';
     if (preview.state === 'completed') { state.captureId = ''; state.pendingBatch = null; }
     feedback('');
@@ -523,7 +533,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
           const preview = await chrome.runtime.sendMessage({ type: 'GET_CAPTURE_ASSIST_PREVIEW', input: { captureId: state.captureId } });
           if (!preview?.ok) throw new Error(preview?.message || t('无法读取采集预览'));
           state.pendingBatch = preview.state === 'completed' ? null : preview.batch;
-          applyBatch(state.pendingBatch);
+          applyAssistantBatch(state.pendingBatch);
         }
         baseBatch = getBatch();
       } catch (error) { feedback(error.message, true); }
@@ -532,7 +542,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       if (!switching && (deferredPage && !isBusy() || getBatch() && state.sourceUrl && getBatch().sourceUrl !== state.sourceUrl)) { pageChanged(); return; }
       if (!switching && !state.requestId && !state.pendingRevision && getBatch() !== baseBatch) {
         state.captureId = ''; baseBatch = getBatch();
-        if (loaded && state.sourceUrl && (!baseBatch || baseBatch.sourceUrl === state.sourceUrl)) { state.pendingBatch = baseBatch; void persist(); }
+        if (loaded && state.sourceUrl && (!baseBatch || baseBatch.sourceUrl === state.sourceUrl)) { state.pendingBatch = baseBatch; void persist({saveChat:false}); }
       }
       render();
     } };

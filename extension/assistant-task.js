@@ -297,10 +297,13 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       return result;
     },
     async finishTurn(value) {
+      const retainedProgress = !task && continuingTask?.captureScope
+        ? captureScopeProgress(journal, continuingTask.captureScope, continuingTask.contentTypeId) : undefined;
       // Resolve a prior goal semantically at the normal loop boundary. Do not
       // classify human wording, auto-resume writes, or add a paid classifier.
-      if (!task && continuingTask && !value.atBudget) {
-        const progress = continuingTask.captureScope && captureScopeProgress(journal, continuingTask.captureScope, continuingTask.contentTypeId);
+      // Actual receipts may have completed that scope since loadContext.
+      if (!task && continuingTask && !value.atBudget && !retainedProgress?.complete) {
+        const progress = retainedProgress;
         const remaining = { goal: continuingTask.goal, ...(progress ? { captureProgress: progress } : { pending: continuingTask.pending }) };
         return { action: 'continue', state: { unresolvedGoal: continuingTask.goal, ...(progress ? { captureProgress: progress } : {}) },
           message: `仍有未完成委托，当前回执核对：${JSON.stringify(remaining)}。本轮尚未处理它与最新用户消息的关系。用declare_task表达你的语义判断：若当前要求继续执行，登记目标并实际完成剩余项；省略captureScope会自动继承完整范围，不需复制旧计划或再读已完成批次。若只是询问状态、取消或转问其他问题，用respond回答当前问题，不执行旧任务。依据真实回执，不把旧成果、旧错误或结束回复当作本轮完成；不要重复索取已有授权。` };
@@ -312,7 +315,7 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
       const savedCaptures = new Set(saves.map(record => record.data?.captureId || record.args.captureId));
       const hasInventory = inventories.some(inventory => inventory.sourceUrl && journal.some(record =>
         savedCaptures.has(record.data?.captureId) && record.data?.sourceUrl === inventory.sourceUrl));
-      if (!value.atBudget && saved.length > 1 && hasInventory && !task?.captureScope
+      if (!value.atBudget && saved.length > 1 && hasInventory && !task?.captureScope && !retainedProgress?.complete
         && !task?.steps.some(step => step.operation === 'save_capture' && step.resultIds?.length) && (!task || task.mode === 'act')) {
         return { action: 'continue', state: { captureScopeMissing: true, saved: saved.map(item => item.entryId) },
           message: '模块批量已有保存回执，但尚未登记整项委托的范围，不能用本批成功代表全部完成。依据最新用户目标及已读目录，在declare_task补充captureScope（整个目标范围、冻结目录和项目），执行未处理项；已存原件与回执可直接核对，无需重复写入或再次询问许可。' };

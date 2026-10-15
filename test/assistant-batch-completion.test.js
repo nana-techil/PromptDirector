@@ -133,6 +133,16 @@ test('resume carries the frozen scope and actual progress across a human turn, n
   assert.equal(runtime.task, undefined, 'latest human intent must still determine whether to resume');
 });
 
+test('finishing the retained full scope does not demand another plan after the actual save', async () => {
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope } };
+  const { runtime } = fixture([inventory, previous]); await runtime.loadContext();
+  for (const record of save('a')) await runtime.execute(record.name, {captureId:'a'}, {callId:record.callId});
+  assert.equal((await runtime.finishTurn({content:'First batch saved'})).action,'continue');
+  for (const record of save('b')) await runtime.execute(record.name, {captureId:'b'}, {callId:record.callId});
+  assert.equal(await runtime.finishTurn({content:'All requested effects saved'}), undefined);
+  assert.equal(runtime.observations.filter(record => record.name === 'save_capture').length, 2);
+});
+
 test('continuing a batch inherits its entire scope even if the new checklist omits it', async () => {
   const previous = { ...prior, data: { ...prior.data, captureScope: scope, constraints: ['keep original sources'] } };
   const { runtime } = fixture([inventory, previous, ...save('a')]); await runtime.loadContext();

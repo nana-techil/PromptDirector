@@ -2,6 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAgentContextRuntime, mergeAgentToolContext, projectAgentToolContext, readAgentToolResult } from '../extension/agent-runtime-context.js';
 
+test('completed capture history keeps receipts and exact readback without resending source selector lists', () => {
+  const textSources = Array.from({length:3}, (_, i) => ({selector:'#page > section > div:nth-of-type(12) > '.repeat(8) + `pre:nth-of-type(${i+1})`, target:'prompt'}));
+  const candidate = {id:'saved-effect',title:'Saved effect',textSources};
+  const results = [{candidateId:candidate.id,entryId:'real-case',title:candidate.title,status:'saved',warnings:[],
+    originalVerification:{status:'verified',sourceCount:3,sources:textSources.map(s=>({...s,resolvedSelector:s.selector,completeness:'complete'}))}}];
+  const records = [
+    {turnId:'old',callId:'candidate',name:'update_capture',args:{captureId:'capture',candidates:[candidate]},data:{ok:true}},
+    {turnId:'old',callId:'saved',name:'save_capture',args:{captureId:'capture'},data:{ok:true,captureId:'capture',state:'completed',results}},
+    {turnId:'old',callId:'later-summary',name:'read_capture',args:{captureId:'capture',part:'summary'},data:{captureId:'capture',state:'completed',candidates:[candidate],results}}
+  ];
+  const original=structuredClone(records), projected=projectAgentToolContext(records);
+  assert.equal(projected.completedCaptureWork[0].textSources,undefined);
+  assert.equal(JSON.parse(readAgentToolResult(records,projected.completedCaptureWork[0].original).content).textSources.length,3);
+  const receipt=projected.untrustedToolEvidence.find(r=>r.callId==='saved').data.results[0];
+  assert.equal(receipt.entryId,'real-case');assert.equal(receipt.status,'saved');
+  assert.equal(receipt.originalVerification.status,'verified');assert.equal(receipt.originalVerification.sources,undefined);
+  assert.deepEqual(JSON.parse(readAgentToolResult(records,receipt.originalVerification.sourcesReference).content),results[0].originalVerification.sources);
+  const summary=projected.untrustedToolEvidence.find(r=>r.callId==='later-summary').data;
+  assert.equal(summary.candidates,undefined);assert.deepEqual(JSON.parse(readAgentToolResult(records,summary.candidatesReference).content),[candidate]);
+  assert.deepEqual(records,original,'projection never changes stored originals or receipts');
+});
+
 test('prior library counts are explicitly historical snapshots, while exact source identities stay usable', () => {
   const records = [{callId:'old-project',turnId:'old',name:'read_projects',args:{name:'Motion'},data:{content:JSON.stringify([{id:'project',caseCount:82}])}},
     {callId:'old-search',turnId:'old',name:'search_cases',args:{project:'project'},data:{total:82,cases:[{caseId:'kept'}]}}];

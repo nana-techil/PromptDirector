@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 import { restoreCaptureSessions, captureSessionForPage, newCaptureConversation, recentCaptureConversations } from '../extension/capture-assistant-sessions.js';
 import { buildCaptureDiagnostic, captureDiagnosticValue } from '../extension/capture-assistant-diagnostics.js';
 
+test('reopening shared chat restores newer page work without rewriting retained conversation history', () => {
+  const sourceUrl = 'https://example.test/motion';
+  const current = { sourceUrl, tabId: 7, captureId: '', pendingRevision: null,
+    pendingBatch: { id: 'automatic-scan', sourceUrl, selections: ['selected'] } };
+  const messages = [{role:'user',content:'Capture the remaining effects'}];
+  const store = restoreCaptureSessions({schema:'shared-chat',activeId:'chat',pages:{[sourceUrl]:current},
+    conversations:[{id:'chat',sourceUrl,tabId:7,captureId:'stale-preview',messages,draft:'Unsent draft'},
+      {id:'running',sourceUrl,tabId:7,captureId:'in-flight',requestId:'task',messages:[]}]});
+  const reopened = captureSessionForPage(store,{id:7,url:sourceUrl});
+  assert.equal(reopened.captureId,'');
+  assert.deepEqual(reopened.pendingBatch,current.pendingBatch);
+  assert.equal(reopened.messages,messages);
+  assert.equal(reopened.draft,'Unsent draft');
+  assert.equal(store.conversations[1].captureId,'in-flight');
+});
+
 test('browsing keeps the user conversation while preserving unfinished originals by page', () => {
   const store = restoreCaptureSessions();
   const first = captureSessionForPage(store, { id: 1, url: 'https://example.com/a', title: 'A' });

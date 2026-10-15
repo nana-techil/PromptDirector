@@ -28,7 +28,7 @@ export function captureHandoffIndex(records) {
       for (const [index, item] of (record.args.candidates || []).entries()) {
         const key = JSON.stringify([captureId, item.id]);
         const identity = { ...candidates.get(key), captureId, candidateId: item.id };
-        for (const field of ['title', 'canonicalUrl', 'textSources']) if (item[field] !== undefined) identity[field] = item[field];
+        for (const field of ['title', 'canonicalUrl']) if (item[field] !== undefined) identity[field] = item[field];
         candidates.set(key, { ...identity, original: { callId: record.callId, turnId: record.turnId, path: ['args', 'candidates', String(index)] } });
       }
     }

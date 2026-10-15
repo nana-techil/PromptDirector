@@ -22,7 +22,14 @@ export function restoreCaptureSessions(value = {}) {
     for (const [url, session] of Object.entries(pages)) pages[url] = pageWork(session);
   }
   conversations = conversations.length ? conversations : [fresh()];
-  for (const session of conversations) { session.id ||= crypto.randomUUID(); session.messages ||= []; }
+  for (const session of conversations) {
+    session.id ||= crypto.randomUUID(); session.messages ||= [];
+    // Page scans and selections persist independently of the full chat journal.
+    // A running task still owns its pinned preview until it finishes.
+    if (value.schema === 'shared-chat' && !session.requestId && pages[session.sourceUrl]) {
+      Object.assign(session, pageWork(pages[session.sourceUrl]));
+    }
+  }
   return { pages, history, conversations, activeId: value.activeId || conversations[0].id, activeUrl: value.activeUrl || sourceUrl || '' };
 }
 export function pageWork(session) {
