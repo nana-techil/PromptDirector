@@ -219,11 +219,46 @@ test('a genuine blocker terminates with its factual reason without a second mode
   assert.equal(requests,2);assert.equal(result.content,'目标来源暂不可用，已取得的内容保留。');assert.equal(f.runtime.task.state,'blocked');
 });
 
+test('after reading the directory a save plan may omit finished preparation without losing it', async () => {
+  const f = fixture();
+  await f.declare([{ operation: 'read_case', targetId: 'case' }], { contentTypeId: 'content:code-case' });
+  await f.runtime.execute('read_case', { caseId: 'case' }, { callId: 'directory' });
+  const next = await f.declare([{ operation: 'save_capture' }]);
+  assert.equal(next.data.ok, true);
+  assert.equal(f.runtime.task.contentTypeId, 'content:code-case');
+  assert(f.runtime.task.steps.some(step => step.operation === 'read_case'));
+  assert.deepEqual(f.runtime.task.pending, [{ operation: 'save_capture' }]);
+  assert.equal((await f.runtime.finishTurn({ content: 'Finished' })).action, 'continue');
+});
+
+test('a planned candidate update matches the real write field and cannot be fulfilled by selection alone', async () => {
+  const runtime = withAssistantTaskRuntime({ specs: [{ name: 'update_capture', parameters: { properties: { requestId: {}, candidates: {}, selections: {} } } }],
+    execute: async () => ({ data: { ok: true } }) }, { instruction: 'Prepare the effect candidates' });
+  await runtime.execute('declare_task', { mode: 'act', goal: 'Prepare the effects', steps: [{ operation: 'update_capture', part: 'candidates' }] });
+  assert.equal((await runtime.execute('update_capture', { selections: [] })).data.code, 'task_scope_changed');
+  assert.equal((await runtime.execute('update_capture', { candidates: [{ id: 'effect' }] })).data.ok, true);
+  assert.equal(await runtime.finishTurn({}), undefined);
+});
+
+test('a corrected save cannot become a waiting blocker by citing its obsolete failure', async () => {
+  let attempt = 0;
+  const f = fixture({ execute: () => ++attempt === 1
+    ? { ok: false, code: 'capture_code_preview_required' }
+    : { ok: true, results: [{ status: 'saved', entryId: 'case' }] } });
+  await f.declare([{ operation: 'save_capture' }]);
+  await f.runtime.execute('save_capture', { captureId: 'capture', requestId: 'first', expectedRevision: 2 }, { callId: 'failed' });
+  await f.runtime.execute('save_capture', { captureId: 'capture', requestId: 'retry', expectedRevision: 3 }, { callId: 'saved' });
+  const result = await f.runtime.execute('settle_task', { state: 'waiting', failedCallId: 'failed', reason: 'Need permission to fix the preview' });
+  assert.equal(result.data.code, 'task_blocker_resolved');
+  assert.equal(f.runtime.task.state, 'active');
+});
+
 test('plan extension cannot silently discard a registered user restriction',async()=>{
   const f=fixture();await f.declare([{operation:'read_case'}],{constraints:['preserve existing title']});
   const revised=await f.declare([{operation:'read_case'},{operation:'edit_case'}]);
-  assert.equal(revised.data.code,'task_goal_changed');
+  assert.equal(revised.data.ok,true);
   assert.deepEqual(f.runtime.task.constraints,['preserve existing title']);
+  assert.equal((await f.declare([{operation:'read_case'},{operation:'edit_case'}],{constraints:[]})).data.code,'task_goal_changed');
 });
 
 test('an unfinished full-original read cannot be downgraded to an excerpt by changing a completion flag',async()=>{

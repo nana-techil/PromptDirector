@@ -157,6 +157,14 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
   const committedEntries = new Set(captureRecords.flatMap(captureSavedEntries));
   let segmentProgress = committedEntries.size;
   const finishStates = new Set();
+  function appendCompletionFeedback(decision) {
+    const state = JSON.stringify([toolCalls, decision.state]);
+    if (finishStates.has(state)) throw Object.assign(new Error('任务尚未完成且模型没有继续执行；已取得资料保留，未声称保存'), { code: 'AGENT_TASK_UNFINISHED' });
+    finishStates.add(state);
+    const sequence = protocol === 'responses' ? current.input : current.messages;
+    sequence.push({ role: 'user', content: JSON.stringify({ runtimeCheck: decision.message,
+      origin: '执行器对既有任务的事实检查，不是新的用户授权；只继续当前已授权目标，用户最新修改或停止优先' }) });
+  }
   let pendingCalls = resumed?.pendingCalls ?? [];
   let uncertainCallId = resumed?.uncertainCallId ?? '';
   if (uncertainCallId) throw new Error("上一次工具执行状态未确认，请先核对已保存成果，不能自动重放");
@@ -243,15 +251,9 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
           if (!step.content.trim() && !(allowImageOutput && step.items.some(item => item.type === "image_generation_call" && item.result))) throw new Error("模型没有返回文字或有效的工具调用");
           const decision = await runtime.finishTurn?.({ content: step.content, toolCalls, requestCount });
           if (decision?.action === 'continue') {
-            const state = JSON.stringify([toolCalls, decision.state]);
-            if (finishStates.has(state)) throw Object.assign(new Error('任务尚未完成且模型没有继续执行；已取得资料保留，未声称保存'), { code: 'AGENT_TASK_UNFINISHED' });
-            finishStates.add(state);
             if (protocol === 'responses') current.input.push(...step.items);
             else current.messages.push(step.message);
-            const feedback = { role: 'user', content: JSON.stringify({ runtimeCheck: decision.message,
-              origin: '执行器对既有任务的事实检查，不是新的用户授权；只继续当前已授权目标，用户最新修改或停止优先' }) };
-            if (protocol === 'responses') current.input.push(feedback);
-            else current.messages.push(feedback);
+            appendCompletionFeedback(decision);
             continue;
           }
           await runtime.retainSkillVersions?.([...retainedSkillVersionIds]);
@@ -389,6 +391,7 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
           onDelta(content, content);
           return { content, finishReason: 'completed', usage, usageKnown, requestCount, outputItems: [] };
         }
+        if (decision.action === 'continue') appendCompletionFeedback(decision);
       }
     }
   } catch (error) {

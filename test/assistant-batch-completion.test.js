@@ -65,7 +65,9 @@ test('one saved batch cannot complete a larger selected scope; later batches kee
 
 test('a generic checklist cannot replace a declared batch scope or silently drop an unfinished target', async () => {
   const { runtime } = fixture(); await runtime.loadContext(); await declare(runtime);
-  assert.equal((await declare(runtime, { captureScope: undefined })).data.code, 'task_goal_changed');
+  assert.equal((await declare(runtime, { captureScope: undefined })).data.ok, true);
+  assert.deepEqual(runtime.task.captureScope, scope, 'omitted scope is inherited, never erased');
+  assert.deepEqual(runtime.task.captureProgress.pending.map(item => item.selector), ['#a', '#b']);
   assert.equal((await declare(runtime, { captureScope: { ...scope, selectors: ['#a'] } })).data.code, 'task_goal_changed');
 });
 
@@ -132,11 +134,33 @@ test('resume carries the frozen scope and actual progress across a human turn, n
 });
 
 test('continuing a batch inherits its entire scope even if the new checklist omits it', async () => {
-  const previous = { ...prior, data: { ...prior.data, captureScope: scope } };
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope, constraints: ['keep original sources'] } };
   const { runtime } = fixture([inventory, previous, ...save('a')]); await runtime.loadContext();
-  assert.equal((await declare(runtime, { captureScope: undefined })).data.ok, true);
+  assert.equal((await declare(runtime, { captureScope: undefined, constraints: ['keep the page colors'] })).data.ok, true);
   assert.deepEqual(runtime.task.captureScope, scope);
+  assert.deepEqual(runtime.task.constraints, ['keep original sources', 'keep the page colors']);
   assert.equal((await runtime.finishTurn({ content: 'This batch is done' })).action, 'continue');
+});
+
+test('a new preview does not replace the complete frozen directory in a later batch plan', async () => {
+  const partial = { ...inventory, callId: 'next-directory', data: { ...inventory.data, captureId: 'next-preview', modules: inventory.data.modules.slice(0, 1) } };
+  const { runtime } = fixture([inventory, partial]); await runtime.loadContext();
+  const rejected = await declare(runtime, { captureScope: { ...scope, captureId: 'next-preview' } });
+  assert.equal(rejected.data.code, 'task_target_unresolved');
+  assert.equal(rejected.data.recovery.operation, 'declare_task');
+  assert.deepEqual(rejected.data.recovery.arguments.captureScope, scope);
+  assert.equal((await runtime.execute('declare_task', rejected.data.recovery.arguments)).data.ok, true);
+  assert.deepEqual(runtime.task.captureProgress.pending.map(item => item.selector), ['#a', '#b']);
+});
+
+test('continuation feedback identifies the remaining targets instead of repeating an obsolete blocked plan', async () => {
+  const previous = { ...prior, data: { ...prior.data, captureScope: scope, state: 'blocked', reason: 'Old save error' } };
+  const { runtime } = fixture([inventory, previous, ...save('a')]); await runtime.loadContext();
+  const check = await runtime.finishTurn({ content: 'Old error still blocks everything' });
+  assert.equal(check.action, 'continue');
+  assert.deepEqual(check.state.captureProgress.pending, [{ selector: '#b', title: 'b' }]);
+  assert(!check.message.includes('Old save error'));
+  assert.match(check.message, /#b/);
 });
 
 test('a new turn cannot silently replace a larger unfinished scope with its last batch', async () => {

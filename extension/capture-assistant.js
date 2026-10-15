@@ -348,5 +348,10 @@ function aggregateCaptureSaves(observations = [], fallback) {
     // success. A repaired partial uses its newer receipt.
     if (item.status !== 'duplicate' || results.get(key)?.status !== 'saved') results.set(key, item);
   }
-  return { ...receipts.at(-1).data, results: [...results.values()] };
+  const items = [...results.values()];
+  const saved = items.filter(item => item.entryId && item.status === 'saved').length;
+  const duplicates = items.filter(item => item.entryId && item.status === 'duplicate').length;
+  const pending = items.length - saved - duplicates;
+  return { ...receipts.at(-1).data, results: items,
+    ...(receipts.length > 1 ? { message: `已保存 ${saved} 项，已有 ${duplicates} 项${pending ? `，仍有 ${pending} 项未完成` : ''}。` } : {}) };
 }

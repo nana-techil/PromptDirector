@@ -31,7 +31,7 @@ for (const interrupted of [false,true]) for (const lastDuplicate of [false,true]
    if(name==='read_capture')return args.part==='source'?{captureId:args.captureId,selector:args.selector,content:'x'.repeat(20),totalCharacters:20,revision:1,nextOffset:null}:preview;
    if(name==='update_capture'){preview.revision=2;preview.selections=args.selections;return{state:'completed',result:preview};}
    assert.equal(name,'save_capture');assert.equal(args.project,'real-project');preview.state='completed';saved.push(preview.captureId);
-   return{state:'completed',result:{ok:true,captureId:preview.captureId,results:[{status:lastDuplicate&&created===2?'duplicate':'saved',entryId:'saved-'+created,candidateId:'effect-'+created,originalVerification:{status:'verified',sources:preview.candidates[0].textSources}}]}};
+   return{state:'completed',result:{ok:true,captureId:preview.captureId,message:lastDuplicate&&created===2?'已保存 0 项，跳过 1 项重复内容':'已保存 1 项',results:[{status:lastDuplicate&&created===2?'duplicate':'saved',entryId:'saved-'+created,candidateId:'effect-'+created,originalVerification:{status:'verified',sources:preview.candidates[0].textSources}}]}};
   },
   execute:async(_request,_settings,_images,{toolRuntime})=>{
    const out=await runComposerToolLoop({protocol:'chat_completions',body:{model:'fixture',messages:[{role:'user',content:'Save separate effects'}]},runtime:toolRuntime,request:async()=>{
@@ -42,6 +42,7 @@ for (const interrupted of [false,true]) for (const lastDuplicate of [false,true]
  });
  assert.equal(result.ok,!interrupted,result.message);assert.deepEqual(saved,['preview-1','preview-2']);
  assert.equal(result.saveResult.results.length,2);assert.equal(result.saveResult.results[0].status,'saved');assert.equal(requests,batches.length);
+ assert.equal(result.saveResult.message,lastDuplicate?'已保存 1 项，已有 1 项。':'已保存 2 项，已有 0 项。','the whole-turn receipt must not repeat only the last batch count');
  if(interrupted)assert.match(result.message,/provider interrupted/);
  else {assert.equal(result.taskState,'completed');assert.equal(result.text,lastDuplicate?'已保存 1 项，已有 1 项。':'已保存 2 项，已有 0 项。');assert.equal(result.diagnostic.task.pending.length,0);}
 });

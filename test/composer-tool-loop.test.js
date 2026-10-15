@@ -7,6 +7,25 @@ const call = (id, args) => ({ id, type: 'function', function: { name: 'search_ca
 const body = () => ({ model: 'fixture-model', messages: [{ role: 'user', content: '查询案例' }] });
 const sse = events => new Response(new ReadableStream({ start(controller) { const text = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''); const bytes = new TextEncoder().encode(text); for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i+7)); controller.close(); } }), { headers: { 'content-type': 'text/event-stream' } });
 
+for (const protocol of ['chat_completions', 'responses']) test(`${protocol}: a rejected terminal tool reply receives the same actionable completion feedback as a text reply`, async () => {
+  let requests = 0, checks = 0;
+  const runtime = { specs: [spec], execute: async () => ({ data: { ok: true }, terminate: true }),
+    finishToolBatch: async () => ({ content: 'Only part of the work was done' }),
+    finishTurn: async () => ++checks === 1 ? { action: 'continue', state: { missing: ['remaining'] }, message: 'Complete the remaining target from the retained scope' } : undefined };
+  const result = await runComposerToolLoop({ protocol, runtime,
+    body: protocol === 'responses' ? { model: 'fixture-model', input: [{ role: 'user', content: 'Finish the work' }] } : body(),
+    request: async current => {
+      if (++requests === 1) return protocol === 'responses'
+        ? new Response(JSON.stringify({ output: [{ type: 'function_call', call_id: 'terminal', name: 'search_cases', arguments: '{"query":"target"}' }] }))
+        : chat({ role: 'assistant', tool_calls: [call('terminal', { query: 'target' })] });
+      const feedback = (current.input || current.messages).at(-1);
+      assert.equal(feedback.role, 'user');
+      assert.match(feedback.content, /Complete the remaining target/);
+      return protocol === 'responses' ? new Response(JSON.stringify({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }] })) : chat({ role: 'assistant', content: 'done' });
+    } });
+  assert.equal(result.content, 'done'); assert.equal(requests, 2);
+});
+
 for (const protocol of ['chat_completions', 'responses']) test(`${protocol}: a failed batch can retry identical parameters after its exact source recovery, including an old stopped checkpoint`, async () => {
   for (const mode of ['fresh', 'checkpoint', 'same-batch']) {
     let reads = 0, writes = 0, requests = 0, checkpoint;
