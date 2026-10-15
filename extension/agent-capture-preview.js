@@ -296,6 +296,19 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       if (operation === 'update_capture') {
         const schema = CAPTURE_OPERATION_SPECS.find(spec => spec.name === operation).parameters.properties;
         if (input.task !== undefined) validate(schema.task, input.task, 'task');
+        const missingSources = [];
+        for (const patch of input.candidates ?? []) {
+          if (patch.textSources !== undefined) validate(schema.candidates.items.properties.textSources, patch.textSources, 'textSources');
+          const selectors = [...new Set((patch.textSources || []).filter(reference => !record.sources?.[reference.selector]).map(reference => reference.selector))];
+          if (selectors.length) missingSources.push({ candidateId: patch.id, title: patch.title, selectors });
+        }
+        if (missingSources.length) {
+          throw agentError('capture_source_required', '本批仍有未读取的原文；按missingSources补读后重试，已读取的来源和候选保持不变。', {
+            captureId: record.id, revision: record.revision, missingSources,
+            recovery: { operation: 'read_capture', arguments: { captureId: record.id, expectedRevision: record.revision,
+              part: 'source', selectors: [...new Set(missingSources.flatMap(item => item.selectors))] } }
+          });
+        }
         const candidates = [...record.batch.candidates];
         const bindings = { ...record.sourceBindings };
         const ids = new Set();
@@ -304,13 +317,8 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
           if (patch.originalPrompt && !patch.textSources?.length && Object.values(record.sources || {}).some(source => source.text.length > patch.originalPrompt.length && source.text.startsWith(patch.originalPrompt))) {
             throw agentError('capture_source_required', '已取得的原文比提交的提示词更长，请用textSources引用完整来源，不能用模型截短版本代替');
           }
-          if (patch.textSources !== undefined) validate(schema.candidates.items.properties.textSources, patch.textSources, 'textSources');
           if (patch.textSources?.length) {
-            const sources = patch.textSources.map(reference => {
-              const source = record.sources?.[reference.selector];
-              if (!source) throw agentError('capture_source_required', '补充案例须先读取实际原文，不能用模型示例替代');
-              return { ...reference, source };
-            });
+            const sources = patch.textSources.map(reference => ({ ...reference, source: record.sources[reference.selector] }));
             const { textSources: _textSources, ...fields } = patch;
             value = { ...fields,
               contentText: sources.filter(source => source.target === 'text').map(source => sourceMaterialText(source.source)).join('\n\n'),

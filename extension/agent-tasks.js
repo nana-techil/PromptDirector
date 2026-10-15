@@ -53,7 +53,8 @@ export function createAgentTasks({ storage, execute, getLibraryId, allowLegacyTa
       // Leave the original receipt intact when its library is no longer
       // active. Reopening it reports interruption; never replay paid work.
       await assertLibrary(task.libraryId);
-      await put({ ...task, state: "failed", error: { code: error.code || "operation_failed", message: error.message }, updatedAt: now() });
+      await put({ ...task, state: "failed", error: { code: error.code || "operation_failed", message: error.message,
+        ...(error.details ? { details: error.details } : {}) }, updatedAt: now() });
     } finally { running.delete(task.id); }
   }
 

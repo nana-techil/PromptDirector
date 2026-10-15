@@ -49,7 +49,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
       signal.throwIfAborted();
       receipt = await call('get_task', { requestId: args.requestId, waitMs: 15000 });
     }
-    if (receipt.state !== 'completed') throw agentError(receipt.error?.code || 'capture_failed', receipt.error?.message || '采集未完成，已有内容保留');
+    if (receipt.state !== 'completed') throw agentError(receipt.error?.code || 'capture_failed', receipt.error?.message || '采集未完成，已有内容保留', receipt.error?.details);
     return receipt.result;
   }
   function remember(data) {
@@ -231,7 +231,7 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
           if (signal.aborted) throw error;
           if (name === 'read_capture' && args.captureId === preview?.captureId
             && ['capture_failed', 'capture_page_unavailable', 'page_changed'].includes(error.code || 'capture_failed')) previewReadFailed = true;
-          return { data: { ok: false, code: error.code || 'capture_failed', message: error.message,
+          return { data: { ...error.details, ok: false, code: error.code || 'capture_failed', message: error.message,
             ...(['capture_scope_changed','capture_not_editable'].includes(error.code) ? {
               currentPreview: preview ? {captureId:preview.captureId,revision:preview.revision,state:preview.state,sourceUrl:preview.sourceUrl,tabId:preview.tabId} : null,
               recovery: {operation:'prepare_capture', arguments:{...(preview?.sourceUrl ? {url:preview.sourceUrl} : {tabId:input.tabId})},
