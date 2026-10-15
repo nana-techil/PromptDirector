@@ -113,6 +113,35 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
       : item.role === 'tool' && item.tool_call_id === cached.callId);
     return item ? { data: JSON.parse(protocol === 'responses' ? item.output : item.content), ...(cached.terminate ? {terminate:true} : {}) } : null;
   };
+  const recoveryApplied = (cached, prior) => {
+    const recovery = prior?.data?.ok === false && prior.data.recovery;
+    if (!recovery || typeof recovery.operation !== 'string' || !readOperation(recovery.operation)
+      || !recovery.arguments || typeof recovery.arguments !== 'object' || Array.isArray(recovery.arguments)) return false;
+    // Inspect paired native results, including those in an older checkpoint.
+    // Only the corrective read requested by this failure can unlock its retry;
+    // an unrelated read must never replay a successful or uncertain write.
+    const matchingCalls = new Set();
+    let afterFailure = false;
+    for (const item of protocol === 'responses' ? current.input : current.messages) {
+      const calls = protocol === 'responses' ? (item.type === 'function_call' ? [item] : []) : item.tool_calls || [];
+      for (const call of calls) {
+        const fn = protocol === 'responses' ? call : call.function;
+        if (fn?.name !== recovery.operation) continue;
+        try {
+          const args = JSON.parse(fn.arguments);
+          if (Object.entries(recovery.arguments).every(([key, value]) => JSON.stringify(stableObject(args?.[key])) === JSON.stringify(stableObject(value))))
+            matchingCalls.add(call.call_id || call.id);
+        } catch { /* Malformed arguments cannot establish recovery. */ }
+      }
+      const id = protocol === 'responses' ? (item.type === 'function_call_output' && item.call_id) : (item.role === 'tool' && item.tool_call_id);
+      if (id === cached.callId) afterFailure = true;
+      else if (afterFailure && matchingCalls.has(id)) {
+        const data = JSON.parse(protocol === 'responses' ? item.output : item.content);
+        if (data && data.ok !== false && !data.error && !['queued', 'running', 'failed', 'canceled'].includes(data.state)) return true;
+      }
+    }
+    return false;
+  };
   const retainedSkillVersionIds = new Set(resumed?.retainedSkillVersionIds || []);
   const usage = resumed?.usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0, cacheHitTokens: 0, cacheMissTokens: 0 };
   let usageKnown = resumed?.usageKnown ?? true;
@@ -260,13 +289,14 @@ export async function runComposerToolLoop({ body, protocol, request, runtime, si
         const denied = cached?.denied;
         const retryDenied = denied && JSON.stringify(cached.scope) !== JSON.stringify(scope);
         const reusable = cached && (reusableRead(call.name) || controlOperation(call.name));
-        if (cached && !invalid && cached.requestCount !== requestCount && !retryDenied && !reusable && !readOperation(call.name)) throw new Error("模型重复请求相同资料且没有进展，已停止继续调用");
-        uncertainCallId = call.id;
         const prior = cached && resultFor(cached);
+        const retryRecovered = cached && !invalid && !readOperation(call.name) && recoveryApplied(cached, prior);
+        if (cached && !invalid && cached.requestCount !== requestCount && !retryDenied && !retryRecovered && !reusable && !readOperation(call.name)) throw new Error("模型重复请求相同资料且没有进展，已停止继续调用");
+        uncertainCallId = call.id;
         // A denied plan or failed read is not a durable fact: new context or a
         // transient recovery may make the same operation valid on its next try.
         const failedReadOrControl = prior?.data?.ok === false && (readOperation(call.name) || controlOperation(call.name));
-        const reuse = prior && !retryDenied && !failedReadOrControl && (reusable || cached.requestCount === requestCount);
+        const reuse = prior && !retryDenied && !retryRecovered && !failedReadOrControl && (reusable || cached.requestCount === requestCount);
         try { if (!invalid) validate(specs.find(spec => spec.name === call.name).parameters, args, call.name); }
         catch (error) { invalid = { data: { ok: false, code: 'invalid_tool_arguments', message: error.message } }; }
         const result = invalid || (reuse ? prior : await runtime.execute(call.name, args, { callId: call.id, signal }));

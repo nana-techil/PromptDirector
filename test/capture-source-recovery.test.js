@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createAgentCapturePreview } from '../extension/agent-capture-preview.js';
 import { createAgentTasks } from '../extension/agent-tasks.js';
 import { runCaptureAssistant } from '../extension/capture-assistant.js';
+import { runComposerToolLoop } from '../extension/composer-tool-loop.js';
 import { applyPageCaptureSelections } from '../extension/page-capture.js';
 
 test('a batch missing six original prompts exposes every missing source through durable tasks and the assistant, then saves all twelve after one corrective read', async () => {
@@ -44,29 +45,53 @@ test('a batch missing six original prompts exposes every missing source through 
       return tasks.submit(name, args, args.requestId);
     },
     execute: async (_request, _settings, _images, { toolRuntime }) => {
-      await toolRuntime.execute('declare_task', { mode: 'act', goal: 'Save twelve source-backed cases',
-        steps: [{ operation: 'read_capture', part: 'source' }, { operation: 'update_capture' }, { operation: 'save_capture' }] });
-      const { data: preview } = await toolRuntime.execute('prepare_capture', { tabId: 1 });
-      await toolRuntime.execute('read_capture', { captureId: preview.captureId, part: 'source', selectors: initialSelectors });
-      const update = { captureId: preview.captureId, expectedRevision: preview.revision, candidates,
-        selections: candidates.map(c => ({ candidateId: c.id, includeText: true, selectedMediaIds: [] })), saveMode: 'multiple' };
-      const before = structuredClone(data[`agentCapture:${preview.captureId}`]);
-      const { data: failure } = await toolRuntime.execute('update_capture', update);
-      assert.equal(failure.code, 'capture_source_required');
-      assert.deepEqual(failure.missingSources, missing, 'all missing originals must be actionable, not a generic accusation that no sources were read');
-      assert.deepEqual(data[`agentCapture:${preview.captureId}`], before, 'a rejected batch must not partially edit its preview');
-      assert.equal(saved.size, 0);
-      const durable = await createAgentTasks(taskOptions).inspect(failedRequest);
-      assert.deepEqual(durable.error.details.missingSources, missing, 'MCP and resumed tasks retain the same correction facts');
-      assert.deepEqual(failure.recovery.arguments, { captureId: preview.captureId, expectedRevision: preview.revision, part: 'source', selectors: missingSelectors });
-      assert.equal(failure.recovery.operation, 'read_capture');
-      assert.equal((await toolRuntime.execute(failure.recovery.operation, failure.recovery.arguments)).data.sources.length, 6);
-      const { data: updated } = await toolRuntime.execute('update_capture', update);
-      assert.equal(updated.ok, true);
-      const { data: receipt } = await toolRuntime.execute('save_capture', { captureId: preview.captureId, expectedRevision: updated.revision });
-      assert.equal(receipt.results.length, 12);
-      assert(receipt.results.every(r => r.originalVerification.status === 'verified'));
-      return { text: '已保存。' };
+      let step = 0, preview, update, before;
+      const next = (name, args) => new Response(JSON.stringify({ choices: [{ message: {
+        role: 'assistant', tool_calls: [{ id: `step-${step}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }]
+      }, finish_reason: 'tool_calls' }] }));
+      const loop = await runComposerToolLoop({ protocol: 'chat_completions', runtime: toolRuntime,
+        body: { model: 'fixture-model', messages: [{ role: 'user', content: '保存这些案例' }] },
+        request: async body => {
+          const previous = body.messages.findLast(m => m.role === 'tool');
+          const result = previous && JSON.parse(previous.content);
+          switch (step++) {
+            case 0: return next('declare_task', { mode: 'act', goal: 'Save twelve source-backed cases',
+              steps: [{ operation: 'read_capture', part: 'source' }, { operation: 'update_capture' }, { operation: 'save_capture' }] });
+            case 1: return next('prepare_capture', { tabId: 1, requestId: 'prepare' });
+            case 2:
+              preview = result;
+              return next('read_capture', { captureId: preview.captureId, part: 'source', selectors: initialSelectors });
+            case 3:
+              update = { captureId: preview.captureId, expectedRevision: preview.revision, requestId: 'unchanged-model-request', candidates,
+                selections: candidates.map(c => ({ candidateId: c.id, includeText: true, selectedMediaIds: [] })), saveMode: 'multiple' };
+              before = structuredClone(data[`agentCapture:${preview.captureId}`]);
+              return next('update_capture', update);
+            case 4: {
+              assert.equal(result.code, 'capture_source_required');
+              assert.deepEqual(result.missingSources, missing, 'all missing originals must be actionable, not a generic accusation that no sources were read');
+              assert.deepEqual(data[`agentCapture:${preview.captureId}`], before, 'a rejected batch must not partially edit its preview');
+              assert.equal(saved.size, 0);
+              const durable = await createAgentTasks(taskOptions).inspect(failedRequest);
+              assert.deepEqual(durable.error.details.missingSources, missing, 'MCP and resumed tasks retain the same correction facts');
+              assert.deepEqual(result.recovery.arguments, { captureId: preview.captureId, expectedRevision: preview.revision, part: 'source', selectors: missingSelectors });
+              assert.equal(result.recovery.operation, 'read_capture');
+              return next(result.recovery.operation, result.recovery.arguments);
+            }
+            case 5:
+              assert.equal(result.sources.length, 6);
+              return next('update_capture', update);
+            case 6:
+              assert.equal(result.ok, true);
+              return next('save_capture', { captureId: preview.captureId, expectedRevision: result.revision, requestId: 'save' });
+            case 7:
+              assert.equal(result.results.length, 12);
+              assert(result.results.every(r => r.originalVerification.status === 'verified'));
+              return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '已保存。' }, finish_reason: 'stop' }] }));
+            default: assert.fail('Completed batch must finish without repeated provider calls');
+          }
+        }
+      });
+      return { text: loop.content };
     }
   });
   assert.equal(result.ok, true, result.message || result.text); assert.equal(saved.size, 12);

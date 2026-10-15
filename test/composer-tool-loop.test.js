@@ -7,6 +7,57 @@ const call = (id, args) => ({ id, type: 'function', function: { name: 'search_ca
 const body = () => ({ model: 'fixture-model', messages: [{ role: 'user', content: '查询案例' }] });
 const sse = events => new Response(new ReadableStream({ start(controller) { const text = events.map(event => `data: ${JSON.stringify(event)}\n\n`).join(''); const bytes = new TextEncoder().encode(text); for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i+7)); controller.close(); } }), { headers: { 'content-type': 'text/event-stream' } });
 
+for (const protocol of ['chat_completions', 'responses']) test(`${protocol}: a failed batch can retry identical parameters after its exact source recovery, including an old stopped checkpoint`, async () => {
+  for (const mode of ['fresh', 'checkpoint', 'same-batch']) {
+    let reads = 0, writes = 0, requests = 0, checkpoint;
+    const update = { captureId: 'batch', expectedRevision: 1, requestId: 'same-request', candidates: [{ id: 'effect' }] };
+    const correction = { captureId: 'batch', expectedRevision: 1, part: 'source', selectors: ['#effect pre'] };
+    const makeCall = (id, name, args) => protocol === 'responses' ? { type: 'function_call', call_id: id, name, arguments: JSON.stringify(args) }
+      : { id, type: 'function', function: { name, arguments: JSON.stringify(args) } };
+    const response = calls => protocol === 'responses' ? new Response(JSON.stringify({ output: calls || [{ type: 'message', content: [{ type: 'output_text', text: 'done' }] }] }))
+      : chat(calls ? { role: 'assistant', tool_calls: calls } : { role: 'assistant', content: 'done' });
+    const runtime = { specs: ['update_capture', 'read_capture'].map(name => ({ name, parameters: { type: 'object', properties: {}, additionalProperties: true } })),
+      saveContinuation: async value => { checkpoint = structuredClone(value); },
+      execute: async name => name === 'read_capture' ? (reads++, { data: { captureId: 'batch', part: 'source', sources: [{ selector: '#effect pre', content: 'actual original', nextOffset: null }] } })
+        : (writes++, { data: reads ? { ok: true, revision: 2 } : { ok: false, code: 'capture_source_required', recovery: { operation: 'read_capture', arguments: correction } } }) };
+    const options = { protocol, body: protocol === 'responses' ? { model: 'fixture-model', input: [] } : body(), runtime,
+      request: async () => {
+        requests++;
+        if (mode === 'same-batch') return response(requests === 1 ? [makeCall('failed-update', 'update_capture', update),
+          makeCall('corrective-read', 'read_capture', correction), makeCall('retry-update', 'update_capture', update)] : undefined);
+        return response(requests === 1 ? [makeCall('failed-update', 'update_capture', update)]
+          : requests === 2 ? [makeCall('corrective-read', 'read_capture', { ...correction, length: 12000 })]
+          : requests === 3 ? [makeCall('retry-update', 'update_capture', update)] : undefined);
+      } };
+    if (mode === 'checkpoint') {
+      await assert.rejects(runComposerToolLoop({ ...options, budget: { maxToolCalls: 2 } }), { code: 'RESOURCE_BUDGET_REACHED' });
+      // This is the legacy checkpoint shape: recovery must be inferred from
+      // its actual paired native results, not depend on newly stored flags.
+      assert.equal(checkpoint.requestCount, 3);
+      assert.deepEqual(checkpoint.pendingCalls.map(c => c.id), ['retry-update']);
+    }
+    const result = await runComposerToolLoop({ ...options, ...(mode === 'checkpoint' ? { continuation: checkpoint } : {}) });
+    assert.equal(result.content, 'done'); assert.equal(writes, 2); assert.equal(reads, 1);
+  }
+});
+
+test('unrelated or failed recovery reads cannot unlock a repeated failed write, and successful writes remain protected', async () => {
+  for (const kind of ['unrelated', 'failed-read', 'committed', 'old-read', 'recovery-consumed']) {
+    let writes = 0, requests = 0;
+    const recovery = { operation: 'read_capture', arguments: { captureId: 'batch', part: 'source', selectors: ['#missing'] } };
+    const runtime = { specs: ['update_capture', 'read_capture'].map(name => ({ name, parameters: { type: 'object', properties: {}, additionalProperties: true } })),
+      execute: async name => name === 'update_capture' ? (writes++, { data: kind === 'committed' ? { ok: true } : { ok: false, recovery } })
+        : { data: kind === 'failed-read' ? { ok: false } : { ok: true, content: 'observed' } } };
+    await assert.rejects(runComposerToolLoop({ body: body(), protocol: 'chat_completions', runtime, request: async () => {
+      const index = requests++; const reading = index === (kind === 'old-read' ? 0 : 1);
+      const name = reading ? 'read_capture' : 'update_capture';
+      const args = reading ? { ...recovery.arguments, ...(kind === 'unrelated' ? { selectors: ['#unrelated'] } : {}) } : { captureId: 'batch' };
+      return chat({ role: 'assistant', tool_calls: [{ id: 'attempt-' + index, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+    } }), /没有进展/);
+    assert.equal(writes, kind === 'recovery-consumed' ? 2 : 1);
+  }
+});
+
 function batchRuntime() {
   const journal = [], checkpoints = [];
   const runtime = { turnId: 'batch-turn', task: { mode:'act',state:'active',goal:'Save every requested effect' },
