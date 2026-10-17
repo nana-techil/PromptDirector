@@ -55,3 +55,11 @@ test('an expired high-resolution file tries its same-quality mirrors, then re-re
   assert.equal(result.size, bytes.length);
   assert.deepEqual(urls, ['https://cdn.douyinvod.com/4k', 'https://cdn.douyinvod.com/4k-mirror', 'https://www.douyin.com/video/123']);
 });
+
+
+test('a page-session failure preserves the original HTTP cause so users can distinguish an unavailable source', async () => {
+  await assert.rejects(resolveCapturedVideoOriginal({ url: 'https://example.com/video.mp4' }, {}, {
+    download: async () => { throw new Error('HTTP 503'); },
+    downloadSession: async () => { throw new Error('页面没有返回有效媒体'); }
+  }), error => error.message.includes('HTTP 503') && error.message.includes('页面没有返回有效媒体'));
+});

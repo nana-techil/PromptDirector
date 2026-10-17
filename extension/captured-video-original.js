@@ -31,7 +31,7 @@ export async function resolveCapturedVideoOriginal(media, candidate, {
         signal?.throwIfAborted(); failure = error;
         if (downloadSession) {
           try { return await downloadSession(url); }
-          catch (error) { signal?.throwIfAborted(); failure = error; }
+          catch (error) { signal?.throwIfAborted(); failure = new Error(`${failure.message}；${error.message}`); }
         }
       }
     }
