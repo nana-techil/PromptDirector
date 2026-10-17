@@ -63,3 +63,18 @@ test('a page-session failure preserves the original HTTP cause so users can dist
     downloadSession: async () => { throw new Error('页面没有返回有效媒体'); }
   }), error => error.message.includes('HTTP 503') && error.message.includes('页面没有返回有效媒体'));
 });
+
+test('an unfinished Bilibili capture re-resolves its work when the old PCDN hint is outside the supported CDN domains', async () => {
+  const work = 'https://www.bilibili.com/video/BV1ctJC6kEGb/';
+  let calls = 0;
+  const blob = await resolveCapturedVideoOriginal({ url: work, videoStreams: {
+    videoUrl: 'https://edge.mountaintoys.cn:4483/current.m4s', audioUrl: 'https://a.bilivideo.cn/audio.m4s'
+  } }, { canonicalUrl: work }, { downloadNative: async (url, options) => {
+    calls++;
+    assert.equal(url, work);
+    assert.equal(options.streams, undefined, 'the old rejected hint must not prevent recovery from the original work');
+    return new Blob([bytes]);
+  } });
+  assert.equal(calls, 1);
+  assert.equal(blob.size, bytes.length);
+});

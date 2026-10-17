@@ -36,6 +36,16 @@ export async function resolveCapturedVideoOriginal(media, candidate, {
       }
     }
   }
-  if (workUrl && downloadNative) return downloadNative(workUrl, { streams: media.videoStreams, signal, onProgress });
+  if (workUrl && downloadNative) {
+    let streams = media.videoStreams;
+    // Pending captures can predate the CDN mirror adapter. Keep the work and
+    // let the extractor refresh a PCDN hint the installed host cannot accept.
+    if (streams && /(^|\.)bilibili\.com$/u.test(new URL(workUrl).hostname)
+      && [streams.videoUrl, streams.audioUrl].filter(Boolean).some(value => {
+        try { const url = new URL(value); return url.protocol !== 'https:' || url.username || url.password || !/(^|\.)(bilivideo\.com|bilivideo\.cn)$/u.test(url.hostname); }
+        catch { return true; }
+      })) streams = undefined;
+    return downloadNative(workUrl, { streams, signal, onProgress });
+  }
   throw failure || new Error('尚未取得完整视频文件，请重新读取来源页面后重试');
 }
