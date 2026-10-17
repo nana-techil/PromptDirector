@@ -29,7 +29,9 @@ async function connectVideoHost(host, chromeApi) {
     if (message.type !== 'video_response') return;
     requests.delete(message.id);
     if (message.error) {
-      const error = Object.assign(new Error(message.error.message), { code: message.error.code });
+      const http = /(?:HTTP(?: Error)?|Server returned)\s*([45]\d\d)\b/iu.exec(message.error.message);
+      const reason = http ? `${http[1] === '403' ? '视频服务器拒绝下载' : '视频服务器返回错误'}（HTTP ${http[1]}）` : message.error.message;
+      const error = Object.assign(new Error(reason), { code: message.error.code });
       request.reject(error);
     } else request.resolve(message.result);
   });
@@ -70,7 +72,7 @@ export async function nativeVideoStatus(chromeApi = chrome) {
   } finally { session.close(); }
 }
 
-export async function downloadNativeVideo(url, { streams, signal, onProgress, chromeApi = chrome, estimateStorage } = {}) {
+export async function downloadNativeVideo(url, { streams, minWidth = 0, minHeight = 0, signal, onProgress, chromeApi = chrome, estimateStorage } = {}) {
   return withMediaDownloadSlot(async () => {
     signal?.throwIfAborted();
     const session = await openNativeVideoSession(chromeApi);
@@ -84,6 +86,9 @@ export async function downloadNativeVideo(url, { streams, signal, onProgress, ch
       signal?.throwIfAborted();
       const result = await session.request('download', { url, streams, maxBytes }, { id, onProgress });
       token = result.token;
+      if (minWidth > 0 && !(result.width >= minWidth) || minHeight > 0 && !(result.height >= minHeight)) {
+        throw new Error(`重新解析的视频未达到页面画质（${minWidth || '?'}×${minHeight || '?'}），未保存较低画质版本`);
+      }
       let index = 0, receivedBytes = 0;
       const stream = new ReadableStream({
         async pull(controller) {

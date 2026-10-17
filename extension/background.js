@@ -2483,6 +2483,14 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
           ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
         continue;
       }
+      // A selected work's description alone is not a saved video case. Keep the
+      // full draft for retry; explicit text-only saves still have no video here.
+      if (candidate.pageType === 'video' && candidate.media.some(media => media.kind === 'video')
+        && failedMediaIds.size && !mediaAssets.some(asset => asset.usage !== 'poster')) {
+        results.push({ candidateId: candidate.id, status: 'failed', title: candidate.title, warnings,
+          ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
+        continue;
+      }
       const articleText = articleDocumentText(candidate.articleDocument);
       const base = buildEntry({
         text: articleText || candidate.contentText || (candidate.sourceFacts.originalPromptAvailable === false ? "" : candidate.excerpt),

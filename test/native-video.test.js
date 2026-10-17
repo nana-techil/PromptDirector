@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { openNativeVideoSession, nativeVideoStatus } from '../extension/native-video.js';
+import { openNativeVideoSession, nativeVideoStatus, downloadNativeVideo } from '../extension/native-video.js';
 import { VIDEO_COMPONENT } from '../extension/video-component-config.js';
 
 function browser({ permission = true, missing = false, response = { available: true }, componentVersion = VIDEO_COMPONENT.version } = {}) {
@@ -42,4 +42,12 @@ test('the installed standalone component reports actual readiness through the sa
 test('an outdated component offers the same simple update flow instead of failing the selected video later', async () => {
   assert.deepEqual(await nativeVideoStatus(browser({ componentVersion: '0.0.1' })), { available: false, updateRequired: true });
   await assert.rejects(openNativeVideoSession(browser({ componentVersion: '0.0.1' })), { code: 'video_component_required' });
+});
+
+test('a refreshed native result below the page resolution is rejected before transferring or saving a lower-quality original', async () => {
+  const chrome = browser({ response: { token: 'lower-quality', width: 1280, height: 720, byteSize: 100, chunkCount: 1 } });
+  await assert.rejects(downloadNativeVideo('https://www.bilibili.com/video/BVtest/', {
+    chromeApi: chrome, minWidth: 1920, minHeight: 1080,
+    estimateStorage: async () => ({ quota: 1024 * 1024 * 1024, usage: 0 })
+  }), /未达到页面画质/u);
 });

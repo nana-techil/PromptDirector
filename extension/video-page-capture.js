@@ -23,6 +23,7 @@ export function collectVideoPagePayload() {
       author: details.author || text("ytd-watch-metadata #owner #channel-name"),
       posterUrl: details.thumbnail?.thumbnails?.at(-1)?.url || meta("og:image"),
       duration: details.lengthSeconds, publishedAt: micro.publishDate,
+      width: highestVideo?.width, height: highestVideo?.height,
       engagement: { views: details.viewCount, likes: micro.likeCount },
       ...(highestVideo?.url && highestAudio?.url ? { videoStreams: { videoUrl: highestVideo.url, audioUrl: highestAudio.url } } : {})
     };
@@ -55,6 +56,7 @@ export function collectVideoPagePayload() {
       description: data.desc ?? text("#v_desc .basic-desc-info"),
       author: data.owner?.name || text(".up-info-container .up-name"),
       posterUrl: data.pic || meta("og:image"), duration: data.duration,
+      width: videos[0]?.width || data.dimension?.width, height: videos[0]?.height || data.dimension?.height,
       publishedAt: data.pubdate ? new Date(data.pubdate * 1000).toISOString() : "",
       engagement: { views: stat.view, likes: stat.like, comments: stat.reply, favorites: stat.favorite, shares: stat.share, coins: stat.coin, danmaku: stat.danmaku },
       ...(videoUrl && audioUrl ? { videoStreams: { videoUrl, audioUrl } }
@@ -95,6 +97,7 @@ export function normalizeVideoPagePayload(value, sourceUrl) {
     adapter: value.adapter, pageKind: "detail", pageType: "video", canonicalUrl,
     candidates: [{ id, adapter: value.adapter, pageType: "video", title, canonicalUrl, contentText: description, textBlocks, sourceFacts,
       media: [{ id: mediaId, kind: "video", url: primary?.urls[0] || canonicalUrl, originalWorkUrl: canonicalUrl, posterUrl, sourceTitle: title, placement: "inline",
+        width: primary?.width || value.width, height: primary?.height || value.height,
         ...(value.videoStreams ? { videoStreams: value.videoStreams } : {}),
         ...(primary ? { sourceKind: 'site-original', width: primary.width, height: primary.height,
           variants: formats.flatMap(format => format.urls.map(url => ({ url, sourceKind: 'site-original', width: format.width, height: format.height }))) } : {}) }],

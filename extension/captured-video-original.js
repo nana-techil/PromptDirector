@@ -45,7 +45,22 @@ export async function resolveCapturedVideoOriginal(media, candidate, {
         try { const url = new URL(value); return url.protocol !== 'https:' || url.username || url.password || !/(^|\.)(bilivideo\.com|bilivideo\.cn)$/u.test(url.hostname); }
         catch { return true; }
       })) streams = undefined;
-    return downloadNative(workUrl, { streams, signal, onProgress });
+    const options = { signal, onProgress, minWidth: media.width, minHeight: media.height };
+    try { return await downloadNative(workUrl, { ...options, streams }); }
+    catch (error) {
+      signal?.throwIfAborted();
+      // Signed page URLs can be valid in Chrome but denied from the native
+      // process. Refresh the same work once; setup, cancellation and disk errors
+      // must keep their original outcome instead of starting another download.
+      if (!streams || error.name === 'AbortError' || error.code === 'video_component_required'
+        || !/(?:HTTP|Server returned)\s*(?:401|403|404|410|429|5\d\d)\b|timed?\s*out|Connection (?:refused|reset)/iu.test(error.message)) throw error;
+      try { return await downloadNative(workUrl, options); }
+      catch (refreshError) {
+        signal?.throwIfAborted();
+        if (refreshError.name === 'AbortError' || refreshError.code === 'video_component_required') throw refreshError;
+        throw new Error(`页面视频地址不可用；从作品重新解析失败：${refreshError.message}`);
+      }
+    }
   }
   throw failure || new Error('尚未取得完整视频文件，请重新读取来源页面后重试');
 }

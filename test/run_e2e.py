@@ -90,6 +90,7 @@ SCRIPTS = [
     "midjourney_capture_e2e.py",
     "capture_session_video_e2e.py",
     "platform_video_capture_e2e.py",
+    "platform_video_failure_e2e.py",
     "video_component_setup_ui_e2e.py",
     "detail_tag_organization_e2e.py",
     "undo_safety_feedback_e2e.py",

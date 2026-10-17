@@ -78,3 +78,32 @@ test('an unfinished Bilibili capture re-resolves its work when the old PCDN hint
   assert.equal(calls, 1);
   assert.equal(blob.size, bytes.length);
 });
+
+test('a Bilibili page CDN denied to the native process is refreshed from the same work, retaining the selected resolution', async () => {
+  const work = 'https://www.bilibili.com/video/BVtest/?p=2';
+  const streams = { videoUrl: 'https://a.bilivideo.com/current.m4s', audioUrl: 'https://a.bilivideo.com/audio.m4s' };
+  const calls = [];
+  const blob = await resolveCapturedVideoOriginal({ url: work, width: 1920, height: 1080, videoStreams: streams }, { canonicalUrl: work }, {
+    downloadNative: async (url, options) => {
+      calls.push({ url, ...options });
+      if (options.streams) throw new Error('Error opening input: Server returned 403 Forbidden (access denied)');
+      return new Blob([bytes]);
+    }
+  });
+  assert.equal(blob.size, bytes.length);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, work);
+  assert.equal(calls[1].streams, undefined);
+  assert.equal(calls[1].minWidth, 1920);
+  assert.equal(calls[1].minHeight, 1080);
+});
+
+test('stream cancellation, component setup and disk failures cannot turn into a second native download', async () => {
+  for (const error of [new DOMException('cancelled', 'AbortError'), Object.assign(new Error('setup'), { code: 'video_component_required' }), new Error('本机没有足够的视频暂存空间')]) {
+    let calls = 0;
+    await assert.rejects(resolveCapturedVideoOriginal({ videoStreams: { videoUrl: 'https://a.bilivideo.com/v' } }, { canonicalUrl: 'https://www.bilibili.com/video/BVtest/' }, {
+      downloadNative: async () => { calls++; throw error; }
+    }));
+    assert.equal(calls, 1);
+  }
+});

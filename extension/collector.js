@@ -2191,7 +2191,7 @@ function restoreCaptureSaveTask(task) {
   if (task.input?.type === 'COMMIT_PAGE_CAPTURE') {
     pageCaptureDraftIds = new Set(task.input.draftItemIds || []);
     pageCaptureBatch = normalizePageCaptureBatch({ ...task.input.batch, status: active ? 'saving' : 'preview',
-      error: !active && task.input.batch.adapter === 'generic' ? task.input.batch.error : '' });
+      error: !active ? task.input.batch.error : '' });
   }
   saving = active;
   if (active) {

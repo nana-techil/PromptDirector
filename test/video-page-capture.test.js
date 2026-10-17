@@ -75,6 +75,7 @@ test('Bilibili part identity and the matching highest-resolution video/audio sur
   assert.equal(candidate.canonicalUrl, url);
   assert.equal(candidate.media[0].videoStreams.videoUrl, 'https://a.bilivideo.com/4k');
   assert.equal(candidate.media[0].videoStreams.audioUrl, 'https://a.bilivideo.com/audio');
+  assert.equal(candidate.media[0].height, 2160, 'page quality must survive normalization so a refreshed download cannot silently downgrade');
   window.__INITIAL_STATE__.cid = 11;
   assert.equal(capture(url, window).videoStreams, undefined, 'a stale previous part must never be downloaded as the selected part');
 });
