@@ -17,7 +17,12 @@ def main():
     with tempfile.TemporaryDirectory(prefix='x-quoted-extension-') as temp:
         ext = Path(temp)
         for file in EXTENSION_DIR.iterdir():
-            if file.name != 'manifest.json':
+            # Chrome's dynamically registered scripts must be real files in the
+            # installed extension; a symlink is accepted by executeScript but
+            # silently omitted at document_start. Packages contain real files.
+            if file.name == 'x-video-observer.js':
+                (ext / file.name).write_bytes(file.read_bytes())
+            elif file.name != 'manifest.json':
                 (ext / file.name).symlink_to(file, target_is_directory=file.is_dir())
         manifest = json.loads((EXTENSION_DIR / 'manifest.json').read_text())
         manifest['host_permissions'] += ['https://x.com/*', 'https://video.twimg.com/*', 'https://pbs.twimg.com/*']
@@ -35,9 +40,10 @@ def main():
         <div data-testid="tweetText">Full author prompt preview<button data-testid="tweet-text-show-more-link" onclick="this.parentElement.textContent=window.fullPrompt">Show more</button></div>
         <a href="/director/status/124"><time>Today</time></a></article>
         <article data-testid="tweet"><div data-testid="User-Name"><a href="/other">Other</a></div><div data-testid="tweetText">UNRELATED COMMENT</div><a href="/other/status/125"><time>Today</time></a></article>
-        </main>{metadata}<script>window.fullPrompt={json.dumps(FULL)}</script></body></html>'''
+        </main>{metadata}<script>window.fullPrompt={json.dumps(FULL)};fetch('/i/api/graphql/fixture').then(r=>r.json());</script></body></html>'''
         with extension_session('x-quoted-original-', extension_dir=ext) as run:
-            run.context.route('https://x.com/**', lambda route: route.fulfill(body=html, content_type='text/html'))
+            response = {'data': [{'rest_id': '123', 'legacy': {'extended_entities': {'media': []}}, 'quoted_status_result': {'result': {'rest_id': '100', 'legacy': {'extended_entities': {'media': [media]}}}}}]}
+            run.context.route('https://x.com/**', lambda route: route.fulfill(json=response) if '/i/api/' in route.request.url else route.fulfill(body=html, content_type='text/html'))
             run.context.route('https://pbs.twimg.com/**', lambda route: route.fulfill(body=fixture_png(route.request.url), content_type='image/png'))
             run.context.route(CDN, lambda route: route.fulfill(body=BYTES, content_type='video/mp4'))
             collector = run.open_page('collector.html')
@@ -59,15 +65,27 @@ def main():
             video['variants'] = []
             c['articleDocument']['blocks'] = [b for b in c['articleDocument']['blocks'] if b.get('assetId') != video['id']]
             batch = collector.evaluate("""async ({batch,item})=>{const {appendCaptureCandidate}=await import('./capture-additions.js');const c=batch.candidates[0];const selection={candidateId:c.id,includeText:true,selectedMediaIds:c.media.map(m=>m.id),mediaDecision:'confirmed'};const block={id:item.id,kind:'paragraph',text:item.text};const r=appendCaptureCandidate(c,{id:item.id,textBlocks:[block],articleDocument:{blocks:[{id:'source',kind:'link',sourceUrl:item.sourceUrl,label:'Author prompt'},block]}},selection);return {...batch,candidates:[r.candidate],selections:[r.selection]};}""", {'batch':batch,'item':supplement['supplement']})
-            result = collector.evaluate("async batch=>chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch})", batch)
+            # Anonymous metadata can be rejected even while the signed-in page
+            # has its normal media response. Save must use the real generated
+            # document-start observer in a temporary page, leaving source intact.
+            worker.evaluate("""()=>{
+              const original=fetch;globalThis.fetch=(url,options)=>String(url)==='https://x.com/director/status/123'?Promise.resolve(new Response('',{status:403})):original(url,options);
+              const create=chrome.tabs.create.bind(chrome.tabs);
+              chrome.tabs.create=async options=>{const tab=await create({...options,url:'about:blank'});await new Promise(resolve=>globalThis.fixtureTabReady=resolve);return tab;};
+            }""")
+            with run.context.expect_page() as opened:
+                collector.evaluate("batch=>{window.savePromise=chrome.runtime.sendMessage({type:'COMMIT_PAGE_CAPTURE',batch});}", batch)
+            opened.value.goto(WORK)
+            worker.evaluate('()=>globalThis.fixtureTabReady()')
+            result = collector.evaluate('()=>window.savePromise')
             assert result['ok'] and not result['results'][0]['warnings'], result
             collector.reload()
             saved = collector.evaluate("""async()=>{const s=await chrome.runtime.sendMessage({type:'GET_STATE'}),e=s.entries[0],a=e.mediaAssets.find(a=>a.kind==='video');return {count:s.entries.length,text:e.text,assets:e.mediaAssets,size:(await(await import('./media-store.js')).getMediaBlob(a.id)).size};}""")
             assert saved['count'] == 1 and FULL in saved['text'] and 'UNRELATED COMMENT' not in saved['text'], saved
             assert saved['size'] == len(BYTES) and len([a for a in saved['assets'] if a['kind'] == 'image']) >= 4, saved
             assert all(a['storageMode'] == 'managed' for a in saved['assets']), saved
-            assert source.url == WORK
-            print('PASS: quoted source ownership; current JSON response; author full prompt; unresolved selected fragment resolves at save; four images and original video survive reload in one case')
+            assert source.url == WORK and opened.value.is_closed()
+            print('PASS: metadata HTTP403 recovered through normal responses in a closed temporary tab; quoted source ownership; current JSON response; author full prompt; unresolved selected fragment resolves at save; four images and original video survive reload in one case')
 
 
 if __name__ == '__main__':

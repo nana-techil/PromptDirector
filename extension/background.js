@@ -2193,7 +2193,7 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
     progress.signal?.throwIfAborted();
     const candidate = selected[index];
     const snapshot = await resolveXVideoSources({ candidates: [candidate] },
-      { id: batch.tabId, url: candidate.canonicalUrl }, chrome, { allowTabReload: false,
+      { id: batch.tabId, url: candidate.canonicalUrl }, chrome, { allowTabReload: false, allowTemporaryTab: true,
         cancelled: () => Boolean(progress.signal?.aborted) });
     selected[index] = snapshot.candidates[0];
   }
