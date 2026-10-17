@@ -42,7 +42,7 @@ FunctionEnd
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /r "${Payload}/*"
+  File /r "${PayloadFiles}"
   IfErrors failed
   ExecWait '"$INSTDIR\bin\node.exe" "$INSTDIR\connector\register-video.mjs"' $0
   ${If} $0 != 0

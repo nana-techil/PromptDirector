@@ -155,7 +155,7 @@ if (target === 'mac') {
   const launcher = `@echo off\r\nsetlocal DisableDelayedExpansion\r\n"%~dp0bin\\node.exe" "%~dp0connector\\video-host.mjs" %*\r\n`;
   await writeFile(join(payload, 'native-host.cmd'), launcher);
   const prefix = process.platform === 'win32' ? '/' : '-';
-  await run(process.env.VIDEO_MAKENSIS || 'makensis', [`${prefix}DPayload=${payload}`, `${prefix}DOutput=${output}`, `${prefix}DComponentVersion=${VIDEO_COMPONENT.version}`, join(repo, 'connector/installer/windows.nsi')]);
+  await run(process.env.VIDEO_MAKENSIS || 'makensis', [`${prefix}INPUTCHARSET`, 'UTF8', `${prefix}DPayloadFiles=${join(payload, '*')}`, `${prefix}DOutput=${output}`, `${prefix}DComponentVersion=${VIDEO_COMPONENT.version}`, join(repo, 'connector/installer/windows.nsi')]);
   const installer = join(output, VIDEO_COMPONENT.assets.win);
   let distributionReady = false;
   if (process.env.VIDEO_WINDOWS_CERTIFICATE_SHA1) {
