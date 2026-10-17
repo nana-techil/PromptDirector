@@ -1557,7 +1557,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
           }
         };
         const observer = new MutationObserver(check);
-        const timer = setTimeout(() => finish(null, new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留")), Math.max(1, deadline - Date.now()));
+        const timer = setTimeout(() => finish(null, Object.assign(new Error("未能取得评论全文，请检查登录、网络或原评论是否仍可展开；当前草稿已保留"), { code: 'X_POST_TEXT_INCOMPLETE' })), Math.max(1, deadline - Date.now()));
         observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
         cancellation.signal.addEventListener("abort", abort, { once: true });
         if (cancelled) abort(); else check();

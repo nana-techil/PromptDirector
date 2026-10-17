@@ -108,18 +108,21 @@ export function applyXVideoSources(snapshot, result) {
   if (!result?.media?.length) return snapshot;
   return { ...snapshot, candidates: (snapshot.candidates || []).map(candidate => {
     if (xPostId(candidate.canonicalUrl) !== result.postId) return candidate;
-    const videos = candidate.media.filter(item => item.kind === "video" && !item.isQuoted);
+    const videos = candidate.media.filter(item => item.kind === "video");
     const replacements = new Map();
     const media = candidate.media.map(item => {
       if (!videos.includes(item)) return item;
       const source = result.media.find(value => value.posterUrl && item.posterUrl
         && xPosterIdentity(value.posterUrl) === xPosterIdentity(item.posterUrl))
-        || (videos.length === 1 && result.media.length === 1 ? result.media[0] : null);
+        || (!item.isQuoted && videos.filter(value => !value.isQuoted).length === 1
+          && result.media.length === 1 && (!result.media[0].workUrl || xPostId(result.media[0].workUrl) === result.postId) ? result.media[0] : null);
       if (!source) return item;
+      if (item.isQuoted && (!source.workUrl || xPostId(source.workUrl) === result.postId)) return item;
       const best = source.variants[0];
       replacements.set(item.id, best.url);
       return { ...item, url: best.url, variants: [], mimeType: best.mimeType,
-        sourceKind: "site-original", originalWorkUrl: candidate.canonicalUrl,
+        sourceKind: "site-original", originalWorkUrl: source.workUrl || candidate.canonicalUrl,
+        ...(item.isQuoted ? { quotedPostUrl: source.workUrl } : {}),
         ...(source.variants.find(value => value.mimeType === "application/x-mpegURL")
           ? { streamUrl: source.variants.find(value => value.mimeType === "application/x-mpegURL").url } : {}) };
     });
@@ -152,7 +155,7 @@ function xPostId(value) {
 export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () => false, readHtml = readXPostHtml, allowTabReload = true } = {}) {
   const postId = xPostId(tab.url);
   const unresolved = (snapshot.candidates || []).some(candidate => xPostId(candidate.canonicalUrl) === postId
-    && candidate.media?.some(item => item.kind === "video" && !item.isQuoted && !/\.mp4(?:\?|$)/iu.test(item.url || "")));
+    && candidate.media?.some(item => item.kind === "video" && !/\.mp4(?:\?|$)/iu.test(item.url || "")));
   if (!postId || !unresolved || cancelled()) return snapshot;
   const deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs;
   const controller = new AbortController();
@@ -163,7 +166,7 @@ export async function resolveXVideoSources(snapshot, tab, api, { cancelled = () 
     if (result?.media.some(item => item.variants[0]?.mimeType === 'video/mp4')) {
       snapshot = applyXVideoSources(snapshot, result);
       if (!(snapshot.candidates || []).some(candidate => xPostId(candidate.canonicalUrl) === postId
-        && candidate.media?.some(item => item.kind === 'video' && !item.isQuoted && !/\.mp4(?:\?|$)/iu.test(item.url || '')))) return snapshot;
+        && candidate.media?.some(item => item.kind === 'video' && !/\.mp4(?:\?|$)/iu.test(item.url || '')))) return snapshot;
     }
   } catch { /* Logged-in-only posts retain the normal-response observer path. */ }
   finally { clearInterval(cancelCheck); }

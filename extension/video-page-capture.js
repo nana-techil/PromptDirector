@@ -39,6 +39,16 @@ export function collectVideoPagePayload() {
     const videos = (play?.dash?.video || []).filter(format => format.baseUrl || format.base_url).sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bandwidth || 0) - (a.bandwidth || 0));
     const audios = [...(play?.dash?.audio || []), ...(play?.dash?.dolby?.audio || []), ...(play?.dash?.flac?.audio ? [play.dash.flac.audio] : [])]
       .filter(format => format.baseUrl || format.base_url).sort((a, b) => (b.bandwidth || 0) - (a.bandwidth || 0));
+    // PCDN may use unrelated hostnames. Keep the chosen format and use its
+    // official CDN mirror; otherwise let the native extractor resolve it afresh.
+    const streamUrl = format => {
+      const urls = [format?.baseUrl, format?.base_url, ...(format?.backupUrl || format?.backup_url || [])].filter(value => {
+        try { const u = new URL(value); return u.protocol === 'https:' && !u.username && !u.password && /(^|\.)(bilivideo\.com|bilivideo\.cn)$/u.test(u.hostname); }
+        catch { return false; }
+      });
+      return urls.find(value => !new URL(value).port) || urls[0];
+    };
+    const videoUrl = streamUrl(videos[0]), audioUrl = streamUrl(audios[0]);
     return {
       adapter: "bilibili", itemId: data.bvid || id, canonicalUrl: `https://www.bilibili.com/video/${data.bvid || id}/`,
       title: data.title || text("h1.video-title") || meta("og:title"),
@@ -47,7 +57,7 @@ export function collectVideoPagePayload() {
       posterUrl: data.pic || meta("og:image"), duration: data.duration,
       publishedAt: data.pubdate ? new Date(data.pubdate * 1000).toISOString() : "",
       engagement: { views: stat.view, likes: stat.like, comments: stat.reply, favorites: stat.favorite, shares: stat.share, coins: stat.coin, danmaku: stat.danmaku },
-      ...(videos[0] && audios[0] ? { videoStreams: { videoUrl: videos[0].baseUrl || videos[0].base_url, audioUrl: audios[0].baseUrl || audios[0].base_url } }
+      ...(videoUrl && audioUrl ? { videoStreams: { videoUrl, audioUrl } }
         : play?.durl?.length === 1 && play.durl[0].url ? { formats: [{ urls: [play.durl[0].url], width: data.dimension?.width, height: data.dimension?.height }] } : {})
     };
   }

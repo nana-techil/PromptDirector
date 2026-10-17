@@ -78,3 +78,14 @@ test('Bilibili part identity and the matching highest-resolution video/audio sur
   window.__INITIAL_STATE__.cid = 11;
   assert.equal(capture(url, window).videoStreams, undefined, 'a stale previous part must never be downloaded as the selected part');
 });
+
+
+test('Bilibili PCDN primary keeps the selected quality through an official backup instead of rejecting the whole work', () => {
+  const url = 'https://www.bilibili.com/video/BV1ctJC6kEGb/';
+  const window = { __INITIAL_STATE__: { videoData: { bvid: 'BV1ctJC6kEGb', title: 'Work' } },
+    __playinfo__: { data: { dash: { video: [{ height: 1080, baseUrl: 'https://edge.mountaintoys.cn:4483/current.m4s', backupUrl: ['https://a.bilivideo.com/current.m4s'] }], audio: [{ base_url: 'https://mcdn.bilivideo.cn:8082/audio.m4s', backup_url: ['https://a.bilivideo.cn/audio.m4s'] }] } } } };
+  assert.equal(capture(url, window).videoStreams.videoUrl, 'https://a.bilivideo.com/current.m4s');
+  assert.equal(capture(url, window).videoStreams.audioUrl, 'https://a.bilivideo.cn/audio.m4s');
+  window.__playinfo__.data.dash.video[0].backupUrl = [];
+  assert.equal(capture(url, window).videoStreams, undefined, 'without an accepted stream, re-resolve the work rather than passing an untrusted URL or reducing quality');
+});

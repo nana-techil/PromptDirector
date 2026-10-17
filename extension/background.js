@@ -2187,6 +2187,16 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
   let mediaOffset = 0;
   const state = await enqueue(() => readState());
   const videoOnlineOnly = state.uiPreferences?.videoOnlineOnly === true;
+  // Saved previews and picker fragments share the same source resolution as
+  // whole-page/MCP capture. Match selected X media by poster and post ownership.
+  if (!videoOnlineOnly) for (let index = 0; index < selected.length; index++) {
+    progress.signal?.throwIfAborted();
+    const candidate = selected[index];
+    const snapshot = await resolveXVideoSources({ candidates: [candidate] },
+      { id: batch.tabId, url: candidate.canonicalUrl }, chrome, { allowTabReload: false,
+        cancelled: () => Boolean(progress.signal?.aborted) });
+    selected[index] = snapshot.candidates[0];
+  }
   const loadMedia = (key, load) => progress.media ? progress.media(key, load) : load();
   const results = [];
   let entries = [...state.entries];

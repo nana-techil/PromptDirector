@@ -110,3 +110,21 @@ test('the public-page and normal-response paths share one read deadline instead 
   const result=await resolveXVideoSources(snapshot,{id:1,url:snapshot.candidates[0].canonicalUrl},api,{readHtml:async()=>{now+=PAGE_CAPTURE_LIMITS.navigationTimeoutMs;return '';}});
   assert.equal(result,snapshot);assert.deepEqual(actions,[],'an exhausted read must preserve the draft instead of starting another full wait');
 });
+
+
+test('a quoted video in current X serialized JSON keeps its own post and resolves only by matching poster', async () => {
+  const root = 'https://x.com/creator/status/123', quoted = 'https://x.com/creator/status/100';
+  const media = { expanded_url: quoted + '/video/1', media_url_https: 'https://pbs.twimg.com/amplify_video_thumb/555/img/cover.jpg',
+    video_info: { variants: [variant('full', 10)] } };
+  const payload = { data: { tweet: { rest_id: '123', result: { rest_id: '123', quoted_tweet_results: { rest_id: '100', result: { rest_id: '100', media_entities2: [media] } } } } } };
+  const html = '<script>($R=>$R[1]={kind:"GraphQLRequestStream.Completed",result:{value:' + JSON.stringify(JSON.stringify(payload)) + '}})($R["tsr"])</script>';
+  const sources = xVideoSourcesFromHtml(html, root);
+  assert.equal(sources.media.length, 1);
+  const snapshot = { candidates: [{ canonicalUrl: root, media: [{ id: 'quoted', kind: 'video', isQuoted: true, url: '', posterUrl: media.media_url_https },
+    { id: 'other', kind: 'video', isQuoted: true, url: '', posterUrl: 'https://pbs.twimg.com/other.jpg' }] }] };
+  const result = await resolveXVideoSources(snapshot, { id: 1, url: root }, {}, { readHtml: async () => html, allowTabReload: false });
+  assert.equal(result.candidates[0].media[0].url, 'https://video.twimg.com/full.mp4');
+  assert.equal(result.candidates[0].media[0].originalWorkUrl, quoted);
+  assert.equal(result.candidates[0].media[1].url, '');
+  assert.equal(xVideoSourcesFromHtml(html, 'https://x.com/creator/status/999').media.length, 0);
+});

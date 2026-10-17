@@ -161,6 +161,7 @@ SCRIPTS = [
     "x_edited_post_identity_e2e.py",
     "x_comment_capture_e2e.py",
     "x_video_playback_e2e.py",
+    "x_quoted_video_capture_e2e.py",
     "higgsfield_capture_e2e.py",
     "asset_board_capture_e2e.py",
     "feishu_capture_e2e.py",
