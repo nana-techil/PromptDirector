@@ -14,7 +14,7 @@ import { startVideoHost } from '../video-host.mjs';
 import { encodeFrame, frameDecoder } from '../framing.mjs';
 
 const exec = promisify(execFile);
-const fixture = fileURLToPath(new URL('../../test/fixtures/zhipu-local-video-smoke.mp4', import.meta.url));
+const fixture = fileURLToPath(new URL('../../test/fixtures/hls-audio-video/stream.m3u8', import.meta.url));
 
 test('native extraction keeps modal and Bilibili part identity and rejects non-platform or mismatched sources', () => {
   assert.equal(canonicalVideoUrl('https://www.douyin.com/user/a?modal_id=7673852821996834082'), 'https://www.douyin.com/video/7673852821996834082');
@@ -26,11 +26,15 @@ test('native extraction keeps modal and Bilibili part identity and rejects non-p
 test('real FFmpeg merges separately selected audio/video without transcoding, streams every byte and cleans its own temporary files', async t => {
   const root = await mkdtemp(join(tmpdir(), 'pd-native-video-test-'));
   const tools = await discoverVideoTools({ root });
-  if (!tools.ffmpeg || !tools.ffprobe || !tools.ytDlp) { await rm(root, { recursive: true, force: true }); return t.skip('Optional native components are not installed in this test environment'); }
+  if (!tools.ffmpeg || !tools.ffprobe || !tools.ytDlp) {
+    await rm(root, { recursive: true, force: true });
+    assert.notEqual(process.env.PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS, '1', 'Installed component tools must be present for installer acceptance');
+    return t.skip('Optional native components are not installed in this test environment');
+  }
   const video = join(root, 'video.mp4'), audio = join(root, 'audio.m4a');
   await exec(tools.ffmpeg, ['-v', 'error', '-i', fixture, '-an', '-c', 'copy', video]);
-  // A silent audio fixture is still a real independently encoded audio track.
-  await exec(tools.ffmpeg, ['-v', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-t', '1', '-c:a', 'aac', audio]);
+  // Reuse the synthetic H.264/AAC fixture; installed tools only need stream copy.
+  await exec(tools.ffmpeg, ['-v', 'error', '-i', fixture, '-vn', '-c', 'copy', audio]);
   const assets = { '/video': await readFile(video), '/audio': await readFile(audio) };
   const server = createServer((request, response) => { const bytes = assets[request.url]; response.writeHead(200, { 'content-type': 'video/mp4', 'content-length': bytes.length }); response.end(bytes); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -41,7 +45,8 @@ test('real FFmpeg merges separately selected audio/video without transcoding, st
   try {
     const result = await service.request('download', { url: 'https://www.bilibili.com/video/BVtest/?p=2',
       streams: { videoUrl: 'https://a.bilivideo.com/video', audioUrl: 'https://a.bilivideo.com/audio' }, maxBytes: 32 * 1024 * 1024 });
-    assert(result.hasAudio); assert(result.durationMs > 0); assert(result.width > 0);
+    assert(result.hasAudio); assert(result.durationMs >= 3000, 'The full three-second fixture must survive the merge');
+    assert.equal(result.width, 160); assert.equal(result.height, 90);
     let size = 0;
     for (let index = 0; index < result.chunkCount; index++) size += Buffer.from((await service.request('read', { token: result.token, index })).data, 'base64').length;
     assert.equal(size, result.byteSize);
