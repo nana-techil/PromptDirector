@@ -799,7 +799,7 @@ export async function collectPageCaptureSnapshot(options = {}) {
         siteStatus: siteData.completeness === "complete" ? "complete" : "partial"
       };
     }
-    if ((assetDetail || ["jimeng", "youtube", "bilibili", "midjourney", "pinterest"].includes(siteData?.adapter)) && siteData.pageKind === "detail" && !pageSelection) {
+    if ((assetDetail || ["jimeng", "youtube", "bilibili", "douyin", "midjourney", "pinterest"].includes(siteData?.adapter)) && siteData.pageKind === "detail" && !pageSelection) {
       return {
         id: sessionId, sourceUrl: canonicalUrl, adapter: adapter.id,
         candidates: Array.isArray(siteData.candidates) ? siteData.candidates.slice(0, 1) : [],
@@ -3002,6 +3002,9 @@ function uniqueMedia(values) {
       url,
       posterUrl,
       ...(safeUrl(value.streamUrl) ? { streamUrl: safeUrl(value.streamUrl) } : {}),
+      ...(safeUrl(value.videoStreams?.videoUrl) && safeUrl(value.videoStreams?.audioUrl) ? { videoStreams: {
+        videoUrl: safeUrl(value.videoStreams.videoUrl), audioUrl: safeUrl(value.videoStreams.audioUrl)
+      } } : {}),
       ...(dataUrl ? { dataUrl } : {}),
       ...(previewDataUrl ? { previewDataUrl } : {}),
       ...(normalizeFallbackRect(value?.fallbackRect) ? { fallbackRect: normalizeFallbackRect(value.fallbackRect) } : {}),
