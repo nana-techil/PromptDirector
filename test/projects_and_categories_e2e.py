@@ -63,8 +63,12 @@ def main() -> None:
         expect(library.locator("#project-order-status")).to_contain_text("辅助项目")
         expect(library.locator(".project-filter-name").first).to_contain_text("项目与分类验收")
 
-        touch_source = library.locator(".project-row", has_text="辅助项目").bounding_box()
-        touch_target = library.locator(".project-row", has_text="项目与分类验收").bounding_box()
+        touch_source = touch_target = None
+        for _ in range(60):
+            touch_source = library.locator(".project-row", has_text="辅助项目").bounding_box()
+            touch_target = library.locator(".project-row", has_text="项目与分类验收").bounding_box()
+            if touch_source and touch_target: break
+            library.wait_for_timeout(100)
         assert touch_source and touch_target
         touch_x = touch_source["x"] + touch_source["width"] / 2
         touch_row = library.locator(".project-row", has_text="辅助项目")

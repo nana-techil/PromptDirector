@@ -48,7 +48,7 @@ def main():
             # Bring forward this unpacked extension's existing one-shot alarm;
             # no setup GET or direct check is issued after the memory loss.
             page.evaluate("() => chrome.alarms.create('video-component-setup',{when:Date.now()+1000})")
-            wait_for_async_condition(page, "async()=>(await chrome.storage.local.get('videoComponentSetup')).videoComponentSetup?.phase==='ready'", timeout=15000)
+            wait_for_async_condition(page, "async()=>{const s=await chrome.storage.local.get(['videoComponentSetup','fixtureResumes','fixtureInspections']);return s.videoComponentSetup?.phase==='ready'&&s.fixtureResumes===1&&s.fixtureInspections===1}", timeout=20000)
             result = page.evaluate("async()=>({...(await chrome.storage.local.get(['fixtureResumes','fixtureInspections','videoComponentSetup'])),alarm:await chrome.alarms.get('video-component-setup')})")
             assert result['fixtureResumes'] == 1 and result['fixtureInspections'] == 1, result
             assert not result.get('alarm'), result

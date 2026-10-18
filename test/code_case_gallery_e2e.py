@@ -7,11 +7,7 @@ from code_case_e2e import DEMO
 
 def main():
     out=Path(os.environ.get('PD_E2E_ARTIFACT_DIR','/tmp/pd-code-gallery'));out.mkdir(parents=True,exist_ok=True)
-    # Many nested sandboxed previews attach and detach while the gallery virtualizes.
-    # Keeping those frames in-process avoids a Playwright driver race (frameAttached
-    # assertion) seen only on slower CI runners; sandboxing and scripts stay enabled.
-    with extension_session('pd-code-gallery-',viewport={'width':1280,'height':844},
-            extra_args=['--disable-features=IsolateOrigins,site-per-process']) as run:
+    with extension_session('pd-code-gallery-',viewport={'width':1280,'height':844}) as run:
         panel=run.open_page('collector.html')
         html=Path(os.environ['PD_CODE_GALLERY_HTML']).read_text() if os.environ.get('PD_CODE_GALLERY_HTML') else DEMO
         source='Original CSS and React remain intact.\n\n```promptdirector-preview-html\n'+html+'\n```'
@@ -91,6 +87,10 @@ def main():
         assert not run.page_errors
         # A broken saved preview must report failure without losing its source or faking readiness.
         broken={**entries[0],'id':'broken-preview','title':'Broken preview','text':'```promptdirector-preview-html\n<script>throw Error("fixture preview failure")</script>\n```'}
+        # Tear down live sandbox frames before closing the page. Closing a tab with
+        # many nested iframes mid-transition can crash the Playwright driver on CI.
+        library.evaluate("()=>document.querySelectorAll('.code-case-frame').forEach(frame=>{frame.removeAttribute('src');frame.remove()})")
+        library.wait_for_timeout(400)
         library.close()
         run.seed_storage(panel,{'entries':[broken],'uiPreferences':{'locale':'en','theme':'light','motion':'reduced'}})
         library=run.open_page('library.html')
