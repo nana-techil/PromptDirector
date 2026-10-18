@@ -31,13 +31,13 @@ export function captureScopeProgress(records, scope, contentTypeId) {
     const data = record.data;
     if (data?.ok !== false && data?.captureId && data?.sourceUrl) urls.set(data.captureId, data.sourceUrl);
     if (record.name !== 'save_capture' || urls.get(data?.captureId || record.args?.captureId) !== inventory.sourceUrl
-      || (data?.collectionId ?? record.args?.project ?? '') !== scope.project
-      || contentTypeId && record.args?.contentTypeId !== contentTypeId) continue;
+      || (data?.collectionId ?? record.args?.project ?? '') !== scope.project) continue;
     const mode = data?.saveMode || record.args?.saveMode;
     if (modules.length > 1 && mode && mode !== scope.saveMode) continue;
     // A partial batch can still contain individually verified durable results.
     for (const item of data?.results || []) {
-      if (item.entryId && ['saved', 'duplicate'].includes(item.status) && item.originalVerification?.status === 'verified') receipts.push(item);
+      if (item.entryId && ['saved', 'duplicate'].includes(item.status) && item.originalVerification?.status === 'verified'
+        && (!contentTypeId || (item.contentTypeId ?? record.args?.contentTypeId) === contentTypeId)) receipts.push(item);
     }
   }
   const covers = (receipt, module) => module.sources.every(source => receipt.originalVerification.sources?.some(actual =>

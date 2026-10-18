@@ -2,6 +2,8 @@ import { feedbackIcon, reviewTime } from './review-feedback.js';
 import { setUiIcon } from './ui-icons.js';
 import { createVideoFrameStepper } from './video-frame-step.js';
 
+let sessionVolume = null, lastAudibleVolume = 1;
+
 // A shared, visible timeline: the selected segment belongs to the actual
 // playback duration, rather than to a browser-specific native control layout.
 export function installReviewPlayerControls(player, { range, review, current, t = value => value, failed }) {
@@ -26,8 +28,12 @@ export function installReviewPlayerControls(player, { range, review, current, t 
   }
   const clock = document.createElement('span'); clock.className = 'review-playback-clock';
   const mute = feedbackIcon('静音', 'volume-2', t);
-  const reviewButton = feedbackIcon('审片', 'clapperboard', t); row.append(play, previousFrame, nextFrame, clock, mute, reviewButton); controls.append(track, row);
-  let playIcon = 'play', muteIcon = 'volume-2';
+  const volumeGroup = document.createElement('div'); volumeGroup.className = 'review-volume';
+  const volume = document.createElement('input'); volume.type = 'range'; volume.min = '0'; volume.max = '1'; volume.step = '0.01'; volume.setAttribute('aria-label', t('音量'));
+  if (sessionVolume) { player.volume = sessionVolume.volume; player.muted = sessionVolume.muted; }
+  volumeGroup.append(mute, volume);
+  const reviewButton = feedbackIcon('审片', 'fullscreen', t); row.append(play, previousFrame, nextFrame, clock, volumeGroup, reviewButton); controls.append(track, row);
+  let playIcon = 'play', muteIcon = 'volume-2', reviewIcon = 'fullscreen';
   surface.classList.add('has-review-transport'); surface.append(controls);
   player.dataset.reviewTransport = 'true'; player.controls = false; player.draggable = false;
   const ready = async () => { await player.preparePlayback?.(); player.preload = 'metadata'; };
@@ -42,13 +48,26 @@ export function installReviewPlayerControls(player, { range, review, current, t 
   });
   player.addEventListener('click', () => play.click());
   seek.addEventListener('input', () => { frames.cancel(); player.currentTime = Number(seek.value) / 1000; update(); });
-  mute.addEventListener('click', () => { player.muted = !player.muted; update(); });
+  mute.addEventListener('click', () => {
+    if (player.volume > 0) lastAudibleVolume = player.volume;
+    if (!player.volume && !player.muted) player.muted = true;
+    player.muted = !player.muted;
+    if (!player.muted && !player.volume) player.volume = lastAudibleVolume;
+    sessionVolume = { volume: player.volume, muted: player.muted }; update();
+  });
+  volume.addEventListener('input', () => {
+    player.volume = Number(volume.value); player.muted = player.volume === 0;
+    if (player.volume > 0) lastAudibleVolume = player.volume;
+    sessionVolume = { volume: player.volume, muted: player.muted }; update();
+  });
   reviewButton.hidden = Boolean(player.closest('#temporary-review-dialog'));
   reviewButton.addEventListener('click', () => { void Promise.resolve().then(review).catch(failed); });
   for (const type of ['pointerdown', 'click', 'keydown', 'dragstart']) controls.addEventListener(type, event => event.stopPropagation());
   function update() {
     const reviewing = Boolean(player.closest('#detail-drawer.is-reviewing'));
     const reviewLabel = t(reviewing ? '退出审片' : '审片');
+    const nextReviewIcon = reviewing ? 'exit-fullscreen' : 'fullscreen';
+    if (reviewIcon !== nextReviewIcon) { setUiIcon(reviewButton, nextReviewIcon); reviewIcon = nextReviewIcon; }
     reviewButton.title = reviewLabel; reviewButton.setAttribute('aria-label', reviewLabel);
     reviewButton.setAttribute('aria-pressed', String(reviewing));
     controls.hidden = player.readyState < 1 || Boolean(player.error);
@@ -61,6 +80,9 @@ export function installReviewPlayerControls(player, { range, review, current, t 
     if (playIcon !== nextPlayIcon) { setUiIcon(play, nextPlayIcon); playIcon = nextPlayIcon; }
     if (muteIcon !== nextMuteIcon) { setUiIcon(mute, nextMuteIcon); muteIcon = nextMuteIcon; }
     mute.setAttribute('aria-pressed', String(player.muted));
+    volume.value = String(player.muted ? 0 : player.volume);
+    volume.style.setProperty("--volume", `${Number(volume.value) * 100}%`);
+    volume.setAttribute('aria-valuetext', `${Math.round(Number(volume.value) * 100)}%`);
     const points = range();
     for (const [index, marker] of markers.entries()) {
       const value = index ? points.endMs : points.startMs;

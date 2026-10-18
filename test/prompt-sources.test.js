@@ -103,3 +103,19 @@ for (const type of ['image-case', 'video-case']) test(`original text stays visib
   assert.equal(entry.sourceFacts, undefined);
   assert.equal(detailPromptSources({ ...entry, sourceFacts: { originalPromptAvailable: false } }, asset).original, '');
 });
+
+test('media tabs require distinct original prompts, not extra images, repeated excerpts or AI results', async () => {
+  const { hasDistinctMediaPrompts } = await import('../extension/prompt-sources.js');
+  const entry = { text: 'A forest with glowing fireflies', sourceFacts: { originalPromptAvailable: true },
+    mediaAssets: [{ id: 'image', kind: 'image' }, { id: 'video', kind: 'video' }] };
+  assert.equal(hasDistinctMediaPrompts(entry), false);
+  for (const text of [entry.text, 'A forest', '  A forest\n with glowing fireflies  ']) {
+    assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'image', source: 'webpage', text }] }), false);
+  }
+  assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'image', source: 'ai-suggestion', text: 'AI result' }] }), false);
+  assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'deleted', source: 'manual', text: 'Orphan prompt' }] }), false);
+  assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'image', source: 'manual', text: 'A city' }] }), true);
+  const originals = [{ assetId: 'image', source: 'webpage', text: 'A city' }, { assetId: 'video', source: 'webpage', text: 'An ocean' }];
+  assert.equal(hasDistinctMediaPrompts({ ...entry, text: '', mediaPrompts: originals }), true);
+  assert.equal(hasDistinctMediaPrompts({ ...entry, text: '', mediaPrompts: originals.slice(0, 1) }), false);
+});

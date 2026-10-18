@@ -11,7 +11,7 @@ from tempfile import TemporaryDirectory
 
 from playwright.sync_api import expect
 
-from e2e_support import EXTENSION_DIR, base_entry, extension_session, wait_for_async_condition
+from e2e_support import open_library_analysis, copy_analysis_diagnostics, EXTENSION_DIR, base_entry, extension_session, wait_for_async_condition
 
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -477,14 +477,14 @@ def main() -> None:
             "00:01 黑场出现主体，00:03 镜头稳定推进。"
         )
         expect(library.locator(".video-analysis-task-status .analysis-diagnostics")).to_have_count(0)
-        library.locator("#open-settings").dispatch_event("click")
-        library.locator('[data-settings-tab="tasks"]').click()
-        library.locator(".task-diagnostics > summary").click()
-        details = library.locator("#analysis-diagnostics")
-        details.locator("summary").click()
-        expect(details).to_contain_text("HTTP: 200")
-        expect(details).to_contain_text("finish: length")
-        library.get_by_role("button", name="关闭设置", exact=True).click()
+        library.locator("#detail-close").click()
+        open_library_analysis(library)
+        diagnostic = copy_analysis_diagnostics(library)
+        assert "HTTP: 200" in diagnostic
+        assert "finish: length" in diagnostic
+        library.locator("#text-batch-close").click()
+        if library.locator('#share-cancel').is_visible(): library.locator('#share-cancel').click()
+        library.locator('.case-card[data-entry-id="zhipu-local-video-entry"]').click()
         library.set_viewport_size({"width": 390, "height": 844})
         assert analysis_workspace.evaluate("element => element.scrollWidth <= element.clientWidth") is True
         print({

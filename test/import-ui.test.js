@@ -28,11 +28,10 @@ test("add menu has one local import entry and the import dialog chooses files or
   assert.match(source, /class="import-drop-zone"/);
   assert.match(source, /拖入文件或文件夹/);
   assert.match(source, /id="import-choose-files"/);
-  assert.match(source, /自动识别图片、视频、音频、字幕、文档和常用创作源文件/);
   assert.match(source, /id="add-folder"/);
-  assert.match(source, /选择整个文件夹/);
+  assert.match(source, /选择文件夹/);
   assert.match(source, /class="import-folder-link"/);
-  assert.match(source, /id="import-last-job"[^>]*hidden[^>]*>上次导入 · 查看/);
+  assert.match(source, /id="import-last-job"[^>]*hidden[^>]*>查看失败项/);
 });
 
 test("local import dialog includes drag target, confirmation summary, project assignment, auto-analyze, and job controls", () => {
@@ -61,7 +60,7 @@ test("local import dialog includes drag target, confirmation summary, project as
   assert.match(html, /id="import-job-progress"/);
   assert.match(html, /id="import-cancel"/);
   assert.match(html, /id="import-retry"/);
-  assert.match(html, /id="import-undo"/);
+  assert.doesNotMatch(html, /id="import-undo"/);
   assert.match(html, /id="import-start"/);
 });
 
@@ -152,10 +151,10 @@ test("active import restoration and every terminal job action stay wired", () =>
   assert.match(js, /type:\s*"GET_IMPORT_JOB"/);
   assert.match(js, /type:\s*"CANCEL_IMPORT_JOB"/);
   assert.match(js, /type:\s*"RETRY_IMPORT_JOB"/);
-  assert.match(js, /type:\s*"UNDO_IMPORT_JOB"/);
+  assert.doesNotMatch(js, /type:\s*"UNDO_IMPORT_JOB"/);
   assert.match(js, /importViewProject\.addEventListener\("click",\s*viewImportedProject\)/);
   assert.match(js, /importLastJob\.addEventListener\("click",\s*\(\) => void openLatestImportJob\(\)\)/);
-  assert.match(js, /importLastJob\.hidden\s*=\s*!latestImportJob/);
+  assert.match(js, /importLastJob\.hidden[^;]*undoneAt[^;]*status === "failed"/);
   assert.match(js, /selectedCollectionId\s*=\s*collectionId;[\s\S]*?renderGallery\(\);[\s\S]*?importDialog\.close\(\)/);
 });
 
@@ -168,8 +167,8 @@ test("folder restore and ZIP import retry one response loss with the same operat
 });
 
 test("shared ZIP and degraded folders salvage individual failures while verified folders stay strict", () => {
-  const sharedImport = js.slice(js.indexOf("async function importSharedLibraryPackage"), js.indexOf("function createLibraryImportOperationId"));
-  const folderRestore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function importSharedLibraryPackage"));
+  const sharedImport = js.slice(js.indexOf("async function openLibraryPackageBatch"), js.indexOf("function createLibraryImportOperationId"));
+  const folderRestore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function openLibraryPackageBatch"));
   assert.match(sharedImport, /inspectLibraryTransfer\(\{[\s\S]*?sourceType:\s*LIBRARY_TRANSFER_SOURCES\.SHARE_PACKAGE/);
   assert.match(folderRestore, /sourceType:\s*envelope\.mode === "complete"[\s\S]*LIBRARY_TRANSFER_SOURCES\.COMPLETE_BACKUP[\s\S]*LIBRARY_TRANSFER_SOURCES\.RESCUE_BACKUP/);
   assert.match(folderRestore, /inspectFolderBackupEnvelope\(files,\s*\{\s*digest,\s*onProgress:/);

@@ -54,7 +54,7 @@ test("a missing sync location shows a localized recovery action instead of the b
   assert.doesNotMatch(statusBody, /return status\.lastErrorCode/);
 });
 
-test("share-package import is separate from the two backup actions while sync stays collapsed", async () => {
+test("ZIP import uses the local-file entry while settings retain backup and collapsed sync", async () => {
   const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const panel = html.slice(
     html.indexOf('<section id="data-safety-dialog"'),
@@ -63,9 +63,7 @@ test("share-package import is separate from the two backup actions while sync st
 
   assert.match(panel, /id="create-folder-backup"[\s\S]*?data-i18n="备份资料库"/);
   assert.match(panel, /id="restore-folder-backup"[\s\S]*?data-i18n="恢复资料库"/);
-  assert.match(panel, /class="share-package-import"/);
-  assert.match(panel, /id="import-library-package"[^>]*>选择 ZIP/);
-  assert.match(panel, /id="library-package-file"[^>]*accept="\.zip,\.eaglepack,application\/zip"/);
+  assert.doesNotMatch(panel, /share-package-import|import-library-package|library-package-file/);
   assert.doesNotMatch(panel, /create-portable-backup|restore-portable-backup|小型 ZIP|从 ZIP/);
   assert.match(panel, /<details id="sync-settings"/);
   assert.match(panel, /<summary>[\s\S]*?data-i18n="跨设备同步"/);
@@ -84,7 +82,7 @@ test("share-package batch import preserves local configuration and accepts histo
   const migrations = await readFile(new URL("../extension/library-package-migrations.js", import.meta.url), "utf8");
   const format = await readFile(new URL("../extension/library-package-format.js", import.meta.url), "utf8");
   const action = library.slice(
-    library.indexOf("async function importSharedLibraryPackage"),
+    library.indexOf("async function openLibraryPackageBatch"),
     library.indexOf("function backupMediaPaths")
   );
   assert.match(action, /previewLibraryImportInWorker/);
@@ -92,7 +90,7 @@ test("share-package batch import preserves local configuration and accepts histo
   assert.match(action, /APPLY_LIBRARY_IMPORT_BATCH/);
   assert.equal((action.match(/preserveLibraryConfiguration:\s*true/g) ?? []).length, 1);
   assert.match(action, /plan:\s*batch\.preview\.plan/);
-  assert.match(action, /multiple|files\s*=\s*\[\.\.\.\(elements\.libraryPackageFile\.files/);
+  assert.match(action, /files\.map\(\(item\) =>/);
   assert.match(parser, /prepareLibraryPackageDraft\(value\)/);
   assert.match(migrations, /isSupportedLibraryPackageVersion\(value\.version\)/);
   assert.match(format, /SUPPORTED_LIBRARY_PACKAGE_VERSIONS\s*=\s*Object\.freeze\(\[1, 2, 3, 4, 5\]\)/);
@@ -110,7 +108,7 @@ test("multi-ZIP import uses one wide preflight with blocking failures and one ba
     library.indexOf("function createLibraryImportOperationId")
   );
 
-  assert.match(html, /id="library-package-file"[^>]*multiple/);
+  assert.match(html, /id="media-file"[^>]*multiple/);
   assert.match(dialog, /library-package-import-package-count/);
   assert.match(dialog, /library-package-import-case-count/);
   assert.match(dialog, /library-package-import-project-count/);
@@ -164,7 +162,7 @@ test("folder restore exposes safe merge and exact replace with aggregate capacit
   const library = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const restore = library.slice(
     library.indexOf("async function restoreCompleteFolderBackup"),
-    library.indexOf("async function importSharedLibraryPackage")
+    library.indexOf("async function openLibraryPackageBatch")
   );
 
   assert.match(restore, /LIBRARY_TRANSFER_MODES\.SAFE_MERGE/);

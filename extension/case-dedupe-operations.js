@@ -3,19 +3,31 @@ import { moveEntriesToTrash, normalizeTrashState } from './trash.js';
 import { caseOperationFingerprint } from './case-operations.js';
 
 export function duplicateReferenceBlockers(state, requestedIds) {
-  const requested = new Set(requestedIds), blocked = new Set();
-  const walk = (value, key = '') => {
-    if (Array.isArray(value)) { value.forEach(v => walk(v, key)); return; }
-    if (value && typeof value === 'object') { Object.entries(value).forEach(([k, v]) => walk(v, k)); return; }
-    if (typeof value !== 'string' || !/(case|entry|reference|member|source).*ids?$/i.test(key)) return;
-    if (requested.has(value)) blocked.add(value);
-    if (key === 'referenceId') for (const id of requested) if (value.startsWith(`${id}:`)) blocked.add(id);
+  const requested = new Set(requestedIds), blocked = new Map();
+  const add = (id, owner) => {
+    const rows = blocked.get(id) || [];
+    if (!rows.some(row => row.kind === owner.kind && row.id === owner.id)) rows.push(owner);
+    blocked.set(id, rows);
   };
-  for (const c of state.compoundCases || []) for (const id of c.memberEntryIds || []) if (requested.has(id)) blocked.add(id);
-  for (const key of ['composerSessions', 'creativeRuns', 'creativeJobs', 'creativeSkills', 'activeCreativeResult']) walk(state[key]);
+  const walk = (value, owner, key = '') => {
+    if (Array.isArray(value)) { value.forEach(v => walk(v, owner, key)); return; }
+    if (value && typeof value === 'object') { Object.entries(value).forEach(([k, v]) => walk(v, owner, k)); return; }
+    if (typeof value !== 'string' || !/(case|entry|reference|member|source).*ids?$/i.test(key)) return;
+    if (requested.has(value)) add(value, owner);
+    if (key === 'referenceId') for (const id of requested) if (value.startsWith(`${id}:`)) add(id, owner);
+  };
+  for (const c of state.compoundCases || []) for (const id of c.memberEntryIds || []) if (requested.has(id)) {
+    add(id, { kind: '组合案例', id: c.id || '', title: c.title || c.name || '', caseId: c.id || '' });
+  }
+  for (const [key, kind] of [['composerSessions', '创作会话'], ['creativeRuns', '创作记录'], ['creativeJobs', '创作任务'], ['creativeSkills', '创作 Skill'], ['activeCreativeResult', '创作结果']]) {
+    const value = state[key];
+    const rows = Array.isArray(value) ? value : Array.isArray(value?.items) ? value.items : [value];
+    for (const row of rows) if (row) walk(row, { kind, id: row.id || '', title: row.title || row.name || row.callName || row.request?.session?.title || '' });
+  }
   for (const entry of state.entries || []) {
-    // The entry's own identity is not an inbound reference; provenance may refer to another case.
-    walk(entry.agentProvenance); walk(entry.sourceCorrections);
+    // Copies contain their own data; copyOrigin is provenance, not a live dependency.
+    const owner = { kind: '案例来源记录', id: entry.id, title: entry.title || '', caseId: entry.id };
+    walk(entry.agentProvenance, owner); walk(entry.sourceCorrections, owner);
   }
   return blocked;
 }
@@ -47,7 +59,7 @@ export async function planDuplicateCleanup(state, groups) {
         else if (!compared.exact && group.allowDifferent !== true) reason = '案例有差异或原件尚未核对，未自动清理';
         if (!compared.sameProjects && group.allowCrossProject !== true) reason = '跨项目副本需要明确选择';
       }
-      if (reason) skipped.push({ id: row.id, title: entry?.title || row.id, reason });
+      if (reason) skipped.push({ id: row.id, title: entry?.title || row.id, reason, ...(blocked.has(row.id) ? { references: blocked.get(row.id) } : {}) });
       else if (!accepted.includes(row.id)) accepted.push(row.id);
     }
   }
@@ -66,6 +78,11 @@ export function createCaseDedupeOperations({ loadState, storage, commit, enqueue
         return { ...previous.result, replayed: true };
       }
       const state = await loadState(), planned = await planDuplicateCleanup(state, input.groups);
+      if (!planned.accepted.length) {
+        const result = { ok: true, movedEntryIds: [], movedItemIds: [], skipped: planned.skipped };
+        await commit({ [key]: { fingerprint, result } });
+        return result;
+      }
       const moved = moveEntriesToTrash(state, planned.accepted);
       const visionAnalysisUndo = { ...(await storage.get('visionAnalysisUndo')).visionAnalysisUndo };
       planned.accepted.forEach(id => delete visionAnalysisUndo[id]);

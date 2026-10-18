@@ -60,12 +60,25 @@ export function mountReviewFeedback({ container, notes = [], authored = {}, time
     stamped = true; stampPromise = useCurrentTime();
     try { await stampPromise; } finally { refreshTime.disabled = false; }
   });
-  footer.append(times, useRange, refreshTime, save); form.append(text, footer);
+  const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'button-secondary review-feedback-cancel'; cancel.textContent = t('取消'); cancel.hidden = true;
+  cancel.addEventListener('click', () => { if (busy) return; resetEditor(); void useCurrentTime(); text.focus(); });
+  const timing = document.createElement('div'); timing.className = 'review-feedback-timing'; timing.hidden = !timed;
+  timing.append(times, useRange, refreshTime);
+  footer.append(cancel, save); form.append(timing, text, footer);
   const status = document.createElement('p'); status.className = 'review-feedback-status'; status.setAttribute('role', 'status');
   panel.append(header, list, form, status);
-  let currentNotes = notes, busy = false, editingId = null, rangeMode = false, stamped = true, stampPromise = Promise.resolve(), openIntent = 0;
-  const dirty = () => Boolean(text.value.trim());
-  const updateDirty = () => { form.dataset.dirty = String(dirty()); changed(); };
+  let currentNotes = notes, busy = false, editingId = null, editingNote = null, rangeMode = false, stamped = true, stampPromise = Promise.resolve(), openIntent = 0;
+  const dirty = () => Boolean(editingNote || text.value.trim());
+  const updateDirty = () => {
+    form.dataset.dirty = String(dirty());
+    for (const button of list.querySelectorAll?.('[data-note-mutation]') || []) button.disabled = busy || dirty();
+    changed();
+  };
+  function resetEditor() {
+    editingId = editingNote = null; text.value = ''; stamped = false; rangeMode = false;
+    end.hidden = separator.hidden = true; end.value = ''; cancel.hidden = true; save.textContent = t('保存');
+    status.textContent = ''; status.classList.remove('is-error'); updateDirty();
+  }
   form.addEventListener('input', event => {
     if (event.target === text && !stamped && !rangeMode) { stamped = true; stampPromise = useCurrentTime(); }
     if (event.target === start || event.target === end) stamped = true;
@@ -78,7 +91,7 @@ export function mountReviewFeedback({ container, notes = [], authored = {}, time
     catch (error) { report(error); }
     useRange.hidden = !validRange(getRange?.()); changed();
   }
-  const position = installFeedbackPosition(panel, header, report);
+  const position = installFeedbackPosition(panel, header, container, report);
   function renderList() {
     list.replaceChildren();
     for (const note of currentNotes) {
@@ -87,14 +100,25 @@ export function mountReviewFeedback({ container, notes = [], authored = {}, time
       jump.textContent = `${reviewTime(note.startMs)}${note.endMs !== undefined ? `–${reviewTime(note.endMs)}` : ''}`;
       jump.addEventListener('click', () => { void Promise.resolve(seek(note.startMs)).catch(error => report(error)); });
       const content = document.createElement('p'); content.textContent = note.text;
-      const remove = feedbackIcon('删除备注', 'trash-2', t); remove.classList.add('quiet-danger');
+      const edit = feedbackIcon('编辑备注', 'pencil', t); edit.dataset.noteMutation = '';
+      edit.disabled = busy || dirty();
+      edit.addEventListener('click', () => {
+        if (busy || dirty()) return;
+        editingNote = { ...note }; editingId = note.id; text.value = note.text; stamped = true;
+        start.value = String((note.startMs || 0) / 1000); rangeMode = note.endMs !== undefined;
+        end.hidden = separator.hidden = !rangeMode; end.value = rangeMode ? String(note.endMs / 1000) : '';
+        cancel.hidden = false; save.textContent = t('保存修改'); status.textContent = '';
+        updateDirty(); text.focus({ preventScroll: true });
+      });
+      const remove = feedbackIcon('删除备注', 'trash-2', t); remove.dataset.noteMutation = ''; remove.disabled = busy || dirty(); remove.classList.add('quiet-danger');
       remove.addEventListener('click', async () => {
-        if (busy) return; remove.disabled = true;
+        if (busy || dirty()) return; busy = true; updateDirty();
         try { const next = await removeNote(note.id); currentNotes = next; renderList(); changed(); }
-        catch (error) { report(error); remove.disabled = false; }
+        catch (error) { report(error); }
+        finally { busy = false; updateDirty(); }
       });
       if (timed) row.append(jump);
-      row.append(content, remove); list.append(row);
+      row.append(content, edit, remove); list.append(row);
     }
     const labels = { prompt: '创作提示词', summary: '提炼', notes: '备注', purpose: '用途', plan: '方案' };
     for (const [key, value] of Object.entries(authored)) {
@@ -107,7 +131,7 @@ export function mountReviewFeedback({ container, notes = [], authored = {}, time
   function report(error) { status.textContent = t(error.message || '保存失败'); status.classList.add('is-error'); }
   async function open() {
     const intent = ++openIntent;
-    if (!dirty()) {
+    if (!dirty() && !editingId) {
       rangeMode = false; stamped = true;
       const range = getRange?.();
       try { start.value = String(Math.round(await getPosition()) / 1000); }
@@ -129,14 +153,18 @@ export function mountReviewFeedback({ container, notes = [], authored = {}, time
     if (!text.value.trim()) return report(new Error('请填写备注'));
     if (start.value === '' || !start.checkValidity() || !end.checkValidity() || !end.hidden && Number(end.value) <= Number(start.value)) return report(new Error('请填写有效时间'));
     busy = true; save.disabled = true; refreshTime.disabled = true; useRange.disabled = true; text.disabled = true; close.disabled = true;
+    start.disabled = end.disabled = cancel.disabled = true;
+    updateDirty();
+    save.textContent = t('正在保存…');
     editingId ||= `note:${crypto.randomUUID()}`;
     try {
-      const note = { id: editingId, startMs: Math.round(Number(start.value) * 1000), text: text.value,
+      const note = { ...editingNote, id: editingId, startMs: Math.round(Number(start.value) * 1000), text: text.value,
         ...(!end.hidden ? { endMs: Math.round(Number(end.value) * 1000) } : {}) };
+      if (end.hidden) delete note.endMs;
       currentNotes = await saveNote(note);
-      editingId = null; text.value = ''; stamped = false; rangeMode = false; end.hidden = separator.hidden = true; end.value = ''; updateDirty(); status.textContent = ''; status.classList.remove('is-error'); renderList();
+      resetEditor(); renderList();
     } catch (error) { report(error); }
-    finally { busy = false; save.disabled = false; refreshTime.disabled = false; useRange.disabled = false; text.disabled = false; close.disabled = false; text.focus({ preventScroll: true }); changed(); }
+    finally { busy = false; save.textContent = t(editingNote ? '保存修改' : '保存'); start.disabled = end.disabled = cancel.disabled = false; updateDirty(); save.disabled = false; refreshTime.disabled = false; useRange.disabled = false; text.disabled = false; close.disabled = false; text.focus({ preventScroll: true }); changed(); }
   }
   form.addEventListener('submit', event => { event.preventDefault(); void submit(); });
   renderList();
@@ -150,41 +178,42 @@ export function mountReviewFeedback({ container, notes = [], authored = {}, time
   };
 }
 
-// Keep feedback above the media toolbar; moving the header never drags a case.
-function installFeedbackPosition(panel, header, failed) {
-  let offset = null, saved = null, disposed = false;
-  const parent = panel.parentElement;
-  parent?.classList.add('ui-floating-panel-positioner');
+// Keep the media owner in place; only the visible tool is lifted above both panes.
+function installFeedbackPosition(panel, header, owner, failed) {
+  let offset = null, saved = null, disposed = false, host = null;
   function place() {
-    if (panel.hidden || !parent?.getBoundingClientRect) return;
-    const root = parent.closest('.detail-visual-gallery, #temporary-review-dialog');
+    if (panel.hidden || disposed) return;
+    const root = owner.closest('#detail-drawer, #temporary-review-dialog');
+    if (!root) return;
+    if (!host) {
+      host = owner.parentElement === root ? owner : document.createElement('div');
+      host.classList.add('review-feedback-positioner', 'ui-floating-panel-positioner'); host.style.inset = 'auto';
+      if (host !== owner) root.append(host);
+      host.append(panel);
+    }
     const bounds = root.getBoundingClientRect();
-    const toolbar = root.querySelector('.detail-visual-caption, #temporary-review-actions');
-    const limit = Math.min(bounds.height, toolbar ? toolbar.getBoundingClientRect().top - bounds.top : bounds.height);
-    const gap = Number.parseFloat(getComputedStyle(panel).paddingTop);
-    const close = root.closest('#detail-drawer, #temporary-review-dialog')?.querySelector('#detail-close, #temporary-review-close');
+    const gap = Number.parseFloat(getComputedStyle(panel).paddingTop) || 12;
+    const close = root.querySelector('#detail-close, #temporary-review-close');
     const top = Math.max(gap, close ? close.getBoundingClientRect().bottom - bounds.top + gap : gap);
-    panel.style.maxHeight = `${Math.max(0, limit - top - gap)}px`;
-    const width = panel.getBoundingClientRect().width;
-    const height = panel.getBoundingClientRect().height;
+    panel.style.maxHeight = `${Math.max(0, bounds.height - top - gap)}px`;
+    const { width, height } = panel.getBoundingClientRect();
     const x = Math.max(gap, Math.min(offset?.x ?? (saved ? saved.left * window.innerWidth - bounds.left : bounds.width - width - gap), bounds.width - width - gap));
-    const y = Math.max(top, Math.min(offset?.y ?? (saved ? saved.top * window.innerHeight - bounds.top : top), limit - height - gap));
-    parent.style.inset = 'auto'; parent.style.left = `${x}px`; parent.style.top = `${y}px`;
+    const y = Math.max(top, Math.min(offset?.y ?? (saved ? saved.top * window.innerHeight - bounds.top : top), bounds.height - height - gap));
+    host.style.left = `${x}px`; host.style.top = `${y}px`;
     return { left: bounds.left + x, top: bounds.top + y };
   }
   const releaseDrag = installPanelDrag(header, {
-    getPosition: () => ({ left: Number.parseFloat(parent.style.left), top: Number.parseFloat(parent.style.top) }),
+    getPosition: () => ({ left: Number.parseFloat(host?.style.left) || 0, top: Number.parseFloat(host?.style.top) || 0 }),
     setPosition({ left, top }) { offset = { x: left, y: top }; return place(); },
     onEnd(position) {
-      const rect = position;
-      saved = { left: rect.left / window.innerWidth, top: rect.top / window.innerHeight }; offset = null;
+      if (!position) return;
+      saved = { left: position.left / window.innerWidth, top: position.top / window.innerHeight }; offset = null;
       void savePanelPosition('reviewFeedback', panel, position).catch(failed);
     }
   });
   const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(place) : null;
-  if (parent) observer?.observe(panel);
-  const root = parent?.closest?.('.detail-visual-gallery, #temporary-review-dialog');
-  if (root) observer?.observe(root);
+  observer?.observe(panel);
+  window.addEventListener('resize', place);
   return { place, async restore() { const value = await savedPanelPosition('reviewFeedback'); if (!disposed && !offset) saved = value; },
-    dispose() { disposed = true; observer?.disconnect(); releaseDrag(); } };
+    dispose() { disposed = true; observer?.disconnect(); window.removeEventListener('resize', place); releaseDrag(); if (host && host !== owner) host.remove(); } };
 }

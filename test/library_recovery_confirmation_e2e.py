@@ -16,9 +16,11 @@ def main():
         setup.evaluate('''async later=>{
           const storage=(await import('./library-storage.js')).getLibraryStorage();
           const {createLibraryReplacementRecoveryPoint}=await import('./library-recovery-point.js');
+          const {createComposerSession}=await import('./composer.js');
+          await storage.set({composerSessions:[createComposerSession({id:'previous-chat',title:'Previous chat',currentInstruction:'Old unsent'})]});
           const saved=await chrome.runtime.sendMessage({type:'GET_FOLDER_BACKUP_STATE'});
           const shared={...saved.entries.find(e=>e.id==='shared'),text:'后续编辑必须说明'};
-          await storage.set({entries:[shared,{...later,schemaVersion:28}],libraryReplacementRecoveryPoint:createLibraryReplacementRecoveryPoint(saved)});
+          await storage.set({composerSessions:[createComposerSession({id:'later-chat',title:'Later chat',currentInstruction:'New unsent'})],entries:[shared,{...later,schemaVersion:28}],libraryReplacementRecoveryPoint:createLibraryReplacementRecoveryPoint(saved)});
         }''',later)
         page=run.open_page('library.html')
         expect(page.locator('body')).to_have_attribute('data-library-state','ready')
@@ -50,6 +52,9 @@ def main():
         expect(page.locator('#promptdirector-app-dialog')).to_have_count(0)
 
         dialog=preview()
+        expect(dialog).to_contain_text('将移出 1 个对话')
+        expect(dialog).to_contain_text('将恢复 1 个对话')
+        expect(dialog).to_contain_text('未发送草稿：1 → 1')
         expect(dialog).to_contain_text('将从当前库移出 1 个案例')
         expect(dialog).to_contain_text('将覆盖 1 个案例')
         expect(dialog).to_contain_text('将恢复 1 个案例')

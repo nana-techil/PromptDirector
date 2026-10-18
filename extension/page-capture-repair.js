@@ -92,7 +92,7 @@ export async function planPageCaptureRepair(entry, candidate, hasBlob) {
   let knownText = String(entry.text || "");
   for (const block of candidate.textBlocks || []) {
     const text = String(block.text || "").trim();
-    if (!block.id?.startsWith("added:") || !text || knownText.includes(text)) continue;
+    if (!/^(?:added|agent):/u.test(block.id || "") || !text || knownText.includes(text)) continue;
     textAdditions.push({ ...block, text });
     knownText += `\n\n${text}`;
   }

@@ -155,6 +155,7 @@ export function pickPageContent(options = {}) {
       } else wrapper.append(selectedCopy);
       for (const node of document.querySelectorAll('[data-promptdirector-capture-template]')) node.removeAttribute('data-promptdirector-capture-template');
       const marker = crypto.randomUUID();
+      selected.setAttribute('data-promptdirector-selected-content', marker);
       // Hover previews can remove the video while keeping its poster in this
       // exact container. Preserve media identity without widening the selection.
       const mediaSources = selected.matches('img,video')
@@ -162,7 +163,7 @@ export function pickPageContent(options = {}) {
       let anchor = mediaSources.length ? selected.parentElement || selected.getRootNode().host : selected;
       while (anchor.getRootNode().host) anchor = anchor.getRootNode().host;
       anchor.setAttribute('data-promptdirector-capture-template', marker);
-      finish({ html: wrapper.innerHTML, selectionTemplate: { sourceUrl: location.href, marker,
+      finish({ html: wrapper.innerHTML, selectedContentMarker: marker, selectionTemplate: { sourceUrl: location.href, marker,
         ...(mediaSources.length ? { mediaSources } : {}) } });
     };
     const key = event => { if (event.key === "Escape") { event.preventDefault(); finish({ cancelled: true }); } };
@@ -171,4 +172,30 @@ export function pickPageContent(options = {}) {
     document.addEventListener("click", click, true);
     document.addEventListener("keydown", key, true);
   });
+}
+
+// Validate the actual selected pixels around a viewport screenshot. Layout changes
+// must request a new selection rather than save a different part of the page.
+export function validateSelectedCaptureRectangles(selections, cleanup = false) {
+  const nodes = selections.map(selection => document.querySelector(`[data-promptdirector-selected-pixels="${CSS.escape(String(selection.marker))}"]`)).filter(Boolean);
+  const visit = root => {
+    const children = root.localName === 'slot' ? root.assignedElements({ flatten: true }) : (root.shadowRoot || root).children;
+    for (const node of children || []) {
+      if (node.hasAttribute('data-promptdirector-selected-pixels')) nodes.push(node);
+      visit(node);
+    }
+  };
+  if (nodes.length !== selections.length) visit(document);
+  return selections.map(selection => {
+    const node = nodes.find(item => item.getAttribute('data-promptdirector-selected-pixels') === selection.marker);
+    if (!node) return false;
+    const bounds = node.getBoundingClientRect();
+    const rect = { x: Math.max(0, bounds.x), y: Math.max(0, bounds.y),
+      width: Math.max(0, Math.min(innerWidth, bounds.right) - Math.max(0, bounds.x)),
+      height: Math.max(0, Math.min(innerHeight, bounds.bottom) - Math.max(0, bounds.y)) };
+    const unchanged = innerWidth === selection.viewportWidth && innerHeight === selection.viewportHeight
+      && Object.keys(rect).every(key => rect[key] === selection.rect[key]);
+    if (cleanup) node.removeAttribute('data-promptdirector-selected-pixels');
+    return unchanged;
+  }).every(Boolean);
 }

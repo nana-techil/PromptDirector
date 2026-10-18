@@ -59,7 +59,7 @@ def main():
         page.locator("#import-start").click()
         expect(page.locator("#feedback")).to_contain_text("导入完成", timeout=20000)
         page.locator(".case-card").filter(has_text=source.name).click()
-        reader = page.locator(".document-text-reader .markdown-reader")
+        reader = page.locator(".article-document-reader .markdown-reader")
         expect(reader).to_contain_text("文档末尾校验")
         expect(reader.locator("table")).to_contain_text("出发吧")
         expect(reader.locator("img")).to_have_count(1)
@@ -74,7 +74,7 @@ def main():
         assert "document-image:0" in result["text"], result
         assert result["text"].index("创作目标") < result["text"].index("document-image:0") < result["text"].index("图片后的脚本说明")
         with page.expect_download() as download:
-            page.locator(".detail-visual-actions").get_by_role("button", name="下载副本").click()
+            page.locator(".article-editor-toolbar").get_by_role("button", name="下载副本").click()
         assert hashlib.sha256(Path(download.value.path()).read_bytes()).digest() == hashlib.sha256(source.read_bytes()).digest()
         page.locator("#detail-close").click()
         expected = {"archive.xlsx": "content:reference", "source.psd": "content:source-file", "edit.prproj": "content:source-file", "voice.wav": "content:audio", "broken.docx": "content:reference"}
@@ -91,14 +91,14 @@ def main():
         expect(page.locator(".detail-document")).to_contain_text("原文件已保存")
         assert "binary preservation fixture" not in page.locator(".detail-document").inner_text()
         with page.expect_download() as original:
-            page.locator(".detail-visual-actions").get_by_role("button", name="下载副本").click()
+            page.locator(".article-editor-toolbar").get_by_role("button", name="下载副本").click()
         assert Path(original.value.path()).read_bytes() == b"binary preservation fixture\x00\xff"
         page.locator("#detail-close").click()
         page.locator(".case-card").filter(has_text="broken.docx").click()
         expect(page.locator(".detail-document")).to_contain_text("正文未提取")
         page.locator("#detail-close").click()
         page.locator(".case-card").filter(has_text=source.name).click()
-        expect(page.locator(".document-text-reader img")).to_have_count(1)
+        expect(page.locator(".article-document-reader img")).to_have_count(1)
         page.screenshot(path="/tmp/pd-docx-reader.png", full_page=True)
         print("PASS: six file kinds, DOCX text/table/image, failed-extraction visibility, source classifications and byte-identical DOCX/XLSX/PSD/PR downloads")
 

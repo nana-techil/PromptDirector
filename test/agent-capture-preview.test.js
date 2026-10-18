@@ -466,3 +466,72 @@ test('reading more sources after saving exposes the read-only batch before an ag
   }
   assert.equal(f.commits.length, 1, 'reading next sources must not save or reopen the old transaction');
 });
+
+test('a failed save can be retried after library scope changes without leaving frozen originals locked', async () => {
+  const f = fixture();
+  f.options.commit = async () => { f.changeLibrary(); throw new Error('download failed'); };
+  const api = createAgentCapturePreview(f.options);
+  await api.execute('prepare_capture', { tabId: 1 }, 'recovery', f.scope);
+  const preview = await api.execute('update_capture', { captureId: 'recovery', expectedRevision: 1, selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: [] }] }, 'select', f.scope);
+  await assert.rejects(api.execute('save_capture', { captureId: 'recovery', expectedRevision: preview.revision }, 'save', f.scope));
+  assert.equal(f.data['agentCapture:recovery'].state, 'preview');
+  assert.equal(f.data['agentCapture:recovery'].batch.candidates[0].contentText, 'Full original body');
+});
+
+test('worker restart reconciles the atomic save receipt and never replays committed capture work', async () => {
+  const f = fixture();
+  const api = createAgentCapturePreview(f.options);
+  await api.execute('prepare_capture', { tabId: 1 }, 'recovery', f.scope);
+  await api.execute('update_capture', { captureId: 'recovery', expectedRevision: 1, selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: [] }] }, 'select', f.scope);
+  const record = f.data['agentCapture:recovery'];
+  record.state = 'saving'; record.lastSaveRequestId = 'save';
+  record.commitResult = { ok: true, results: [{ candidateId: 'original', status: 'saved', entryId: 'saved' }] };
+  const restarted = createAgentCapturePreview(f.options);
+  const recovered = await restarted.read({ captureId: 'recovery' });
+  assert.equal(recovered.state, 'completed');
+  assert.equal(recovered.results[0].entryId, 'saved');
+  assert.equal(f.commits.length, 0);
+});
+
+test('worker restart without a commit receipt releases only the interrupted preview for retry', async () => {
+  const f = fixture();
+  await f.api.execute('prepare_capture', { tabId: 1 }, 'recovery', f.scope);
+  f.data['agentCapture:recovery'].state = 'saving';
+  const recovered = await createAgentCapturePreview(f.options).read({ captureId: 'recovery' });
+  assert.equal(recovered.state, 'preview');
+  assert.equal(f.commits.length, 0);
+});
+
+test('reading during an active save keeps it locked and a lost final-state write recovers the atomic commit receipt', async () => {
+  const f = fixture(); let finish, entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  f.options.commit = async (_batch, _metadata, _progress, receipt) => {
+    entered(); await new Promise(resolve => { finish = resolve; });
+    const result = { ok: true, results: [{ candidateId: 'original', status: 'saved', entryId: 'saved' }] };
+    await f.options.storage.set({ [receipt.key]: receipt.value(result) });
+    return result;
+  };
+  const api = createAgentCapturePreview(f.options);
+  await api.execute('prepare_capture', { tabId: 1 }, 'recovery', f.scope);
+  await api.execute('update_capture', { captureId: 'recovery', expectedRevision: 1, selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: [] }] }, 'select', f.scope);
+  const save = api.execute('save_capture', { captureId: 'recovery', expectedRevision: 2 }, 'save', f.scope);
+  await started;
+  assert.equal((await api.read({ captureId: 'recovery' })).state, 'saving');
+  const set = f.options.storage.set;
+  f.options.storage.set = async values => { if (values['agentCapture:recovery']?.state === 'completed') throw new Error('state write failed'); return set(values); };
+  finish(); await assert.rejects(save, /state write failed/u);
+  assert(f.data['agentCapture:recovery'].commitResult.results[0].entryId);
+  f.options.storage.set = set;
+  assert.equal((await createAgentCapturePreview(f.options).read({ captureId: 'recovery' })).state, 'completed');
+});
+
+test('an older interrupted preview adopts its completed task receipt before allowing another save', async () => {
+  const { AGENT_JOB_PREFIX } = await import('../extension/agent-protocol.js');
+  const f = fixture(); await f.api.execute('prepare_capture', { tabId: 1 }, 'older', f.scope);
+  await f.api.execute('update_capture', { captureId: 'older', expectedRevision: 1, selections: [{ candidateId: 'original', includeText: true, selectedMediaIds: [] }] }, 'select', f.scope);
+  f.data['agentCapture:older'].state = 'saving'; f.data['agentCapture:older'].lastSaveRequestId = 'already-saved';
+  f.data[AGENT_JOB_PREFIX + 'already-saved'] = { state: 'completed', libraryId: f.scope.libraryId,
+    result: { ok: true, captureId: 'older', results: [{ candidateId: 'original', entryId: 'existing', status: 'saved' }] } };
+  const record = await createAgentCapturePreview(f.options).read({ captureId: 'older' });
+  assert.equal(record.state, 'completed'); assert.equal(record.results[0].entryId, 'existing'); assert.equal(f.commits.length, 0);
+});

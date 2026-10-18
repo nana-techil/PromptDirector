@@ -29,7 +29,7 @@ export const PLUGIN_HELP = {
     {name:'精选案例库',url:'curated.html',usage:'查看在线主题和案例预览，按需导入案例包。检查目录不会导入、下载原图或覆盖本地案例。'},
     {name:'标签整理',url:'library.html',usage:'案例详情可以编辑标签。创作台可读取现有标签、结合本轮资料提出建议，确认后添加到原案例。'},
     {name:'模型与看图',url:'library.html',usage:'能力取决于当前服务和模型。支持看图时直接使用本轮选定原图，无须先调用另一模型转成文字；不支持时可使用已有文字或切换模型。模型本身不能获得整库图片。'},
-    {name:'数据与任务',url:'library.html',usage:'采集、ZIP 导入导出、备份恢复和长任务有各自界面。创作台当前工具不执行删除资料、安装更新、备份恢复或修改账户配置；可说明路径，不能声称已经操作。'}
+    {name:'数据与任务',url:'library.html',usage:'采集、ZIP 导入导出、备份恢复和长任务有各自界面。启用资料库工具后，创作台可按用户明确委托将指定案例移入可恢复的回收站；先读取当前版本，成功回执后才可称完成。当前工具不执行永久删除、安装更新、整库备份恢复或修改账户配置；可说明路径，不能声称已经操作。'}
   ]
 };
 export function createComposerWorkspaceTools({session,caseTools,loadState,loadCurated,vision,invokeSkill,invokeSkillTransfer,readSkillBlob,onEvent=async()=>{},onRequest}) {

@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+import { ASSET_IMPORT_FAILURE_CODES } from "../extension/resource-limits.js";
 
 const js = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
 const css = await readFile(new URL("../extension/library.css", import.meta.url), "utf8");
 
 test("modern file and folder pickers preserve handles and relative paths before falling back", () => {
@@ -69,7 +70,7 @@ test("project share preflight uses the same compound-complete member selection a
 });
 
 test("share package import keeps archive and expanded-entry limits independent", () => {
-  const imported = js.slice(js.indexOf("async function importSharedLibraryPackage"), js.indexOf("function backupMediaPaths"));
+  const imported = js.slice(js.indexOf("async function openLibraryPackageBatch"), js.indexOf("function backupMediaPaths"));
   assert.match(imported, /const limits = \{ \.\.\.LIBRARY_TRANSFER_LIMITS \}/);
   assert.doesNotMatch(imported, /max(?:Archive|File|Image|Video)Bytes:\s*file\.size/);
   assert.match(imported, /openZipBlob\(file, limits\)/);
@@ -79,7 +80,7 @@ test("share package import keeps archive and expanded-entry limits independent",
 });
 
 test("folder restore derives its media budget before strict or rescue inspection", () => {
-  const restore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function importSharedLibraryPackage"));
+  const restore = js.slice(js.indexOf("async function restoreCompleteFolderBackup"), js.indexOf("async function openLibraryPackageBatch"));
   assert.match(restore, /largestMediaBytes = backupMediaSizes\.reduce/);
   assert.match(restore, /maxFileBytes: largestMediaBytes/);
   assert.match(restore, /maxImageBytes: largestMediaBytes/);
@@ -91,6 +92,28 @@ test("folder restore derives its media budget before strict or rescue inspection
   assert.doesNotMatch(restore, /maxFileBytes: Number\.MAX_SAFE_INTEGER/);
 });
 
-test("import copy tells creators that unsupported formats can remain linked", () => {
-  assert.match(html, /不支持的格式仍可保留本机链接/);
+test("an unsupported file offers an explicit local-link action with its preservation boundary", () => {
+  const source = js.slice(js.indexOf("function createSkippedImportRow("), js.indexOf("async function preserveUnsupportedImportReference("));
+  const calls = [];
+  const element = (tag, className = '', textContent = '') => ({
+    tag, className, textContent, children: [], listeners: {},
+    append(...children) { this.children.push(...children); },
+    addEventListener(name, callback) { this.listeners[name] = callback; }
+  });
+  const createRow = vm.runInNewContext(`${source}; createSkippedImportRow`, {
+    Blob, ASSET_IMPORT_FAILURE_CODES, document: { createElement: element },
+    el: element, textEl: element, rawTextEl: element, t: value => value,
+    preserveUnsupportedImportReference: (...args) => calls.push(args)
+  });
+  const item = { name: 'source.unknown', reason: 'Unsupported format',
+    code: ASSET_IMPORT_FAILURE_CODES.UNSUPPORTED_FORMAT, file: new Blob(['original source']) };
+  const row = createRow(item);
+  const button = row.children.find(child => child.tag === 'button');
+  assert.equal(button.textContent, '保留本机链接');
+  assert.match(button.title, /不复制或执行源文件/);
+  assert.equal(calls.length, 0, 'displaying an unsupported file must not preserve it without a user action');
+  button.listeners.click();
+  assert.deepEqual(calls, [[item, button]]);
+  assert(!createRow({ ...item, file: undefined }).children.some(child => child.tag === 'button'),
+    'missing source files must not offer a link that cannot be retained');
 });

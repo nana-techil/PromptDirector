@@ -56,3 +56,30 @@ test('a replaced file or symlink is not deleted using an older ownership receipt
   assert.equal((await sweepTransferCache(directory)).removed, 0);
   assert.equal(await readFile(original, 'utf8'), 'keep');
 });
+
+test('a dead owner lease is reclaimed without waiting or deleting its original; a live owner remains protected', async t => {
+  const { mkdir } = await import('node:fs/promises');
+  const directory = await mkdtemp(join(tmpdir(), 'pd-cache-lease-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'original'); await writeFile(path, 'keep');
+  await mkdir(path + '.lease');
+  await writeFile(join(path + '.lease', 'owner.json'), JSON.stringify({ pid: process.pid, token: 'dead' }));
+  const release = await leaseCacheFile(path, { ownerAlive: () => false });
+  assert.equal(typeof release, 'function');
+  assert.equal(await readFile(path, 'utf8'), 'keep');
+  assert.equal(await leaseCacheFile(path), null, 'the newly acquired current-process lease cannot be stolen');
+  await release();
+});
+
+test('concurrent crash-lease recovery grants at most one reader and preserves a live owner regardless of age', async t => {
+  const { mkdir, utimes } = await import('node:fs/promises');
+  const directory = await mkdtemp(join(tmpdir(), 'pd-cache-race-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'original'); await writeFile(path, 'keep'); await mkdir(path + '.lease');
+  await writeFile(join(path + '.lease', 'owner-dead.json'), JSON.stringify({ pid: 2147483647 }));
+  const results = await Promise.all(Array.from({ length: 10 }, () => leaseCacheFile(path)));
+  assert.equal(results.filter(Boolean).length, 1);
+  const old = new Date(Date.now() - CACHE_IDLE_MS * 2); await utimes(path + '.lease', old, old);
+  assert.equal(await leaseCacheFile(path), null, 'long running real readers stay protected');
+  await results.find(Boolean)();
+});

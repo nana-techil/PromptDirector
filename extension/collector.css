@@ -4,9 +4,6 @@ body { min-width: 320px; }
 body.capture-assistant-open { overflow: hidden; }
 body.capture-assistant-open main { height: 100dvh; padding: 12px; grid-template-rows: auto minmax(0, 1fr); grid-template-columns: minmax(0, 1fr); gap: 12px; }
 body.capture-assistant-open main > :not(.collector-header):not(.capture-assistant-panel):not(dialog) { display: none; }
-body.capture-assistant-open .library-entry { width: 36px; min-height: 36px; padding: 8px; }
-body.capture-assistant-open .library-entry strong,
-body.capture-assistant-open .library-entry > .ui-icon { display: none; }
 body.capture-assistant-open .collector-header .icon-button[aria-pressed="true"] { color: var(--accent-ink); background: var(--selection); }
 .capture-assistant-panel { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 12px; }
 .capture-assistant-chats { font-size: 12px; }
@@ -77,21 +74,6 @@ main {
   letter-spacing: 0;
 }
 .brand .product-brand-tagline { margin: 1px 0 0; color: var(--muted); font-size: 10px; font-weight: 550; }
-
-.library-entry {
-  display: flex;
-  width: 100%;
-  min-height: 44px;
-  align-items: center;
-  justify-content: space-between;
-  border-color: var(--line);
-  padding: 7px 11px;
-  text-align: left;
-  box-shadow: none;
-}
-.library-entry > span:first-child { display: flex; align-items: center; gap: 8px; }
-.library-entry strong { font-size: 12px; }
-.library-entry .ui-icon { width: 17px; height: 17px; }
 
 .target-banner {
   border: 1px solid var(--selection-edge);
@@ -560,9 +542,6 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .collector-header { min-height: 42px; }
 .brand { gap: 9px; }
 .brand img { width: 36px; height: 36px; border-radius: 7px; }
-.library-entry { min-height: 44px; border-radius: var(--ui-control-radius); padding: 7px 11px; background: var(--card); color: var(--ink); }
-.library-entry:hover:not(:disabled) { border-color: var(--selection-edge); background: var(--selection-hover); }
-.library-entry > .ui-icon { color: var(--muted); }
 .target-banner, .other-capture-methods, .fragment-card, .visual-card, .duplicate-panel { border-radius: 7px; }
 .start-state { gap: 12px; padding: 14px; }
 .start-copy { text-align: left; margin-inline: 0; }
@@ -590,8 +569,11 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .collector-header { display: flex; align-items: center; gap: 8px; }
 .collector-header .brand { flex: 1; min-width: 0; }
 .collector-header .product-brand-tagline { display: none; }
-.collector-header .library-entry { width: 36px; min-width: 36px; min-height: 36px; padding: 8px; margin: 0; }
-.collector-header .library-entry strong, .collector-header .library-entry > svg { display: none; }
+.collector-header .product-brand-copy { min-width: 0; }
+.collector-header .product-brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.collector-header .collector-nav-link { display: inline-flex; align-items: center; justify-content: center; gap: 5px; width: auto; min-width: 0; min-height: 36px; padding: 0 8px; margin: 0; border: 1px solid var(--line); border-radius: var(--ui-control-radius); background: transparent; box-shadow: none; color: var(--ink); font-size: 11px; font-weight: 400; white-space: nowrap; }
+.collector-header .collector-nav-link:hover:not(:disabled) { background: var(--ui-hover); }
+.collector-header .collector-nav-link .ui-icon { width: 16px; height: 16px; }
 .normal-start .capture-actions { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .normal-start .other-capture-methods { display: contents; }
 .normal-start .capture-actions > button, .normal-start .capture-actions .other-capture-methods > button {
@@ -637,7 +619,7 @@ main { gap: 12px; padding: 12px 12px max(82px, calc(var(--collector-footer-space
 .page-capture-text-remove:hover, .page-capture-text-remove:focus-visible { opacity: 1; }
 
 #capture-metadata { padding-block: 10px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-#capture-metadata #content-type { width: auto; max-width: 13ch; min-height: 30px; padding: 4px 8px; font-size: 11px; white-space: nowrap; }
+#capture-metadata #content-type { width: auto; max-width: 100%; min-height: 30px; padding: 4px 8px; font-size: 11px; white-space: nowrap; }
 #capture-metadata .detail-project-summary-text { max-width: 16ch; }
 #capture-metadata > .detail-project-menu { min-width: 0; max-width: calc(100% - 132px); }
 #capture-metadata .detail-project-popover { width: min(430px, calc(100vw - 28px)); }

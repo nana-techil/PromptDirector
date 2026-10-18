@@ -36,7 +36,7 @@ test("curated discovery keeps the pack wall concise and opens a separate read-on
   assert.match(html, /id="case-detail-next"/);
   assert.doesNotMatch(html, /save-theme|theme-grid|themes-view|cases-view|更多|版本|更新日期|摘要/);
   assert.match(page, /element\("article", "pack-card"\)/);
-  assert.match(page, /element\("h2", "", item\.title\)/);
+  assert.match(page, /element\("h2", "", curatedPackTitle\(item, currentLocale\(\)\)\)/);
   assert.match(page, /meta\.append\(element\("span", "", item\.author\), element\("span", "", `\$\{item\.caseCount\}/);
   assert.match(page, /actions\.append\(download, follow, copyLink\)/);
   assert.doesNotMatch(page, /Composer|composer|以此创作|openComposer|promptVersions/);
@@ -83,8 +83,7 @@ test("search, filters, ordering, following and public deep links use public meta
   assert.match(page, /right\.updatedAt/);
   assert.match(page, /state\.metrics\.downloads\[right\.id\]/);
   assert.match(page, /elements\.sortDownloads\.disabled = !state\.metrics/);
-  assert.match(page, /url\.searchParams\.set\("pack", id\)/);
-  assert.match(page, /new URL\(CURATED_PUBLIC_SITE_URL\)/);
+  assert.match(page, /curatedPublicUrl\(currentLocale\(\), "", \{ pack: id \}\)/);
   assert.match(page, /curatedSourceKey\(\{\s*curatedOrigin: \{ packageId: item\.packageId, sourceEntryId: previewEntry\.id \}/);
   assert.doesNotMatch(page, /粉丝|like|comment|浏览量/);
 });

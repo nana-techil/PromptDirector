@@ -1,4 +1,5 @@
 import { normalizeArticleDocument, articleDocumentText } from './article-document.js';
+import { captureSectionRanges, captureGroupRemainder, captureGroupTextBlocks } from './capture-group-boundaries.js';
 
 // Split only when repeated source boundaries contain evidence of independent prompt/image cases.
 // Keep uncertain fragments separate so adjacency never silently invents a prompt association.
@@ -25,7 +26,7 @@ export function splitArticleCases(candidate) {
   for (const level of [1,2,3,4,5,6,0]) {
     const starts = top.flatMap((block,index) => isTitle(block) && (level ? block.kind === 'heading' && block.level === level : block.kind === 'paragraph') ? [index] : []);
     if (starts.length < 2) continue;
-    const proposal = starts.map((start,index) => ({ start, end: starts[index+1] ?? top.length }));
+    const proposal = captureSectionRanges(top, starts, level);
     if (proposal.filter(({start,end}) => {
       const parts = expand(top.slice(start,end));
       return hasMedia(parts) && hasPrompt(parts);
@@ -47,14 +48,16 @@ export function splitArticleCases(candidate) {
     groups.push(makeGroup(top[start].text, parts, groups.length, !hasMedia(parts)));
   }
   if (groups.length < 2) return [];
-  const remainder = blocks.filter(block => !used.has(block.id));
-  if (remainder.length) groups.push(makeGroup('未分组内容 · ' + candidate.title, remainder, groups.length, true));
+  const usedMedia = new Set(groups.flatMap(group => group.media.map(item => item.id)));
+  const remainder = captureGroupRemainder(candidate, blocks, used, usedMedia);
+  if (remainder) groups.push(makeGroup('未分组内容 · ' + candidate.title, remainder.parts, groups.length, true, remainder));
   return groups;
 
-  function makeGroup(title, parts, index, review) {
+  function makeGroup(title, parts, index, review, remainder = null) {
     const articleDocument = normalizeArticleDocument({blocks:parts.map((block, sourceOrder) => ({...block,sourceOrder}))});
     const selectedIds = new Set(parts.flatMap(block => block.assetId ? [block.assetId] : []));
-    const media = (candidate.media || []).filter(media => selectedIds.has(media.id));
+    const media = remainder?.media || (candidate.media || []).filter(media => selectedIds.has(media.id));
+    const assetIds = new Set(media.map(item => item.id));
     return {
       ...candidate,
       id: `${candidate.id}:section:${index}`,
@@ -63,13 +66,13 @@ export function splitArticleCases(candidate) {
       contentText: articleDocumentText(articleDocument),
       contentHtml: '',
       articleDocument,
-      textBlocks: parts.filter(block => block.text && !owned.has(block.id)).map(block => ({id:block.id,text:block.text,kind:block.kind,sourceOrder:block.sourceOrder})),
+      textBlocks: captureGroupTextBlocks(articleDocument?.blocks || [], owned),
       media,
-      possibleOmissions: [], supplements: [],
+      possibleOmissions: remainder?.possibleOmissions || [], supplements: remainder?.supplements || [],
       batchStructureStatus: review ? 'review' : 'matched',
       sourceFacts: {...candidate.sourceFacts, pageType:'artwork', itemId:`${candidate.sourceFacts?.itemId || candidate.id}:section:${index}`},
       region: candidate.region ? {...candidate.region, contentTargets:(candidate.region.contentTargets || []).filter(target =>
-        target.articleBlockIds?.some(id=>parts.some(block=>block.id===id)) || target.mediaIds?.some(id=>selectedIds.has(id)))} : null
+        target.articleBlockIds?.some(id=>parts.some(block=>block.id===id)) || target.mediaIds?.some(id=>assetIds.has(id)))} : null
     };
   }
 }

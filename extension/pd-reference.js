@@ -35,9 +35,7 @@ export function pdReferenceLink(reference, linkBase) {
   return url.href.replaceAll('(', '%28').replaceAll(')', '%29');
 }
 
-// Rich text names the case; native file/URI receivers retain the original.
-// On granted web pages, the receiver adapts the private file descriptor into
-// a File without making rich-text Agent hosts prioritize an attachment.
+// File-bearing drags prioritize the original; text-only cases retain their reference.
 export function setPdReferenceDragData(dataTransfer, { libraryId, caseId, assetId = '', name, file, linkBase }) {
   const reference = pdReference({ libraryId, caseId, assetId });
   const link = linkBase ? pdReferenceLink(reference, linkBase) : reference;
@@ -49,12 +47,17 @@ export function setPdReferenceDragData(dataTransfer, { libraryId, caseId, assetI
   dataTransfer.setData('application/x-promptdirector-case', caseId);
   dataTransfer.setData('application/x-promptdirector-reference', reference);
   if (file?.url) dataTransfer.setData('application/x-promptdirector-file', JSON.stringify({ url: file.url, name: file.name, mimeType: file.mimeType }));
-  dataTransfer.setData('text/plain', file?.url || `[${markdownLabel}](${link})`);
-  const fileHtml = !file?.url ? '' : file.kind === 'image'
-    ? `<img src="${escapeHtml(file.url)}" hidden aria-hidden="true" alt="${escapeHtml(file.name)}">`
-    : `<a href="${escapeHtml(file.url)}" download="${escapeHtml(file.name)}" hidden aria-hidden="true"></a>`;
-  dataTransfer.setData('text/html', `<a href="${escapeHtml(link)}">${escapeHtml(label)}</a>${fileHtml}`);
-  dataTransfer.setData('text/uri-list', file?.url || link);
-  if (file?.url) dataTransfer.setData('DownloadURL', `${file.mimeType || 'application/octet-stream'}:${file.name}:${file.url}`);
+  if (file?.url) {
+    dataTransfer.setData('text/plain', file.url);
+    dataTransfer.setData('text/uri-list', file.url);
+    dataTransfer.setData('text/html', file.kind === 'image'
+      ? `<img src="${escapeHtml(file.url)}" alt="${escapeHtml(file.name)}">`
+      : `<a href="${escapeHtml(file.url)}" download="${escapeHtml(file.name)}">${escapeHtml(file.name)}</a>`);
+    dataTransfer.setData('DownloadURL', `${file.mimeType || 'application/octet-stream'}:${file.name}:${file.url}`);
+  } else {
+    dataTransfer.setData('text/plain', `[${markdownLabel}](${link})`);
+    dataTransfer.setData('text/html', `<a href="${escapeHtml(link)}">${escapeHtml(label)}</a>`);
+    dataTransfer.setData('text/uri-list', link);
+  }
   return reference;
 }

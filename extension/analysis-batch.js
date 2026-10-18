@@ -13,6 +13,7 @@ import { prepareFacetRebuild, validateAnalysisTagResponse } from "./tag-taxonomy
 import { currentVideoReconstruction, entryMediaAssets, primaryImageAsset } from "./media.js";
 import { ANALYSIS_RETRY_POLICY } from "./analysis-retry-policy.js";
 import { sanitizeAnalysisDiagnostic } from "./analysis-response.js";
+import { normalizeAnalysisScope } from "./analysis-scope.js";
 
 export const ANALYSIS_BATCH_VERSION = 2;
 export const ANALYSIS_BATCH_CONCURRENCY = 20;
@@ -28,12 +29,15 @@ export async function previewAnalysisBatch(entries = [], options = {}) {
   const mode = options.mode === "selected" ? "selected" : ["reanalyze", "rebuild"].includes(options.mode) ? "rebuild" : "incremental";
   const selected = new Set((options.entryIds ?? []).map(String));
   const profileFingerprint = String(options.profileFingerprint ?? "").trim();
+  const skipCounts = { analyzed: 0, changed: 0, empty: 0 };
   for (const entry of Array.isArray(entries) ? entries : []) {
-    if (mode === "selected" && !selected.has(String(entry?.id))) continue;
+    if ((mode === "selected" || mode === "incremental" && Array.isArray(options.entryIds)) && !selected.has(String(entry?.id))) continue;
     const { text, assetId, textRevision } = canonicalTextAnalysisInput(entry);
-    if (!entry?.id || !text) continue;
+    if (!entry?.id) continue;
+    if (!text) { skipCounts.empty += 1; continue; }
     const reason = mode !== "incremental" ? "explicit_reanalysis" : textAnalysisReason(entry);
-    if (!reason) continue;
+    if (!reason) { skipCounts.analyzed += 1; continue; }
+    if (reason === "text_changed" && options.includeChanged === false) { skipCounts.changed += 1; continue; }
     eligible.push({
       entryId: entry.id,
       textRevision,
@@ -57,6 +61,7 @@ export async function previewAnalysisBatch(entries = [], options = {}) {
     fixedTaxonomyCharacters: Math.max(0, Number(options.fixedTaxonomyCharacters) || 0),
     estimatedRequestCount: eligible.length,
     reasonCounts,
+    skipCounts,
     entries: eligible
   };
 }
@@ -94,6 +99,8 @@ export async function createAnalysisBatchJob(entries, options = {}) {
     version: ANALYSIS_BATCH_VERSION,
     kind: "text_tags",
     mode: preview.mode,
+    scope: normalizeAnalysisScope(options.scope),
+    includeChanged: options.includeChanged !== false,
     id: jobId,
     status: "running",
     createdAt: now,
@@ -332,6 +339,8 @@ export function normalizeAnalysisBatchJob(value) {
     version: ANALYSIS_BATCH_VERSION,
     kind: ["vision", "video"].includes(value.kind) ? value.kind : "text_tags",
     mode: value.mode === "selected" ? "selected" : ["reanalyze", "rebuild"].includes(value.mode) ? "rebuild" : "incremental",
+    scope: normalizeAnalysisScope(value.scope),
+    includeChanged: value.includeChanged !== false,
     id: String(value.id),
     status: jobStatuses.has(value.status) ? value.status : "paused",
     createdAt: String(value.createdAt ?? ""),

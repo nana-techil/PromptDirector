@@ -80,7 +80,9 @@ def main():
             panel.set_viewport_size({'width': width, 'height': 850})
             assert panel.evaluate('document.documentElement.scrollWidth<=innerWidth')
         panel.set_viewport_size({'width': 390, 'height': 850})
-        panel.bring_to_front()
+        # The collector tab stands in for Chrome's side panel. Keep the source
+        # tab active: activating collector.html would switch its page context.
+        expect(panel.locator('#page-capture-save')).to_be_visible()
         panel.screenshot(path=str(Path(tempfile.gettempdir()) / 'pd-generic-groups.png'), full_page=True)
         panel.locator('#page-capture-save').click()
         expect(panel.locator('#page-capture')).to_be_hidden(timeout=60000)

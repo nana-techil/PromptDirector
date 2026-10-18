@@ -120,7 +120,7 @@ def main() -> None:
             library.locator("#selection-more-menu > summary").click()
             library.locator("#selection-analyze").click()
             expect(library.locator(".case-card.selected-for-share")).to_have_count(2)
-            dialog = library.locator("#vision-batch-dialog")
+            dialog = library.locator("#text-batch-dialog")
             dialog.locator("#vision-batch-start").click()
 
             assert HangingVisionHandler.request_started.wait(timeout=5), "本地图片服务没有收到请求"
@@ -132,7 +132,7 @@ def main() -> None:
             assert running_progress == {"value": 0, "max": 2}, running_progress
             layout = library.evaluate(
                 """() => {
-                  const dialog = document.querySelector('#vision-batch-dialog');
+                  const dialog = document.querySelector('#text-batch-dialog');
                   const rect = dialog.getBoundingClientRect();
                   return {
                     viewportWidth: window.innerWidth,
@@ -152,7 +152,7 @@ def main() -> None:
             )
             assert completed_progress == {"value": 2, "max": 2}, completed_progress
             expect(dialog.locator("#vision-batch-start")).to_be_hidden()
-            dialog.locator("#vision-batch-close").click()
+            dialog.locator("#text-batch-close").click()
             expect(library.locator("#share-bar")).to_be_hidden()
             assert library.locator(".case-card.selected-for-share").count() == 0
             print({"in_flight_progress_visible": True, "completed": 2, "narrowViewport": layout})

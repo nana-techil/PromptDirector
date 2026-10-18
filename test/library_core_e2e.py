@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 import re
 
 from playwright.sync_api import expect
 
-from e2e_support import base_entry, extension_session
+from e2e_support import open_task_settings, open_library_analysis, copy_analysis_diagnostics, base_entry, extension_session
 
 
 def main() -> None:
@@ -89,13 +91,13 @@ def main() -> None:
         expect(library.locator(".case-card")).to_have_count(1)
         library.locator("#search-input").fill("")
 
-        library.locator("#open-settings").click()
-        library.locator('[data-settings-tab="tasks"]').click()
+        open_task_settings(library)
+        open_library_analysis(library)
         before_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         library.locator(".advanced-reanalysis > summary").click()
         library.locator("#preview-analysis-reanalyze").click()
-        expect(library.locator("#analysis-batch-details")).to_contain_text("3 次请求")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("全部成功前只暂存")
+        assert "3 次请求" in copy_analysis_diagnostics(library)
+        assert "全部成功前只暂存" in copy_analysis_diagnostics(library)
         after_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         assert json.dumps(after_preview, sort_keys=True, ensure_ascii=False) == json.dumps(before_preview, sort_keys=True, ensure_ascii=False)
 
@@ -126,11 +128,15 @@ def main() -> None:
             }"""
         )
         library.reload(wait_until="networkidle")
-        library.locator("#open-settings").click()
-        library.locator('[data-settings-tab="tasks"]').click()
+        open_task_settings(library)
         expect(library.locator("#batch-status-badge")).to_contain_text("重建待完成")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("1 条成功结果已安全暂存")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("AI 返回了未知分类路径")
+        expect(library.locator("#analysis-batch-summary")).to_contain_text("1 条成功结果已安全暂存")
+        expect(library.locator("#analysis-batch-summary")).to_contain_text("AI 返回了未知分类路径")
+        expect(library.locator("#analysis-batch-summary")).to_have_class(re.compile('error'))
+        if output := os.environ.get('PD_E2E_ARTIFACT_DIR'):
+            Path(output).mkdir(parents=True, exist_ok=True)
+            library.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+            library.screenshot(path=str(Path(output)/'analysis-partial-rebuild.png'), animations='disabled')
         expect(library.locator("#retry-analysis-failures")).to_have_text("继续完成重建（1 条）")
         expect(library.locator("#apply-staged-analysis-rebuild")).to_have_text("应用完整成功结果（1 条失败不写入）")
         expect(library.locator("#start-analysis-batch")).to_be_hidden()
@@ -138,7 +144,7 @@ def main() -> None:
 
         library.locator("#apply-staged-analysis-rebuild").click()
         expect(library.locator("#batch-status-badge")).to_contain_text("成功结果已应用")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("完整成功结果已经生效，1 条失败案例未写入，可单独重试")
+        expect(library.locator("#analysis-batch-summary")).to_contain_text("完整成功结果已经生效，1 条失败案例未写入，可单独重试")
         expect(library.locator("#apply-staged-analysis-rebuild")).to_be_hidden()
         expect(library.locator("#retry-analysis-failures")).to_be_hidden()
         partial_state = library.evaluate(
@@ -163,8 +169,8 @@ def main() -> None:
             )
 
         library.locator("#preview-analysis-batch").click()
-        expect(library.locator("#analysis-batch-details")).to_contain_text("2 次请求")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("未分析 2 条")
+        assert "2 次请求" in copy_analysis_diagnostics(library)
+        assert "未分析 2 条" in copy_analysis_diagnostics(library)
 
         library.evaluate(
             """async () => {
@@ -187,8 +193,7 @@ def main() -> None:
             }"""
         )
         library.reload(wait_until="networkidle")
-        library.locator("#open-settings").click()
-        library.locator('[data-settings-tab="tasks"]').click()
+        open_task_settings(library)
         expect(library.locator("#cancel-analysis-batch")).to_be_visible()
         before_cancel = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog']))")
         library.locator("#cancel-analysis-batch").click()
@@ -196,14 +201,14 @@ def main() -> None:
         after_cancel = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'analysisRebuildStaging']))")
         assert "analysisRebuildStaging" not in after_cancel
         assert json.dumps({"entries": after_cancel["entries"], "facetCatalog": after_cancel["facetCatalog"]}, sort_keys=True, ensure_ascii=False) == json.dumps(before_cancel, sort_keys=True, ensure_ascii=False)
+        library.locator("#text-batch-close").click() if library.locator("#text-batch-dialog").is_visible() else None
         library.locator("#settings-close").click()
 
         library.set_viewport_size({"width": 390, "height": 844})
         library.wait_for_timeout(200)
         assert library.locator("body").evaluate("element => element.scrollWidth <= element.clientWidth")
         expect(library.locator("#package-menu")).to_have_count(0)
-        library.locator("#open-settings").click()
-        library.locator('[data-settings-tab="tasks"]').click()
+        open_task_settings(library)
         expect(library.locator("#settings-tasks-panel")).to_be_visible()
         expect(library.locator("#manager-dialog")).not_to_be_visible()
         task_layout = library.evaluate(
@@ -221,6 +226,7 @@ def main() -> None:
         )
         assert task_layout["dialogLeft"] >= 0 and task_layout["dialogRight"] <= task_layout["viewportWidth"], task_layout
         assert task_layout["panelScrollWidth"] <= task_layout["panelClientWidth"], task_layout
+        library.locator("#text-batch-close").click() if library.locator("#text-batch-dialog").is_visible() else None
         library.locator("#settings-close").click()
         print({"library_cards": 3, "fixed_tag_navigation": True, "error_feedback_auto_clears": True, "rebuild_preview_is_read_only": True, "partial_rebuild_applies_successes": True, "incremental_preview_only_includes_pending": True, "rebuild_recovery_is_explicit": True, "rebuild_cancel_is_clean": True, "mobile_overflow": False})
 

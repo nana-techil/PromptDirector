@@ -88,6 +88,15 @@ test('warnings and unread supplements remain reviewable even when every block be
   assert.deepEqual(groups.at(-1).supplements, input.supplements);
 });
 
+test('a shared original referenced outside the chosen sections remains in the unassigned source blocks', () => {
+  const input = fixture([{id:'intro-image',kind:'image',assetId:'shared'}, heading('a','First'),
+    {id:'case-image',kind:'image',assetId:'shared'}, heading('b','Second'), image('b')]);
+  const groups = normalizePageCaptureBatch({candidates:groupGenericCapture(input,'sections')}).candidates;
+  assert.equal(groups.at(-1).articleDocument.blocks[0].id,'intro-image');
+  assert.deepEqual(groups.at(-1).media.map(item=>item.id),['shared']);
+  assert.equal(groups[0].articleDocument.blocks.find(block=>block.assetId==='shared').id,'case-image');
+});
+
 test('removing a previewed list or repeated paragraph removes exactly the clicked text from what is saved', async () => {
   const { removeCaptureTextBlock } = await import('../extension/generic-capture-groups.js');
   const candidate = { id: 'page', contentHtml: '<ul><li>one</li></ul>',

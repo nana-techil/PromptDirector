@@ -166,9 +166,9 @@ def main() -> None:
         assert back_to_a["staleFrames"] == [] and again_b["staleFrames"] == [], {"back": back_to_a, "again": again_b}
 
         checker = library.locator(".detail-image.has-alpha-channel").evaluate(
-            "node => ({backgroundImage: getComputedStyle(node).backgroundImage, viewer: getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim(), browser: getComputedStyle(document.documentElement).getPropertyValue('--ui-browser').trim(), checker: getComputedStyle(document.documentElement).getPropertyValue('--viewer-checker-a').trim()})"
+            "node => ({backgroundImage: getComputedStyle(node).backgroundImage, viewer: getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim(), surface: getComputedStyle(document.documentElement).getPropertyValue('--ui-surface').trim(), checker: getComputedStyle(document.documentElement).getPropertyValue('--viewer-checker-a').trim()})"
         )
-        assert checker["backgroundImage"] != "none" and checker["viewer"] == "#ffffff", checker
+        assert checker["backgroundImage"] != "none" and checker["viewer"] == checker["surface"], checker
 
         library.evaluate(
             """() => {
@@ -178,9 +178,9 @@ def main() -> None:
         )
         expect(library.locator("html")).to_have_attribute("data-theme", "dark")
         dark_checker = library.locator(".detail-image.has-alpha-channel").evaluate(
-            "node => ({backgroundImage: getComputedStyle(node).backgroundImage, viewer: getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim(), browser: getComputedStyle(document.documentElement).getPropertyValue('--ui-browser').trim(), checker: getComputedStyle(document.documentElement).getPropertyValue('--viewer-checker-a').trim()})"
+            "node => ({backgroundImage: getComputedStyle(node).backgroundImage, viewer: getComputedStyle(document.documentElement).getPropertyValue('--viewer-bg').trim(), surface: getComputedStyle(document.documentElement).getPropertyValue('--ui-surface').trim(), checker: getComputedStyle(document.documentElement).getPropertyValue('--viewer-checker-a').trim()})"
         )
-        assert dark_checker["backgroundImage"] != "none" and dark_checker["viewer"] == "#000000", dark_checker
+        assert dark_checker["backgroundImage"] != "none" and dark_checker["viewer"] == dark_checker["surface"], dark_checker
         assert dark_checker["checker"] != checker["checker"], {"light": checker, "dark": dark_checker}
 
         # Media switching inside one case changed intentionally (user feedback "多图、不同形式内容案例在一个案例中

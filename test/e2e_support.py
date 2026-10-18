@@ -282,3 +282,49 @@ def scroll_to_case(page, entry_id: str) -> None:
             return
         page.evaluate('scrollBy(0,innerHeight/2)')
     raise AssertionError(f'Case {entry_id} was not reachable through the gallery')
+
+
+def copy_analysis_diagnostics(page: Page) -> str:
+    """Use the visible support action without depending on the system clipboard."""
+    page.evaluate('''() => {
+      window.copiedAnalysisDiagnostics = null;
+      navigator.clipboard.writeText = async text => { window.copiedAnalysisDiagnostics = text; };
+    }''')
+    page.locator('#copy-analysis-diagnostics').click()
+    page.wait_for_function('window.copiedAnalysisDiagnostics !== null')
+    return page.evaluate('window.copiedAnalysisDiagnostics')
+
+
+def apply_retained_recovery(page: Page, action: str, job_id=None):
+    """Exercise retained recovery safety in disposable profiles after retiring its UI."""
+    result = page.evaluate('''async ({action, jobId}) => {
+      const preview = await chrome.runtime.sendMessage({type:'PREVIEW_LIBRARY_UNDO',action,jobId});
+      if (!preview?.ok) return preview;
+      return chrome.runtime.sendMessage({type:action,jobId,confirmationToken:preview.confirmationToken});
+    }''', {'action': action, 'jobId': job_id})
+    assert result.get('ok'), result
+    return result
+
+
+def open_library_analysis(page: Page):
+    """Reach whole-library scoped analysis through the existing selection tools."""
+    page.wait_for_function("document.body.dataset.libraryState === 'ready'")
+    if page.locator('#settings-dialog').is_visible():
+        page.locator('#settings-close').click()
+    if page.locator('#selection-select-filtered').is_hidden():
+        page.locator('#select-cases').click()
+    page.locator('#selection-select-filtered').click()
+    page.locator('#selection-more-menu > summary').click()
+    page.locator('#selection-text-analyze').click()
+    page.locator('#batch-scope-project').select_option('')
+
+
+def open_task_settings(page: Page):
+    """Return from case management to the actual inline settings entry."""
+    if page.locator('#text-batch-dialog').is_visible():
+        page.locator('#text-batch-close').click()
+    if not page.locator('#settings-dialog').is_visible():
+        if page.locator('#share-cancel').is_visible():
+            page.locator('#share-cancel').click()
+        page.locator('#open-settings').click()
+    page.locator('[data-settings-tab="tasks"]').click()

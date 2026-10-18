@@ -47,7 +47,7 @@ def save_tools(panel):
     show_chat(panel)
 
 
-def main():
+def main(receipt_only=False):
     class Server(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path.endswith('/missing.mp4'):
@@ -76,8 +76,10 @@ def main():
             (ext / 'manifest.json').write_text(json.dumps(manifest))
             background=(EXTENSION_DIR / 'background.js').read_text().replace('async function collectPageCaptureTab(tab, options) {',
                 "async function collectPageCaptureTab(tab, options) { if (tab.url.endsWith('/failed')) throw new Error('Fixture adapter cannot identify this webpage');")
-            (ext / 'background.js').write_text(background + '\nglobalThis.agentTestDispatch=dispatchAgentOperation;\n')
+            (ext / 'background.js').write_text(background + '\nglobalThis.agentTestDispatch=dispatchAgentOperation;\nglobalThis.agentTestReadAttachment=id=>readCaptureChatAttachment(id,{transfers:agentTransfers,readBlob:getMediaBlob,loadState:readCaseLibraryState,readDerived:getDerivedMedia});\n')
             with extension_session('pd-agent-capture-', extension_dir=ext, viewport={'width':390,'height':844}, extra_args=['--ignore-certificate-errors']) as run:
+                if receipt_only:
+                    run.context.route('https://**/*', lambda route: route.continue_() if route.request.url.startswith(origin + '/') else route.abort('blockedbyclient'))
                 panel = run.open_page('collector.html')
                 run.seed_storage(panel, {'entries': [], 'capturePermissionOnboarding': {'version':1,'acknowledgedAt':'2026-10-11T00:00:00Z','clipboardIncluded':False},
                     **ai_configuration_fixture(providers={'deepseek': {'apiKey':'isolated-fixture','consent':True,'models':{'creativePlanning':'deepseek-flash'}},
@@ -107,13 +109,72 @@ def main():
                         'originalPrompt':'Exact shadow prompt: gym, soft rim light, slow camera push.'}]}],
                     'selections':[{'candidateId':'agent-candidate','includeText':True,'selectedMediaIds':['agent-image']}],'saveMode':'multiple'})
                 assert supplemented['revision']==2
+                panel.evaluate("()=>{window.__atomicCaptureReceipt=false;chrome.storage.onChanged.addListener(changes=>{if(changes['agentCapture:mcp-preview']?.newValue.commitResult && Object.keys(changes).some(key=>key.startsWith('caseRecord:')||key==='entries'||key==='caseLibraryRevision')) window.__atomicCaptureReceipt=true;});}")
                 receipt = done('save_capture',{'requestId':'mcp-save','captureId':'mcp-preview','expectedRevision':2})
                 assert receipt['ok'] and receipt['results'][0]['status']=='saved', receipt
+                assert panel.evaluate('()=>window.__atomicCaptureReceipt'), 'case commit and recovery receipt must share one storage event'
                 replay = done('save_capture',{'requestId':'mcp-save','captureId':'mcp-preview','expectedRevision':2})
                 assert replay['results']==receipt['results']
                 entry = panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries[0]")
                 assert 'Exact shadow prompt' in entry['text']
                 assert entry['mediaPrompts'][0]['text']=='Exact shadow prompt: gym, soft rim light, slow camera push.', entry
+
+                if receipt_only:
+                    assert receipt['results'][0]['contentTypeId'] == entry['classification']['pathIds'][0], receipt
+                    duplicate_preview = done('prepare_capture', {'requestId':'duplicate-type-preview','tabId':tab_id,'selector':'main'})
+                    duplicate_selection = done('update_capture', {'requestId':'duplicate-type-selection','captureId':'duplicate-type-preview',
+                        'expectedRevision':duplicate_preview['revision'], 'candidates':[{'id':'agent-candidate','title':'Selected creative reference',
+                        'canonicalUrl':origin+'/work','contentText':evidence['text'],'media':[{'id':'agent-image','kind':'image','url':origin+'/original.png',
+                        'originalPrompt':'Exact shadow prompt: gym, soft rim light, slow camera push.'}]}],
+                        'selections':[{'candidateId':'agent-candidate','includeText':True,'selectedMediaIds':['agent-image']}],'saveMode':'multiple'})
+                    duplicate_receipt = done('save_capture', {'requestId':'duplicate-type-save','captureId':'duplicate-type-preview','expectedRevision':duplicate_selection['revision']})
+                    assert duplicate_receipt['results'][0]['status'] == 'duplicate', duplicate_receipt
+                    assert duplicate_receipt['results'][0]['contentTypeId'] == entry['classification']['pathIds'][0], duplicate_receipt
+                    original_text = 'Complete uploaded document, including its ending.'
+                    staged = panel.evaluate("""async text=>{
+                      const {saveMediaBlob}=await import('./media-store.js');
+                      await saveMediaBlob('agent-file:review-file',new Blob([text],{type:'text/plain'}));
+                      return chrome.runtime.sendMessage({type:'CAPTURE_LOCAL_FILE',input:{id:'review-file',name:'original.txt'}});
+                    }""", original_text)
+                    assert staged['ok'], staged
+                    for index in [1, 2]:
+                        project = call('create_project', {'requestId':f'attachment-project-{index}', 'name':f'Attachment project {index}'})
+                        batch_id = f'attachment-batch-{index}'
+                        prepared_file = done('prepare_capture', {'requestId':batch_id, 'tabId':tab_id, 'selector':'main'})
+                        selected_file = done('update_capture', {'requestId':f'attachment-select-{index}', 'captureId':batch_id,
+                            'expectedRevision':prepared_file['revision'], 'candidates':[{'id':'file-case', 'title':f'Local file {index}',
+                            'canonicalUrl':origin+'/local-file', 'contentText':'', 'media':[{'id':'local-document','kind':'document','localTransferId':'review-file'}]}],
+                            'selections':[{'candidateId':'file-case','includeText':False,'selectedMediaIds':['local-document']}]})
+                        file_receipt = done('save_capture', {'requestId':f'attachment-save-{index}', 'captureId':batch_id,
+                            'expectedRevision':selected_file['revision'], 'project':project['project']['id'], 'contentTypeId':'content:reference'})
+                        assert file_receipt['results'][0]['status'] in ['saved', 'duplicate'], file_receipt
+                        file_id = file_receipt['results'][0]['entryId']
+                        file_state = panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'}))")
+                        actual_file = next(item for item in file_state['entries'] if item['id'] == file_id)
+                        assert any(asset['id'] == staged['asset']['id'] for asset in actual_file['mediaAssets']), actual_file
+                        assert file_receipt['results'][0]['contentTypeId'] == 'content:reference', file_receipt
+                        attachment = worker.evaluate("id=>agentTestReadAttachment(id)", 'review-file')
+                        assert attachment['data']['text'] == original_text, attachment
+                        transfer = panel.evaluate("async()=> (await chrome.storage.local.get('agentUpload:review-file'))['agentUpload:review-file']")
+                        # Commit clears temporary preparation; re-read and the
+                        # second project save use the live case's actual asset.
+                        assert transfer['state'] == 'committed' and transfer['prepared'] is None, transfer
+                    workspace = call('open_workspace', {'surface':'library'})
+                    assert workspace['state'] == 'ready' and workspace['tabId'], workspace
+                    saved_id=entry['id']
+                    run.restart_browser(extension_dir=ext)
+                    panel=run.open_page('collector.html')
+                    worker=run.context.service_workers[0]
+                    reopened=panel.evaluate("async()=>chrome.runtime.sendMessage({type:'GET_STATE'})")
+                    assert len(reopened['entries'])==3 and any(item['id']==saved_id for item in reopened['entries']), reopened
+                    assert 'Exact shadow prompt' in reopened['entries'][0]['text']
+                    recovered=call('read_capture',{'captureId':'mcp-preview'})
+                    assert recovered['state']=='completed' and recovered['results'][0]['entryId']==saved_id, recovered
+                    replay=done('save_capture',{'requestId':'mcp-save','captureId':'mcp-preview','expectedRevision':2})
+                    assert replay['results']==receipt['results']
+                    print(json.dumps({'atomicCaseAndCaptureReceipt':True,'browserRestartReadback':True,'sameRequestNoDuplicate':True,'paidApiCalls':0,'committedAttachmentRereadAndProjectReuse':True,'actualTypeInDurableReceipt':True,'workspaceReady':True}))
+                    return
+
                 original = panel.evaluate("async id=>Array.from(new Uint8Array(await (await import('./media-store.js')).getMediaBlob(id).then(blob=>blob.arrayBuffer())))", entry['mediaAssets'][0]['id'])
                 assert bytes(original)==PNG
                 assert len(panel.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).entries"))==1

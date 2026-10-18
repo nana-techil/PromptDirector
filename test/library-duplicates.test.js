@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scanDuplicateCases, compareDuplicateCases, duplicateRevision, duplicateProjects, chooseDuplicateKeeper, duplicateOrigin, bulkDuplicateGroups } from '../extension/library-duplicates.js';
 import { planDuplicateCleanup, createCaseDedupeOperations } from '../extension/case-dedupe-operations.js';
+import { collectRetainedLocalAssetIds } from '../extension/import-staging.js';
 import { normalizeTagColors } from '../extension/tag-color-values.js';
 import { textDifference } from '../extension/case-dedupe-diff.js';
 const asset = id => ({ id, kind:'image', storageMode:'managed', contentHash:'a'.repeat(64), byteSize:9, capturedAt:id });
@@ -150,4 +151,42 @@ test('large-library discovery and project grouping never traverse case text',asy
  const s=state();for(const e of s.entries)Object.defineProperty(e,'text',{get(){throw new Error('Full text accessed during media scan');}});
  const result=await scan(s);assert.equal(result.mediaGroups.length,1);
  assert.equal(bulkDuplicateGroups(result,s.entries).length,1);
+});
+
+test('an independent project copy keeps its full content, shared original and provenance when the source enters trash', async () => {
+  let s = state(); s.entries[1].mediaAssets = structuredClone(s.entries[0].mediaAssets);
+  s.entries[1].copyOrigin = { caseId: 'a', title: 'Source case' };
+  const copy = structuredClone(s.entries[1]);
+  const service = createCaseDedupeOperations({ loadState: async () => s, storage: { get: async () => ({}) }, enqueue: fn => fn(), commit: async patch => { s = { ...s, ...patch }; } });
+  const result = await service.execute({ requestId: 'copy-source', groups: await proposal(s, 'b', 'a', { allowDifferent: true }) });
+  assert.deepEqual(result.movedEntryIds, ['a']);
+  assert.deepEqual(s.entries.find(e => e.id === 'b'), copy);
+  assert.equal(s.trashState.items[0].snapshot.mediaAssets[0].id, copy.mediaAssets[0].id);
+  assert.equal(s.trashState.items[0].snapshot.text, copy.text);
+  assert.ok(collectRetainedLocalAssetIds({ ...s, trashState: { items: [] } }).has(copy.mediaAssets[0].id), 'the independent copy protects its shared original even after trash is emptied');
+});
+
+test('real references identify the owning composition or session while preserving protection', async () => {
+  for (const reference of [
+    { compoundCases: [{ id: 'group', title: 'Storyboard', memberEntryIds: ['b', 'a'] }] },
+    { composerSessions: [{ id: 'session', title: 'Film draft', referenceSnapshots: [{ caseId: 'b', text: 'Frozen original' }] }] }
+  ]) {
+    const s = { ...state(), ...reference };
+    const result = await planDuplicateCleanup(s, await proposal(s));
+    assert.deepEqual(result.accepted, []);
+    assert.equal(result.skipped[0].references.length, 1);
+    assert.ok(['Storyboard', 'Film draft'].includes(result.skipped[0].references[0].title));
+  }
+});
+
+test('an entirely blocked cleanup does not rewrite cases or trash and its receipt is replayable', async () => {
+  const s = { ...state(), compoundCases: [{ id: 'group', memberEntryIds: ['a', 'b'] }] };
+  let patch;
+  const service = createCaseDedupeOperations({ loadState: async () => s, storage: { get: async key => ({ [key]: patch?.[key] }) }, enqueue: fn => fn(), commit: async value => { patch = value; } });
+  const input = { requestId: 'blocked', groups: await proposal(s) };
+  const result = await service.execute(input);
+  assert.deepEqual(result.movedEntryIds, []);
+  assert.equal(Object.hasOwn(patch, 'entries'), false);
+  assert.equal(Object.hasOwn(patch, 'trashState'), false);
+  assert.equal((await service.execute(input)).replayed, true);
 });

@@ -1,4 +1,4 @@
-import { agentError, requireAgentId, requireInteger, requireWebUrl, AGENT_CHUNK_BYTES, bytesToBase64 } from './agent-protocol.js';
+import { agentError, requireAgentId, requireInteger, requireWebUrl, AGENT_CHUNK_BYTES, AGENT_JOB_PREFIX, bytesToBase64 } from './agent-protocol.js';
 import { validate } from './case-operation-specs.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
 import { waitForAgentTab } from './agent-capture.js';
@@ -13,10 +13,19 @@ import { codePreviewText, codePreviewHtml } from './code-case.js';
 const prefix = 'agentCapture:';
 export function createAgentCapturePreview({ storage, chromeApi, collect, commit, loadState, getLibraryId, budget, readImage, resolveLocalMedia, readSavedText, readSupplement = readPageCaptureSupplement }) {
   const key = id => prefix + requireAgentId(id);
+  const saving = new Set();
   async function own(id) {
     const record = (await storage.get(key(id)))[key(id)];
     if (!record) throw agentError('capture_not_found', '没有找到采集预览，请核对采集编号');
     if (record.libraryId !== await getLibraryId()) throw agentError('library_mismatch', '采集预览属于另一份资料库');
+    if (record.state === 'saving' && !saving.has(record.id)) {
+      const task = !record.commitResult && record.lastSaveRequestId
+        ? (await storage.get(AGENT_JOB_PREFIX + record.lastSaveRequestId))[AGENT_JOB_PREFIX + record.lastSaveRequestId] : null;
+      const result = record.commitResult || (task?.state === 'completed' && task.libraryId === record.libraryId
+        && task.result?.captureId === record.id ? task.result : null);
+      if (result) await finishSave(record, result);
+      else { record.state = 'preview'; record.revision++; await persist(record); }
+    }
     return record;
   }
   async function persist(record) {
@@ -423,46 +432,57 @@ export function createAgentCapturePreview({ storage, chromeApi, collect, commit,
       const collectionId = input.project ? resolveAgentProject(await loadState(), input.project) : '';
       await scope.assertCurrent();
       record.state = 'saving'; record.lastSaveRequestId = requestId;
-      await persist(record);
+      saving.add(record.id);
       try {
+        await persist(record);
         const result = await commit(record.batch, { ...input.captureMetadata,
           ...(!input.captureMetadata?.contentTypeExplicit && input.contentTypeId ? { contentTypeId: input.contentTypeId, contentTypeExplicit: true } : {}), collectionId,
-          ...(input.generationPromptChoices ? { generationPromptChoices: input.generationPromptChoices } : {}) }, progress);
+          ...(input.generationPromptChoices ? { generationPromptChoices: input.generationPromptChoices } : {}) }, progress, { key: key(record.id), value: result => ({ ...record, commitResult: result }) });
         await scope.assertCurrent();
-        record.results = result.results || [];
-        // Read back only source-backed text selected in this save; never
-        // download media again or let a short model reply prove completeness.
-        for (const receipt of record.results.filter(item => item.entryId && ['saved', 'duplicate', 'partial'].includes(item.status))) {
-          const chosen = record.batch.selections.filter(selection => selection.includeText && (record.batch.saveMode === 'combined' || selection.candidateId === receipt.candidateId));
-          const sources = chosen.flatMap(selection => (record.sourceBindings?.[selection.candidateId] || []).map(binding => record.sources[binding.selector]));
-          if (!sources.length) continue;
-          const partial = sources.some(source => source.completeness === 'partial');
-          let matches = false;
-          if (readSavedText) {
-            try { const savedText = await readSavedText(receipt.entryId); matches = sources.every(source => savedText.includes(sourceMaterialText(source).trim())); }
-            catch (error) { receipt.warnings = [...(receipt.warnings || []), `保存读回未完成：${error.message}`]; }
-          }
-          receipt.originalVerification = { status: matches && !partial ? 'verified' : partial ? 'partial' : 'unverified', sourceCount: sources.length,
-            sources: sources.map(source => ({ selector: source.selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), totalCharacters: source.text.length, completeness: source.completeness || 'unverified' })) };
-          if (partial || readSavedText && !matches) {
-            receipt.status = 'partial'; receipt.warnings = [...new Set([...(receipt.warnings || []), partial ? '来源正文仍被折叠，尚未取得全文' : '已保存内容与完整来源不一致，请补采后核对'])];
-          }
-        }
-        await scope.assertCurrent();
-        const expectedResults = record.batch.saveMode === 'combined' ? 1 : record.batch.selections.length;
-        const actualIds = new Set(record.results.map(item => item.candidateId));
-        const coversSelection = record.batch.saveMode === 'combined' || (actualIds.size === expectedResults && record.batch.selections.every(item => actualIds.has(item.candidateId)));
-        record.state = result.ok && coversSelection && record.results.length === expectedResults
-          && record.results.every(item => item.entryId && ['saved', 'duplicate'].includes(item.status)) ? 'completed' : 'preview';
-        record.revision++;
-        await persist(record);
+        await finishSave(record, result);
         return { ...result, results: record.results, captureId: record.id, revision: record.revision, state: record.state, saveMode: record.batch.saveMode };
       } catch (error) {
-        await scope.assertCurrent(); record.state = 'preview'; record.revision++; await persist(record);
+        // The old library may no longer be active. Keep its durable receipt
+        // untouched; reopening reconciles it before any new save is allowed.
+        const stored = (await storage.get(key(record.id)))[key(record.id)];
+        if (!stored?.commitResult) { record.state = 'preview'; record.revision++; await persist(record); }
         throw error;
-      }
+      } finally { saving.delete(record.id); }
     }
   };
+  async function finishSave(record, result) {
+    record.results = result.results || [];
+    // Read back only source-backed text selected in this save; never
+    // download media again or let a short model reply prove completeness.
+    for (const receipt of record.results.filter(item => item.entryId && ['saved', 'duplicate', 'partial'].includes(item.status))) {
+      const chosen = record.batch.selections.filter(selection => selection.includeText && (record.batch.saveMode === 'combined' || selection.candidateId === receipt.candidateId));
+      const sources = chosen.flatMap(selection => (record.sourceBindings?.[selection.candidateId] || []).map(binding => record.sources[binding.selector]));
+      if (!sources.length) continue;
+      const partial = sources.some(source => source.completeness === 'partial');
+      let matches = false;
+      if (readSavedText) {
+        try { const savedText = await readSavedText(receipt.entryId); matches = sources.every(source => savedText.includes(sourceMaterialText(source).trim())); }
+        catch (error) { receipt.warnings = [...(receipt.warnings || []), `保存读回未完成：${error.message}`]; }
+      }
+      const sourceLimited = matches && partial && ['saved', 'duplicate'].includes(receipt.status);
+      receipt.originalVerification = { readback: matches ? 'matched' : 'unverified', status: matches && !partial ? 'verified' : partial ? 'partial' : 'unverified', sourceCount: sources.length,
+        sources: sources.map(source => ({ selector: source.selector, ...(source.resolvedSelector ? { resolvedSelector: source.resolvedSelector } : {}), totalCharacters: source.text.length, completeness: source.completeness || 'unverified' })) };
+      if (sourceLimited) receipt.sourceLimited = true;
+      if (partial || readSavedText && !matches) {
+        receipt.status = 'partial'; receipt.warnings = [...new Set([...(receipt.warnings || []), partial ? '来源正文仍被折叠，尚未取得全文' : '已保存内容与完整来源不一致，请补采后核对'])];
+      }
+    }
+    const unverified = record.results.filter(item => item.originalVerification && item.originalVerification.status !== 'verified');
+    if (unverified.length) result.message = `已保存内容仍有 ${unverified.length} 项原文未核对完整，请补采后重试`;
+    const expectedResults = record.batch.saveMode === 'combined' ? 1 : record.batch.selections.length;
+    const actualIds = new Set(record.results.map(item => item.candidateId));
+    const coversSelection = record.batch.saveMode === 'combined' || (actualIds.size === expectedResults && record.batch.selections.every(item => actualIds.has(item.candidateId)));
+    record.state = result.ok && coversSelection && record.results.length === expectedResults
+      && record.results.every(item => item.entryId && ['saved', 'duplicate'].includes(item.status)) ? 'completed' : 'preview';
+    record.revision++;
+    delete record.commitResult;
+    await persist(record);
+  }
   async function screenshot(record) {
     await permission(record.batch.sourceUrl);
     const tab = await chromeApi.tabs.get(record.batch.tabId);
@@ -655,20 +675,60 @@ export function readCaptureSource(selector, moduleSelectors = []) {
       const element = document.querySelector(selector);
       return element ? [{ selector, style: style(element) }] : [];
     }) };
+  const excluded = 'script,style,noscript,input,textarea,select,[data-promptdirector-capture-ui]';
+  function sourceText(element) {
+    let text = '', pendingBreaks = 0, lastPreserved = false;
+    const separate = count => { pendingBreaks = Math.max(pendingBreaks, count); };
+    function append(value, preserve) {
+      if (!preserve) {
+        value = value.replace(/[\t\r\n\f ]+/gu, ' ');
+        if (!text || pendingBreaks || text.endsWith(' ')) value = value.replace(/^ +/u, '');
+      }
+      if (!value) return;
+      if (pendingBreaks && text) {
+        if (!lastPreserved) text = text.replace(/ +$/u, '');
+        const existing = (text.match(/\n*$/u)?.[0].length || 0) + (value.match(/^\n*/u)?.[0].length || 0);
+        text += '\n'.repeat(Math.max(0, pendingBreaks - existing));
+      }
+      text += value;
+      pendingBreaks = 0;
+      lastPreserved = preserve;
+    }
+    function visit(node, preserve = false) {
+      if (node.nodeType === Node.TEXT_NODE) { append(node.textContent, preserve); return; }
+      if (node.nodeType !== Node.ELEMENT_NODE || node.matches(excluded)) return;
+      if (node.matches('pre,code')) {
+        if (node.matches('pre')) separate(1);
+        const clone = node.cloneNode(true);
+        clone.querySelectorAll(excluded).forEach(child => child.remove());
+        append(clone.textContent, true);
+        if (node.matches('pre')) separate(1);
+        return;
+      }
+      if (node.matches('br')) { append('\n', true); return; }
+      const computed = getComputedStyle(node);
+      const breaks = node.matches('p') ? 2 : /^(block|flow-root|list-item|flex|grid|table.*)$/u.test(computed.display) ? 1 : 0;
+      separate(breaks);
+      for (const child of node.childNodes) visit(child, /^(pre|break-spaces)/u.test(computed.whiteSpace));
+      separate(breaks);
+    }
+    // Structural breaks coalesce, but original code/white-space text never does.
+    // Read the live styles without mounting a clone or altering the user's page.
+    visit(element);
+    return text;
+  }
   function read(selector) {
   let element;
   try { element = document.querySelector(selector); }
   catch { return { ok: false, message: '网页区域选择器无效' }; }
-  if (!element || element.matches('script,style,noscript,input,textarea,select') || element.closest('[data-promptdirector-capture-ui]')) {
+  if (!element || element.matches(excluded) || element.closest('[data-promptdirector-capture-ui]')) {
     return { ok: false, message: '没有找到可采集的原文区域' };
   }
-  const clone = element.cloneNode(true);
-  clone.querySelectorAll('script,style,noscript,input,textarea,select,[data-promptdirector-capture-ui]').forEach(node => node.remove());
   // Preserve code whitespace directly from the DOM. Model pagination is only
   // for understanding; a source-backed save uses this complete frozen original.
   const post = element.closest('article,[role="article"]');
   const truncated = Boolean(post?.querySelector('[data-testid="tweet-text-show-more-link"]'));
-  return { ok: true, url: location.href, selector, resolvedSelector: path(element), text: clone.textContent, completeness: truncated ? 'partial' : 'complete',
+  return { ok: true, url: location.href, selector, resolvedSelector: path(element), text: sourceText(element), completeness: truncated ? 'partial' : 'complete',
     format: element.matches('pre,code') ? 'code' : 'text', untrustedContent: true };
   }
   if (!Array.isArray(selector)) return { ...read(selector), appearance };

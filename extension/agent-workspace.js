@@ -69,16 +69,22 @@ export function createAgentWorkspace({ chromeApi, readCase, readSelection, readT
     // after timeout without pretending that an opening page is usable.
     const deadline = Date.now() + 15000;
     do {
+      let snapshot;
       try {
-        const snapshot = await api.read({ tabId, source: 'page' });
-        if (!details.caseId || snapshot.viewedCaseId === details.caseId) return { ...details, ...snapshot };
+        snapshot = await api.read({ tabId, source: 'page' });
       } catch (error) {
         if (!['workspace_unavailable', 'workspace_closed'].includes(error.code)) throw error;
-        if (error.code === 'workspace_closed' && !(await chromeApi.tabs.get(tabId))) throw error;
+        if (error.code === 'workspace_closed') await assertTabOpen();
       }
+      if (snapshot?.state === 'ready' && (!details.caseId || snapshot.viewedCaseId === details.caseId)) return { ...details, ...snapshot };
+      if (snapshot?.state === 'no_workspace') await assertTabOpen();
       await new Promise(resolve => setTimeout(resolve, 100));
     } while (Date.now() < deadline);
     return { state: 'opening', tabId, ...details, next: '用 read_workspace_context(tabId) 继续读取；ready 才表示现场就绪。' };
+    async function assertTabOpen() {
+      try { if (await chromeApi.tabs.get(tabId)) return; } catch { /* A closed tab cannot finish loading. */ }
+      throw agentError('workspace_closed', '该工作页面已关闭，请重新发现现场。');
+    }
   }
   return api;
 }

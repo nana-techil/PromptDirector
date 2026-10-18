@@ -365,3 +365,49 @@ test('preparing the next batch on the same source fulfills the old preparation t
  assert.equal(await runtime.finishTurn({}),undefined);
  assert.equal(runtime.task.state,'completed');
 });
+
+test('a readback-verified save with a folded source stops retrying but keeps the full-original goal waiting', async () => {
+  const f = fixture({ execute: () => ({ ok: true, results: [{ entryId: 'case', status: 'partial', sourceLimited: true,
+    originalVerification: { status: 'partial', readback: 'matched' }, warnings: ['来源正文仍被折叠，尚未取得全文'] }] }) });
+  await f.declare([{ operation: 'save_capture' }]);
+  await f.runtime.execute('save_capture', {}, { callId: 'saved-partial' });
+  const decision = await f.runtime.finishTurn({ content: 'Saved' });
+  assert.equal(decision.action, 'respond'); assert.equal(f.runtime.task.state, 'waiting');
+  assert.match(decision.content, /尚未取得全文/u);
+  assert.equal(f.calls.length, 1);
+});
+
+test('a folded source cannot hide another unsaved case or a failed original', async () => {
+  const f = fixture({ execute: () => ({ ok: true, results: [{ entryId: 'first', candidateId: 'first', status: 'partial', sourceLimited: true,
+    originalVerification: { status: 'partial', readback: 'matched' } }, { candidateId: 'second', status: 'failed' }] }) });
+  await f.declare([{ operation: 'save_capture', resultIds: ['first', 'second'] }]);
+  await f.runtime.execute('save_capture', {}, { callId: 'partial' });
+  assert.equal((await f.runtime.finishTurn({})).action, 'continue');
+  assert.equal(f.runtime.task.state, 'active');
+});
+
+test('a later complete repair closes the original goal instead of inheriting an earlier folded-source warning', async () => {
+  let attempt = 0;
+  const f = fixture({ execute: () => ({ ok: true, results: [{ entryId: 'case', status: ++attempt === 1 ? 'partial' : 'saved',
+    ...(attempt === 1 ? { sourceLimited: true } : {}), originalVerification: { status: attempt === 1 ? 'partial' : 'verified', readback: 'matched' } }] }) });
+  await f.declare([{ operation: 'save_capture' }]);
+  await f.runtime.execute('save_capture', {}, { callId: 'folded' });
+  await f.runtime.execute('save_capture', {}, { callId: 'repaired' });
+  assert.equal(await f.runtime.finishTurn({}), undefined); assert.equal(f.runtime.task.state, 'completed');
+});
+
+test('a fully accounted batch with folded sources waits without changing the durable partial verification into complete', async () => {
+  const state = { toolContext: [{ turnId: 'before', callId: 'directory-read', name: 'read_capture', args: { part: 'modules' },
+    data: { ok: true, part: 'modules', captureId: 'directory', sourceUrl: 'https://example.test/', total: 1,
+      modules: [{ title: 'Chosen source', selector: '#module', sources: [{ selector: '#module pre', characters: 10 }] }] } }] };
+  const f = fixture({ state, execute: () => ({ ok: true, captureId: 'batch', sourceUrl: 'https://example.test/', saveMode: 'multiple', collectionId: '',
+    results: [{ candidateId: 'chosen', entryId: 'saved-case', status: 'partial', sourceLimited: true,
+      originalVerification: { status: 'partial', readback: 'matched', sources: [{ selector: '#module pre', totalCharacters: 10, completeness: 'partial' }] } }] }) });
+  await f.runtime.loadContext();
+  assert.equal((await f.declare([{ operation: 'save_capture' }], { captureScope: { captureId: 'directory', selectors: ['#module'], project: '', saveMode: 'multiple' } })).data.ok, true);
+  await f.runtime.execute('save_capture', { captureId: 'batch' }, { callId: 'saved-partial' });
+  assert.equal((await f.runtime.finishTurn({})).action, 'respond');
+  assert.equal(f.runtime.task.state, 'waiting'); assert.equal(f.runtime.task.captureProgress.complete, false);
+  const receipt = state.toolContext.find(record => record.callId === 'saved-partial').data.results[0];
+  assert.equal(receipt.status, 'partial'); assert.equal(receipt.originalVerification.sources[0].completeness, 'partial');
+});

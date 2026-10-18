@@ -1,3 +1,5 @@
+import { sameUndoState } from './undo-state.js';
+import { normalizeAnalysisScope, selectAnalysisScope, sameAnalysisTargets } from "./analysis-scope.js";
 import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
 import { createAgentCapturePreview } from './agent-capture-preview.js';
 import { CAPTURE_OPERATION_SPECS } from './capture-operation-specs.js';
@@ -7,7 +9,7 @@ import { COMPOSER_DRAFTS_KEY, assistantDraftUpdate } from './composer-session-dr
 import { restoreCaptureSessions } from './capture-assistant-sessions.js';
 import { createComposerToolProgress } from './composer-tool-progress.js';
 import { readAssistantCaseMedia } from './assistant-case-media.js';
-import { captureChatAssetIds, readCaptureChatAttachment, resolveCaptureLocalMedia } from './capture-chat-attachments.js';
+import { captureChatAssetIds, readCaptureChatAttachment, resolveCaptureLocalMedia, resolveCaptureChatFile } from './capture-chat-attachments.js';
 import { createCaseDedupeOperations } from './case-dedupe-operations.js';
 import { createCaptureSaveTasks, CAPTURE_SAVE_TASK_KEY, rebaseCaptureEntries } from './capture-save-tasks.js';
 import { jsonBytes, startPhase, timingEnabled } from "./perf-trace.js";
@@ -31,8 +33,9 @@ import { createProjectOperations } from "./project-operations.js";
 import { createBrowserLibraryIdentity } from "./library-identity.js";
 import { validateProjectOperation } from "./project-operation-specs.js";
 import { collectVideoPagePayload, normalizeVideoPagePayload } from "./video-page-capture.js";
+import { collectDouyinVideoPayload } from './douyin-video-capture.js';
 import { installVideoDiscovery, addDiscoveredVideos } from "./video-discovery.js";
-import { pickPageContent } from "./page-content-picker.js";
+import { pickPageContent, validateSelectedCaptureRectangles } from "./page-content-picker.js";
 import { CAPTURE_SAVED_TEXT_KEY, createTextCandidate } from "./capture-text-candidate.js";
 import { planImageGenerationPrompts, generationPromptConfirmation } from "./image-generation-ingestion.js";
 import { readImageGenerationInfo, embeddedMediaPrompts } from "./image-generation-info.js";
@@ -55,7 +58,6 @@ import { createCaseOperations } from "./case-operations.js";
 import { CASE_OPERATION_SPECS, CASE_SEARCH_PROPERTIES } from './case-operation-specs.js';
 import { createAgentTransfers } from "./agent-transfers.js";
 import { reusableAgentFile } from './agent-transfer-reuse.js';
-import { discardComposerToolProgress } from './composer-tool-progress.js';
 import { saveAgentMaterial } from "./agent-save.js";
 import { captureAgentUrl } from "./agent-capture.js";
 import { agentError, AGENT_PROTOCOL_VERSION, AGENT_CHUNK_BYTES } from "./agent-protocol.js";
@@ -383,9 +385,12 @@ import {
   installPageCaptureSiteObserver,
   normalizePageCaptureSitePayload
 } from "./page-capture-site-adapters.js";
-import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType } from "./bounded-media.js";
+import { boundedMediaBlobFromResponse, fetchBoundedMedia, isSupportedDocumentMimeType, mediaDownloadFailure } from "./bounded-media.js";
 import { enrichPinterestCandidates, readPinterestHtml } from "./pinterest-capture.js";
 import { downloadPageCaptureVideo } from "./page-capture-video.js";
+import { resolveCapturedVideoOriginal } from './captured-video-original.js';
+import { downloadNativeVideo, nativeVideoStatus } from './native-video.js';
+import { createVideoComponentSetup, VIDEO_SETUP_ALARM } from './video-component-setup.js';
 import { createDownloadAhead } from "./capture-download-ahead.js";
 import { createCaptureAssetIndex } from "./capture-asset-index.js";
 import { resolveXVideoSources } from "./x-video-capture.js";
@@ -479,6 +484,8 @@ import {
   clearSyncPrivateState,
   getSyncCryptoKey,
   getSyncDirectoryHandle,
+  getStagedSyncDirectoryHandle,
+  saveSyncConnection,
   saveSyncCryptoKey
 } from "./sync-store.js";
 import {
@@ -625,6 +632,12 @@ const captureSaveTasks = createCaptureSaveTasks({ storage: libraryStorage,
   notify: message => chrome.runtime.sendMessage(message),
   execute: (message, progress) => runCaptureSave(message, progress)
 });
+const videoComponentSetup = createVideoComponentSetup({ storage: libraryStorage,
+  inspect: nativeVideoStatus, platform: () => chrome.runtime.getPlatformInfo(),
+  homepage: chrome.runtime.getManifest().homepage_url, downloads: chrome.downloads, alarms: chrome.alarms,
+  resume: () => captureSaveTasks.resumeVideo(),
+  notify: state => chrome.runtime.sendMessage({ type: 'VIDEO_COMPONENT_SETUP_CHANGED', state }).catch(() => {})
+});
 
 const readCaseLibraryState = createCaseLibraryReader({ storage: libraryStorage, readFullState: readState });
 const skillOperations = createSkillOperations({ loadState: () => enqueue(() => libraryStorage.get(STORAGE_KEYS.creativeSkills)), readBlob: getMediaBlob });
@@ -679,7 +692,7 @@ const agentCapturePreview = createAgentCapturePreview({ storage: libraryStorage,
     }
     return text;
   },
-  resolveLocalMedia: media => resolveCaptureLocalMedia(media, agentTransfers),
+  resolveLocalMedia: media => resolveCaptureLocalMedia(media, agentTransfers, { loadState: readCaseLibraryState }),
   readImage: async media => media.localAssetId ? await getMediaBlob(media.localAssetId) || await getScreenshotBlob(media.localAssetId)
     : fetchBoundedMedia(media.url, { kind: 'image', maxBytes: LIBRARY_TRANSFER_LIMITS.maxImageBytes, maxPixels: LIBRARY_TRANSFER_LIMITS.maxImagePixels }),
   loadState: () => libraryStorage.get(STORAGE_KEYS.organizerState),
@@ -696,7 +709,7 @@ const agentTasks = createAgentTasks({ storage: libraryStorage,
         await scope.assertCurrent();
         const contextRuntime = createComposerToolProgress({ storage: libraryStorage, sessionId: input.sessionId, userMessageId: requestId });
         return await runCaptureAssistant(input, { runtime: await getComposerAiRuntime(), signal: controller.signal, sessionRuntime: contextRuntime,
-          readAttachment: transferId => readCaptureChatAttachment(transferId, { transfers: agentTransfers, readBlob: getMediaBlob }),
+          readAttachment: transferId => readCaptureChatAttachment(transferId, { transfers: agentTransfers, readBlob: getMediaBlob, loadState: readCaseLibraryState, readDerived: getDerivedMedia }),
           readMedia: input => readAssistantCaseMedia(input, { loadState: readCaseLibraryState, readBlob: getMediaBlob }),
           call: async (name, args) => { await scope.assertCurrent(); return executeAgentOperation(name,
             name === 'save_capture' ? { ...args, captureAssistantRequestId: requestId } : args); },
@@ -706,19 +719,31 @@ const agentTasks = createAgentTasks({ storage: libraryStorage,
       } finally { captureAssistantControllers.delete(requestId); }
     }
     await scope.assertCurrent();
-    if (['prepare_capture', 'update_capture', 'save_capture'].includes(operation)) return enqueueCapture(async () => {
-      const controller = input.captureAssistantRequestId ? captureAssistantControllers.get(input.captureAssistantRequestId) : null;
-      const progress = controller ? createCaptureSaveProgress({ requestId: input.captureAssistantRequestId,
-        send: message => chrome.runtime.sendMessage(message) }) : undefined;
-      if (progress) {
-        progress.signal = controller.signal;
-        progress.retain = async ids => { ids.forEach(id => activeCaptureAssetIds.add(id)); };
-        progress.commit = async () => { controller.signal.throwIfAborted(); controller.committing = true;
-          void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId: input.captureAssistantRequestId, committing: true }).catch(() => {}); };
-      }
-      try { return await agentCapturePreview.execute(operation, input, requestId, scope, progress); }
-      finally { progress?.close(); activeCaptureAssetIds.clear(); }
-    });
+    if (['prepare_capture', 'update_capture', 'save_capture'].includes(operation)) {
+      scope.report({ state: 'queued', progress: { phase: 'queued' } });
+      return enqueueCapture(async () => {
+        await scope.assertCurrent();
+        scope.report({ state: 'running', progress: { phase: operation === 'save_capture' ? 'preparing'
+          : operation === 'prepare_capture' ? 'reading-page' : 'updating-preview' } });
+        const controller = input.captureAssistantRequestId ? captureAssistantControllers.get(input.captureAssistantRequestId) : null;
+        const progress = operation === 'save_capture' ? createCaptureSaveProgress({ requestId,
+          send: message => {
+            scope.report({ progress: message.progress, sequence: message.sequence });
+            if (controller) return chrome.runtime.sendMessage({ ...message, requestId: input.captureAssistantRequestId });
+          } }) : undefined;
+        if (progress) {
+          progress.signal = controller?.signal;
+          progress.retain = async ids => { ids.forEach(id => activeCaptureAssetIds.add(id)); };
+          progress.commit = async () => {
+            await scope.assertCurrent();
+            if (!controller) return;
+            controller.signal.throwIfAborted(); controller.committing = true;
+            void chrome.runtime.sendMessage({ type: 'CAPTURE_ASSIST_CHANGED', requestId: input.captureAssistantRequestId, committing: true }).catch(() => {}); };
+        }
+        try { return await agentCapturePreview.execute(operation, input, requestId, scope, progress); }
+        finally { progress?.close(); activeCaptureAssetIds.clear(); }
+      });
+    }
     if (operation === "capture") return enqueueCapture(async () => {
       await scope.assertCurrent();
       try {
@@ -878,6 +903,7 @@ restrictLocalStorageAccess().catch((error) => console.error("PromptDirector stor
 syncContextMenus().catch((error) => console.error("PromptDirector context menu sync failed", error));
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => console.error("PromptDirector side panel setup failed", error));
 chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === VIDEO_SETUP_ALARM) videoComponentSetup.check().catch(error => console.warn('视频组件安装接续未完成', error));
   if (alarm.name === 'agent-temporary-maintenance') {
     enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
     enqueue(() => withTrashCleanupProgress(resumeTrashCleanup)).catch(error => console.warn('永久删除文件清理未完成', error));
@@ -891,6 +917,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ANALYSIS_TASK_ALARM) return runQueuedAnalysisTasks();
 });
+videoComponentSetup.restore().catch(error => console.warn('视频组件安装恢复未完成', error));
 scheduleLibraryMaintenanceRunner();
 chrome.alarms.create('agent-temporary-maintenance', { periodInMinutes: RESOURCE_POLICY.temporaryIdleMs / (24 * 60_000) }).catch(error => console.warn('临时传输维护未安排', error));
 enqueue(() => agentTransfers.prune()).catch(error => console.warn('临时传输回收未完成', error));
@@ -937,7 +964,7 @@ chrome.action.onClicked.addListener((tab) => {
     .catch((error) => console.error("PromptDirector toolbar side panel open failed", error));
 });
 
-const originalFileDrag = createOriginalFileDragHost(chrome);
+const originalFileDrag = createOriginalFileDragHost(chrome, getMediaBlob);
 const syncOriginalFileDrag = () => originalFileDrag.sync().catch(error => console.error('PromptDirector file drop setup failed', error));
 chrome.permissions.onAdded.addListener(syncOriginalFileDrag);
 chrome.permissions.onRemoved.addListener(syncOriginalFileDrag);
@@ -1194,7 +1221,7 @@ async function handleMessage(message, interaction = {}) {
     case "APPLY_EXTENSION_UPDATE":
       return extensionUpdateLifecycle.apply();
     case "CONNECT_SYNC_FOLDER":
-      return enqueue(async () => connectSyncFolder(message.password));
+      return enqueue(async () => connectSyncFolder(message.password, message.directoryId));
     case "UNLOCK_SYNC_VAULT":
       return enqueue(async () => unlockSyncVault(message.password));
     case "SYNC_NOW":
@@ -1231,8 +1258,10 @@ async function handleMessage(message, interaction = {}) {
       if (!picked?.result?.html) return { ok: false, cancelled: true };
       const [captured] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: collectPageCaptureSnapshot,
         args: [{ serializeErrors: true, sessionId: crypto.randomUUID(), manualContentHtml: picked.result.html,
+          selectedContentMarker: picked.result.selectedContentMarker,
           selectionTemplate: picked.result.selectionTemplate, maxMedia: PAGE_CAPTURE_LIMITS.maxMediaPerCandidate }] });
-      return { ok: true, supplement: picked.result.supplement, batch: { ...readPageCaptureInjectionResult(captured), tabId: tab.id } };
+      const snapshot = await addVisiblePageCaptureFallbacks(readPageCaptureInjectionResult(captured), tab, { selectedOnly: true });
+      return { ok: true, supplement: picked.result.supplement, batch: { ...snapshot, tabId: tab.id } };
     }
     case "READ_PAGE_CAPTURE_DETAILS":
       return enqueueCapture(() => readGenericPageCaptureDetails(message));
@@ -1389,6 +1418,24 @@ async function handleMessage(message, interaction = {}) {
         await commitLocalChanges({ [STORAGE_KEYS.uiPreferences]: uiPreferences });
         return { ok: true, uiPreferences };
       });
+    case 'GET_NATIVE_VIDEO_STATUS':
+      return { ok: true, ...(await nativeVideoStatus()) };
+    case 'START_VIDEO_COMPONENT_SETUP':
+      return { ok: true, state: await videoComponentSetup.start({ restart: message.restart === true }) };
+    case 'CONTINUE_VIDEO_COMPONENT_SETUP':
+      return { ok: true, state: await videoComponentSetup.continue() };
+    case 'GET_VIDEO_COMPONENT_SETUP': {
+      let state = await videoComponentSetup.get();
+      if (['downloading', 'review', 'installing'].includes(state.phase)) state = await videoComponentSetup.check();
+      else if (['idle', 'ready'].includes(state.phase)) {
+        try {
+          const result = await nativeVideoStatus();
+          state = { phase: result.updateRequired ? 'update' : result.available ? 'ready' : 'idle' };
+        }
+        catch { state = { phase: 'idle' }; }
+      }
+      return { ok: true, state };
+    }
     case 'UPDATE_LAYOUT_PREFERENCES':
       return enqueue(async () => {
         const stored = await libraryStorage.get(STORAGE_KEYS.uiPreferences);
@@ -1646,9 +1693,9 @@ async function handleMessage(message, interaction = {}) {
     case "APPLY_ENTRY_ANALYSIS_RESULT":
       return enqueue(async () => applyEntryAnalysisResult(message));
     case "PREVIEW_ANALYSIS_BATCH":
-      return enqueue(async () => previewDeepSeekBatch(message.outputLocale, message.mode, message.entryIds));
+      return enqueue(async () => previewDeepSeekBatch(message.outputLocale, message.mode, message.entryIds, message.scope, message.includeChanged));
     case "CREATE_ANALYSIS_BATCH":
-      return enqueue(async () => createDeepSeekBatch(message.outputLocale, message.mode, message.entryIds, message.expectedEntryIds));
+      return enqueue(async () => createDeepSeekBatch(message.outputLocale, message.mode, message.entryIds, message.expectedEntryIds, message.scope, message.includeChanged, message.expectedItems));
     case "GET_ANALYSIS_BATCH_STATUS":
       return getDeepSeekBatchStatus(message.jobId);
     case "PAUSE_ANALYSIS_BATCH":
@@ -2045,8 +2092,18 @@ async function waitForPageCaptureTab(tabId, expectedUrl) {
 async function readPageCaptureSiteData(tab, { installObserver = true, maxCandidates = PAGE_CAPTURE_LIMITS.maxCandidates } = {}) {
   if (!tab?.id || !/^https?:/iu.test(tab.url || "")) return null;
   try {
-    if (/^(?:www\.)?(?:youtube\.com|bilibili\.com)$/u.test(new URL(tab.url).hostname)) {
-      const [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: collectVideoPagePayload });
+    if (/^(?:www\.)?(?:youtube\.com|bilibili\.com|douyin\.com)$/u.test(new URL(tab.url).hostname)) {
+      const douyin = new URL(tab.url).hostname.endsWith('douyin.com');
+      let [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: douyin ? collectDouyinVideoPayload : collectVideoPagePayload });
+      // Active capture only: browser load completion can precede the player's
+      // React commit. Stop if navigation changes instead of binding stale data.
+      const deadline = Date.now() + PAGE_CAPTURE_LIMITS.navigationTimeoutMs;
+      while (douyin && video?.result && !video.result.resolved && Date.now() < deadline) {
+        if (activePageCapture?.cancelled) break;
+        await new Promise(resolve => setTimeout(resolve, 200));
+        if ((await chrome.tabs.get(tab.id)).url !== tab.url) throw new Error('采集期间网页已切换，请重新读取当前作品');
+        [video] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: 'MAIN', func: collectDouyinVideoPayload });
+      }
       const payload = normalizeVideoPagePayload(video?.result, tab.url);
       if (payload) return payload;
     }
@@ -2106,20 +2163,30 @@ async function resolveCaptureSourceContext(tab) {
   };
 }
 
-async function addVisiblePageCaptureFallbacks(snapshot, tab) {
+async function addVisiblePageCaptureFallbacks(snapshot, tab, { selectedOnly = false } = {}) {
   const positions = [];
   const candidates = (Array.isArray(snapshot?.candidates) ? snapshot.candidates : []).map((candidate, candidateIndex) => ({
     ...candidate,
     media: (Array.isArray(candidate?.media) ? candidate.media : []).map((media, mediaIndex) => {
-      if (media.kind === "image" && media.fallbackRect && !media.dataUrl) positions.push({ candidateIndex, mediaIndex, selection: media.fallbackRect });
+      if (media.kind === "image" && media.fallbackRect && !media.dataUrl && (!selectedOnly || media.captureMethod === 'pixel-fallback')) positions.push({ candidateIndex, mediaIndex, selection: media.fallbackRect });
       return media;
     })
   }));
   if (!positions.length || !Number.isInteger(tab.windowId)) return { ...snapshot, candidates };
   try {
     const [current] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-    if (current?.id !== tab.id) return { ...snapshot, candidates };
+    if (current?.id !== tab.id) {
+      if (selectedOnly) throw new Error('所选网页已经切换，请重新选择；当前草稿保留');
+      return { ...snapshot, candidates };
+    }
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+    if (selectedOnly) {
+      const [capturedTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+      if (capturedTab?.id !== tab.id) throw new Error('所选网页已经切换，请重新选择；当前草稿保留');
+      const [checked] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: validateSelectedCaptureRectangles,
+        args: [positions.map(item => item.selection), true] });
+      if (!checked?.result) throw new Error('所选画面位置已经变化，请重新选择；当前草稿保留');
+    }
     await ensureOffscreenDocument();
     const response = await chrome.runtime.sendMessage({
       target: "offscreen",
@@ -2128,7 +2195,10 @@ async function addVisiblePageCaptureFallbacks(snapshot, tab) {
       selections: positions.map((item) => item.selection),
       maxDataUrlCharacters: PAGE_CAPTURE_LIMITS.maxInlinePixelDataCharacters
     });
-    if (!response?.ok || response.dataUrls?.length !== positions.length) return { ...snapshot, candidates };
+    if (!response?.ok || response.dataUrls?.length !== positions.length || selectedOnly && response.dataUrls.some(value => !value)) {
+      if (selectedOnly) throw new Error(response?.message || '所选画面截图失败，请重试；当前草稿保留');
+      return { ...snapshot, candidates };
+    }
     response.dataUrls.forEach((pixelData, index) => {
       if (!pixelData) return;
       const position = positions[index];
@@ -2138,7 +2208,17 @@ async function addVisiblePageCaptureFallbacks(snapshot, tab) {
         previewDataUrl: pixelData
       };
     });
-  } catch {
+  } catch (error) {
+    if (selectedOnly) {
+      const failedIds = new Set(positions.map(item => candidates[item.candidateIndex].media[item.mediaIndex].id));
+      const remaining = candidates.map(candidate => ({ ...candidate, completeness: 'partial',
+        sourceFacts: { ...candidate.sourceFacts, status: 'partial' },
+        media: candidate.media.filter(media => !failedIds.has(media.id)),
+        articleDocument: { ...candidate.articleDocument, blocks: (candidate.articleDocument?.blocks || []).filter(block => !failedIds.has(block.assetId)) }
+      })).filter(candidate => candidate.contentText || candidate.media.length);
+      if (!remaining.length) throw error;
+      return { ...snapshot, candidates: remaining, error: error.message };
+    }
   }
   return { ...snapshot, candidates };
 }
@@ -2259,7 +2339,7 @@ async function fetchPageCaptureImage(url, { onProgress, signal }) {
 // The plain network download each item would start first, so it can begin while earlier items are
 // written. Items restored from a save checkpoint, local files and page-session fallbacks are not
 // fetched ahead; they keep their existing path.
-function pageCaptureDownloadPlan(media, candidate, progress) {
+function pageCaptureDownloadPlan(media, candidate, progress, videoOnlineOnly = false) {
   if (media.localTransferId) return null;
   const cached = key => progress.mediaCached?.(key) === true;
   if (["document", "attachment"].includes(media.kind)) {
@@ -2270,16 +2350,17 @@ function pageCaptureDownloadPlan(media, candidate, progress) {
     return { key: `document:${media.url}`, start: options => fetchBoundedMedia(media.url, { ...pageCaptureDocumentDownloadOptions(media), ...options }) };
   }
   if (media.kind === "video") {
+    if (videoOnlineOnly || media.videoStreams) return null;
     if (!media.url || cached(`video:${candidate.id}:${media.id}:${media.url}`)) return null;
     return { key: `video:${media.url}`, start: options => downloadPageCaptureVideo(media.url, {
-      ...options, declaredVideo: ["site-original", "video-element"].includes(media.sourceKind) }) };
+      ...options, mimeType: media.mimeType, declaredVideo: ["site-original", "video-element"].includes(media.sourceKind) }) };
   }
   if (media.localAssetId || cached(`image:${candidate.id}:${media.id}:${media.url || "pixels"}`)) return null;
   const [url] = pageCaptureMediaFetchCandidates(media);
   return url ? { key: `image:${url}`, start: options => fetchPageCaptureImage(url, options) } : null;
 }
 
-async function commitPageCapture(batchValue, metadata = {}, progress = createCaptureSaveProgress()) {
+async function commitPageCapture(batchValue, metadata = {}, progress = createCaptureSaveProgress(), durableReceipt) {
   const captureMetadata = createCaptureDraft(metadata);
   let batch = normalizePageCaptureBatch(batchValue);
   if (Number.isInteger(batch.tabId) && batch.candidates.some((candidate) => candidate.media.some((media) => media.fallbackRect && !media.dataUrl))) {
@@ -2301,36 +2382,57 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
   const mediaCount = selected.reduce((count, candidate) => count + candidate.media.length, 0);
   let mediaOffset = 0;
   const state = await enqueue(() => readState());
+  const videoOnlineOnly = state.uiPreferences?.videoOnlineOnly === true;
+  // Saved previews and picker fragments share the same source resolution as
+  // whole-page/MCP capture. Match selected X media by poster and post ownership.
+  if (!videoOnlineOnly) for (let index = 0; index < selected.length; index++) {
+    progress.signal?.throwIfAborted();
+    const candidate = selected[index];
+    const snapshot = await resolveXVideoSources({ candidates: [candidate] },
+      { id: batch.tabId, url: candidate.canonicalUrl }, chrome, { allowTabReload: false, allowTemporaryTab: true,
+        cancelled: () => Boolean(progress.signal?.aborted) });
+    selected[index] = snapshot.candidates[0];
+  }
   const loadMedia = (key, load) => progress.media ? progress.media(key, load) : load();
   const results = [];
   let entries = [...state.entries];
   const savedAssets = createCaptureAssetIndex();
   const savedAssetIds = [];
   const captureFiles = new Map();
+  const copySources = new Set();
+  const targetEntryIds = new Set(state.organizerState.collections.find(item => item.id === captureMetadata.collectionId)?.entryIds || []);
+  const projectScoped = Boolean(captureMetadata.collectionId || captureMetadata.newCollectionName);
   let metadataCommitted = false;
   try {
     for (const candidate of selected) {
       progress.signal?.throwIfAborted();
-      const duplicate = entries.find(entry => samePageCaptureSource(entry, candidate));
+      const matches = entries.filter(entry => samePageCaptureSource(entry, candidate));
+      // A project copy owns its edits. Repair that copy before considering the
+      // original in another project; foreign matches are copied at commit time.
+      const duplicate = (projectScoped && matches.find(entry => targetEntryIds.has(entry.id)
+        || !state.entries.some(original => original.id === entry.id))) || matches[0];
+      if (projectScoped && duplicate && !targetEntryIds.has(duplicate.id)
+        && state.entries.some(original => original.id === duplicate.id)) copySources.add(duplicate.id);
       const repair = duplicate ? await planPageCaptureRepair(duplicate, candidate, async id => Boolean(await getMediaBlob(id))) : null;
       const refreshedClassification = duplicate ? classifyCapturedContent({ ...duplicate, sourceFacts: candidate.sourceFacts }, state.classificationRules, state.taxonomy) : null;
       const classificationChanged = duplicate && JSON.stringify(duplicate.classification?.pathIds) !== JSON.stringify(refreshedClassification.pathIds);
       if (duplicate && !repair.pending.length && !repair.obsoleteReferences.size && !repair.promptsChanged && !repair.textAdditions.length && duplicate.sourceFacts?.pageType === candidate.pageType && !classificationChanged) {
         results.push({ candidateId: candidate.id, status: "duplicate", entryId: duplicate.id, title: duplicate.title,
+          contentTypeId: duplicate.classification?.pathIds?.[0] || "",
           ...pageCaptureMediaReceipt(candidate, repair.assetIds) });
         mediaOffset += candidate.media.length;
         continue;
       }
       const mediaAssets = [];
       const articleAssetIds = new Map(repair?.assetIds);
-      const warnings = [];
+      const warnings = candidate.extraction?.scope === 'selection' && batch.error ? [batch.error] : [];
       const failedMediaIds = new Set();
       if (candidate.extraction?.pendingMediaCount) {
         warnings.push(`正文仍有 ${candidate.extraction.pendingMediaCount} 项媒体未加载，已保存当前可用内容，请回到来源页面核对`);
       }
       const candidateMedia = repair?.pending || candidate.media;
       const downloadAhead = createDownloadAhead({ signal: progress.signal });
-      downloadAhead.plan(candidateMedia.map(media => pageCaptureDownloadPlan(media, candidate, progress)));
+      downloadAhead.plan(candidateMedia.map(media => pageCaptureDownloadPlan(media, candidate, progress, videoOnlineOnly)));
       try {
       for (const [mediaIndex, media] of candidateMedia.entries()) {
         progress.signal?.throwIfAborted();
@@ -2339,8 +2441,9 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
         const onProgress = value => progress.update(value);
         progress.stage('preparing', context);
         if (media.localTransferId) {
-          const record = await agentTransfers.get(media.localTransferId);
-          if (record.state !== 'ready' || record.assetId !== media.localAssetId || record.prepared?.asset?.kind !== media.kind) throw new Error('本机文件已变化或不可用，请重新选择');
+          try {
+          const record = await resolveCaptureChatFile(media.localTransferId, { transfers: agentTransfers, loadState: readCaseLibraryState, touch: false });
+          if (record.assetId !== media.localAssetId || record.prepared.asset.kind !== media.kind) throw new Error('本机文件已变化或不可用，请重新选择');
           const blob = await getMediaBlob(record.assetId);
           if (!blob || blob.size !== record.byteSize) throw new Error('本机原件未取得，已有预览保留');
           await progress.retain?.([record.assetId, ...(record.prepared.poster ? [record.prepared.poster.id] : [])]);
@@ -2348,7 +2451,12 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
             sourceUrl: candidate.canonicalUrl, originalWorkUrl: candidate.canonicalUrl });
           if (record.prepared.poster) mediaAssets.push({ ...record.prepared.poster, usage: 'poster', derivedFromAssetId: record.assetId });
           articleAssetIds.set(media.id, record.assetId); captureFiles.set(record.id, { record, candidateId: candidate.id });
-          warnings.push(...record.prepared.warnings); continue;
+          warnings.push(...record.prepared.warnings);
+          } catch (error) {
+            progress.signal?.throwIfAborted();
+            failedMediaIds.add(media.id); warnings.push(`${media.filename || media.alt || candidate.title}：${userMessage(error)}`);
+          }
+          continue;
         }
         if (["document", "attachment"].includes(media.kind)) {
           if (!(media.kind === "attachment" ? /\.skill$/iu.test(media.filename) && media.mimeType === "application/zip" : isSupportedDocumentMimeType(media.mimeType))) {
@@ -2430,14 +2538,11 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
           };
           try {
             progress.stage('download', context);
-            const blob = await loadMedia(`video:${candidate.id}:${media.id}:${media.url}`, () => (downloadAhead.take(`video:${media.url}`, onProgress) ?? downloadPageCaptureVideo(media.url, {
-              onProgress, signal: progress.signal,
-              declaredVideo: ["site-original", "video-element"].includes(media.sourceKind)
-            })).catch(async error => {
-              progress.signal?.throwIfAborted();
-              if (batch.sessionMediaAllowed === false) throw error;
-              try { return (await fetchSelectedPageSessionMedia(batch, candidate, media.url, "video", progress, context)).blob; }
-              catch (sessionError) { throw new Error(`${userMessage(error)}；${userMessage(sessionError)}`); }
+            const blob = videoOnlineOnly ? null : await loadMedia(`video:${candidate.id}:${media.id}:${media.url}`, () => resolveCapturedVideoOriginal(media, candidate, {
+              signal: progress.signal, onProgress,
+              download: (url, options) => downloadAhead.take(`video:${url}`, onProgress) ?? downloadPageCaptureVideo(url, options),
+              downloadNative: downloadNativeVideo,
+              ...(batch.sessionMediaAllowed !== false ? { downloadSession: async url => (await fetchSelectedPageSessionMedia(batch, candidate, url, 'video', progress, context)).blob } : {})
             }));
             if (blob) {
               progress.stage('verify', context);
@@ -2480,15 +2585,15 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
             progress.signal?.throwIfAborted();
                 warnings.push(`${media.alt || candidate.title}：视频已保存，封面生成失败（${userMessage(error)}）`);
               }
-            } else if (playbackMode === "source") {
-              warnings.push(`${media.alt || candidate.title}：来源未提供直接视频文件，已保留在线来源`);
             }
           } catch (error) {
           progress.signal?.throwIfAborted();
             progress.signal?.throwIfAborted();
+            if (error.code === 'video_component_required') throw error;
             failedMediaIds.add(media.id);
-            warnings.push(`${media.alt || candidate.title}：视频本地副本未保存，已保留来源链接（${userMessage(error)}）`);
+            warnings.push(`${media.alt || candidate.title}：视频原件未保存（${userMessage(error)}）`);
           }
+          if (!videoOnlineOnly && videoAsset.storageMode !== 'managed') continue;
           if (!videoAsset.posterAssetId && media.posterUrl) {
             try {
               const posterContext = { ...context, kind: 'poster' };
@@ -2603,6 +2708,14 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
           ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
         continue;
       }
+      // A selected work's description alone is not a saved video case. Keep the
+      // full draft for retry; explicit text-only saves still have no video here.
+      if (candidate.pageType === 'video' && candidate.media.some(media => media.kind === 'video')
+        && failedMediaIds.size && !mediaAssets.some(asset => asset.usage !== 'poster')) {
+        results.push({ candidateId: candidate.id, status: 'failed', title: candidate.title, warnings,
+          ...pageCaptureMediaReceipt(candidate, articleAssetIds, failedMediaIds) });
+        continue;
+      }
       const articleText = articleDocumentText(candidate.articleDocument);
       const base = buildEntry({
         text: articleText || candidate.contentText || (candidate.sourceFacts.originalPromptAvailable === false ? "" : candidate.excerpt),
@@ -2674,14 +2787,40 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
       if (captureMetadata.contentTypeExplicit && !isValidContentPath(latest.taxonomy, [captureMetadata.contentTypeId])) {
         throw new Error('分类在下载期间已变化，请重新选择');
       }
-      organizerState = organizerAfterCapturePlacement(latest.organizerState, entries, affectedIds, captureMetadata);
+      // Reject a changed target membership before writing a repair into a case
+      // that the user moved elsewhere while media was being downloaded.
+      if (captureMetadata.collectionId && affectedIds.some(id => targetEntryIds.has(id)
+        && !latest.organizerState.collections.find(item => item.id === captureMetadata.collectionId)?.entryIds.includes(id))) {
+        throw new Error('案例项目在下载期间已变化，待保存内容已保留，请重试');
+      }
+      const copiedIds = affectedIds.filter(id => copySources.has(id));
+      const preparedCopies = new Map(entries.filter(entry => copiedIds.includes(entry.id)).map(entry => [entry.id, entry]));
+      // Rebase above checks the original for concurrent edits. Restore it before
+      // the shared copy planner runs, then apply the repair only to the new copy.
+      entries = entries.map(entry => preparedCopies.has(entry.id) ? latest.entries.find(item => item.id === entry.id) : entry);
+      organizerState = organizerAfterCapturePlacement(latest.organizerState, entries,
+        affectedIds.filter(id => !copySources.has(id)), captureMetadata);
+      const targetId = captureMetadata.collectionId || (captureMetadata.newCollectionName
+        ? organizerState.collections.find(collection => !latest.organizerState.collections.some(prior => prior.id === collection.id))?.id : '');
+      const copyPlan = copiedIds.length ? planCaseCopies({ entries, organizerState, compoundCases: latest.compoundCases }, copiedIds, targetId) : null;
+      if (copyPlan) {
+        const repairs = new Map();
+        for (const copy of copyPlan.copies) for (const [sourceId, copyId] of Object.entries(copy.entryIdMap)) {
+          if (preparedCopies.has(sourceId)) repairs.set(copyId, preparedCopies.get(sourceId));
+          for (const result of results) if (result.entryId === sourceId) result.entryId = copyId;
+        }
+        const oldIds = new Set(latest.entries.map(entry => entry.id));
+        const preserved = new Map(entries.map(entry => [entry.id, entry]));
+        entries = copyPlan.state.entries.map(entry => repairs.has(entry.id)
+          ? { ...repairs.get(entry.id), id: entry.id, copyOrigin: entry.copyOrigin, caseInstanceId: entry.caseInstanceId }
+          : oldIds.has(entry.id) ? preserved.get(entry.id) : entry);
+        organizerState = copyPlan.state.organizerState;
+      }
       // Commit project copies with their actual receipt IDs. Deferring ownership
       // migration until the next read leaves Open case pointing at the source.
       const folderPlan = needsFolderOwnershipMigration({ organizerState })
-        ? planFolderOwnership({ entries, organizerState, compoundCases: latest.compoundCases }) : null;
+        ? planFolderOwnership({ entries, organizerState, compoundCases: copyPlan?.state.compoundCases || latest.compoundCases }) : null;
       if (folderPlan) { entries = folderPlan.state.entries; organizerState = folderPlan.state.organizerState; }
-      const targetId = captureMetadata.collectionId || (captureMetadata.newCollectionName
-        ? organizerState.collections.find(collection => !latest.organizerState.collections.some(prior => prior.id === collection.id))?.id : '');
       for (const copy of (folderPlan?.copies || []).filter(item => item.collectionId === targetId)) {
         for (const result of results) result.entryId = copy.entryIdMap[result.entryId] || result.entryId;
       }
@@ -2691,8 +2830,14 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
         const result = results.find(item => item.candidateId === candidateId && item.entryId);
         return result ? [[agentTransfers.key(record.id), { ...record, state: 'committed', entryId: result.entryId, prepared: null, chunks: 0 }]] : [];
       }));
+      // The durable receipt carries the classification actually committed,
+      // including duplicates and project copies, rather than model arguments.
+      const receiptTypes = new Map(results.filter(result => result.entryId).map(result => [result.entryId, '']));
+      for (const entry of entries) if (receiptTypes.has(entry.id)) receiptTypes.set(entry.id, entry.classification?.pathIds?.[0] || '');
+      for (const result of results) if (result.entryId) result.contentTypeId = receiptTypes.get(result.entryId);
       await commitLocalChanges({ [STORAGE_KEYS.entries]: entries, [STORAGE_KEYS.organizerState]: organizerState,
-        ...(folderPlan?.changed ? { [STORAGE_KEYS.compoundCases]: folderPlan.state.compoundCases } : {}), ...files });
+        ...(folderPlan?.changed || copyPlan ? { [STORAGE_KEYS.compoundCases]: folderPlan?.state.compoundCases || copyPlan.state.compoundCases } : {}), ...files,
+        ...(durableReceipt ? { [durableReceipt.key]: durableReceipt.value({ ok: true, results, collectionId: targetId || '' }) } : {}) });
     });
     metadataCommitted = true;
     const postCommitWarnings = [];
@@ -2755,7 +2900,13 @@ async function fetchSelectedPageSessionMedia(batch, candidate, value, kind = "im
         timeoutMs
       }]
     });
+    signal.throwIfAborted();
     const prepared = preparedResult?.result;
+    if (prepared?.token === token && prepared.ok === false && prepared.error) {
+      const error = new Error(prepared.error.message || '页面媒体读取失败');
+      error.name = prepared.error.name;
+      throw mediaDownloadFailure(error, prepared.error);
+    }
     if (!prepared || prepared.token !== token || !Number.isSafeInteger(prepared.chunkCount) || prepared.chunkCount <= 0) {
       throw new Error("页面没有返回有效媒体");
     }
@@ -3107,7 +3258,7 @@ async function createQuickNote(titleValue, textValue, organization = {}) {
 }
 
 async function addEntryTimeNote(entryId, noteValue) {
-  const state = await readState();
+  const state = await readCaseLibraryState();
   const current = findEntry(state, entryId);
   const updated = touchEntry(addTimeNote(current, noteValue));
   const entries = state.entries.map((entry) => entry.id === current.id ? updated : entry);
@@ -3851,7 +4002,7 @@ async function readState() {
   // A new required content type can arrive within the same data schema. Repair
   // only the small type catalog; do not remigrate cases or reset custom types.
   const currentTaxonomy = normalizeTaxonomy(state.taxonomy);
-  if (JSON.stringify(currentTaxonomy) !== JSON.stringify(state.taxonomy)) {
+  if (!sameUndoState(currentTaxonomy, state.taxonomy)) {
     state = { ...state, taxonomy: currentTaxonomy };
     await commitLocalChanges({ [STORAGE_KEYS.taxonomy]: currentTaxonomy });
   }
@@ -3863,7 +4014,7 @@ async function readState() {
     stored[STORAGE_KEYS.facetUndo] = null;
   }
   const composerSessions = normalizeComposerSessions(stored[STORAGE_KEYS.composerSessions]);
-  if (JSON.stringify(stored[STORAGE_KEYS.composerSessions] ?? []) !== JSON.stringify(composerSessions)) {
+  if (!sameUndoState(stored[STORAGE_KEYS.composerSessions] ?? [], composerSessions)) {
     await libraryStorage.update('composerSessions', latest => ({ composerSessions: normalizeComposerSessions(latest.composerSessions) }));
   }
   const creativeRuns = normalizeCreativeRuns(stored[STORAGE_KEYS.creativeRuns]);
@@ -6978,8 +7129,13 @@ async function applyEntryAnalysisResult(message) {
   };
 }
 
-async function previewDeepSeekBatch(outputLocale, mode = "incremental", entryIds = []) {
+async function previewDeepSeekBatch(outputLocale, mode = "incremental", entryIds, scopeValue, includeChanged) {
   const state = await readState();
+  const scope = normalizeAnalysisScope(scopeValue);
+  if (["rebuild", "reanalyze"].includes(mode) && (scope?.collectionId || scope?.entryIds || Array.isArray(scope?.contentTypeIds) || scope?.excludedCollectionIds.length)) {
+    throw new Error("重建标签系统需要完整资料库；指定范围请使用重新分析全部");
+  }
+  const scopedEntries = selectAnalysisScope(state.entries, state.organizerState, scope);
   const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisRebuildStaging,
@@ -6999,18 +7155,25 @@ async function previewDeepSeekBatch(outputLocale, mode = "incremental", entryIds
   const settings = resolveTextTaskSettings("textTags", await loadAiConfiguration(), { requireConfigured: false });
   const locale = outputLocale === "en" ? "en" : "zh-CN";
   const profileFingerprint = await analysisProfileFingerprint(settings, locale);
-  const preview = await previewAnalysisBatch(state.entries, {
+  const preview = await previewAnalysisBatch(scopedEntries, {
     analysisModel: settings.activeProvider === "compatible" ? settings.compatible.model : settings.analysisModel,
     profileFingerprint,
     mode,
-    entryIds: Array.isArray(entryIds) ? entryIds : [],
+    entryIds: mode === "selected" && scope ? scopedEntries.map(item => item.id) : Array.isArray(entryIds) ? entryIds : undefined,
+    scope,
+    includeChanged,
     fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length
   });
-  return { ok: true, message: "批量分析预览已生成", preview };
+  return { ok: true, message: "批量分析预览已生成", preview: { ...preview, scope, includeChanged: includeChanged !== false } };
 }
 
-async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds = [], expectedEntryIds) {
+async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds, expectedEntryIds, scopeValue, includeChanged, expectedItems) {
   const state = await readState();
+  const scope = normalizeAnalysisScope(scopeValue);
+  if (["rebuild", "reanalyze"].includes(mode) && (scope?.collectionId || scope?.entryIds || Array.isArray(scope?.contentTypeIds) || scope?.excludedCollectionIds.length)) {
+    throw new Error("重建标签系统需要完整资料库；指定范围请使用重新分析全部");
+  }
+  const scopedEntries = selectAnalysisScope(state.entries, state.organizerState, scope);
   const stored = await libraryStorage.get([
     STORAGE_KEYS.batchJob,
     STORAGE_KEYS.analysisRebuildStaging
@@ -7036,18 +7199,23 @@ async function createDeepSeekBatch(outputLocale, mode = "incremental", entryIds 
   }
   const locale = outputLocale === "en" ? "en" : "zh-CN";
   const profileFingerprint = await analysisProfileFingerprint(settings, locale);
-  const job = await createAnalysisBatchJob(state.entries, {
+  const job = await createAnalysisBatchJob(scopedEntries, {
     analysisModel: settings.activeProvider === "compatible" ? settings.compatible.model : settings.analysisModel,
     outputLocale: locale,
     profileFingerprint,
     mode,
-    entryIds: Array.isArray(entryIds) ? entryIds : [],
+    entryIds: mode === "selected" && scope ? scopedEntries.map(item => item.id) : Array.isArray(entryIds) ? entryIds : undefined,
+    scope,
+    includeChanged,
     catalogRevision: state.facetCatalog.revision,
     fixedTaxonomyCharacters: analysisTaxonomyPrompt(state.facetCatalog, locale).length,
     concurrency: configuration.assignments.textTags.concurrency,
     providerId: configuration.assignments.textTags.providerId,
     outputProtocol: "json_object"
   });
+  if (!sameAnalysisTargets(expectedItems, job.items)) {
+    return { ok: false, previewChanged: true, message: "待分析案例已变化，请重新检查后确认费用" };
+  }
   if (Array.isArray(expectedEntryIds)) {
     const expected = new Set(expectedEntryIds.map(String));
     if (job.items.length !== expected.size || job.items.some((item) => !expected.has(item.entryId))) {
@@ -7280,6 +7448,7 @@ async function undoDeepSeekBatch(jobId, confirmationToken) {
 
 async function previewVisionBatchTask(message) {
   const state = await readState();
+  if (message.scope) message = { ...message, entryIds: selectAnalysisScope(state.entries, state.organizerState, normalizeAnalysisScope(message.scope)).map(item => item.id) };
   const configuration = await loadAiConfiguration();
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
   const provider = settings[settings.activeProvider];
@@ -7299,6 +7468,7 @@ async function previewVideoBatchTask(message) {
     loadAiConfiguration(),
     libraryStorage.get(STORAGE_KEYS.analysisTasks)
   ]);
+  if (message.scope) message = { ...message, entryIds: selectAnalysisScope(state.entries, state.organizerState, normalizeAnalysisScope(message.scope)).map(item => item.id) };
   const route = resolveVideoAnalysisTask(configuration);
   const selected = new Set((Array.isArray(message.entryIds) ? message.entryIds : []).map(String));
   const busy = new Set(normalizeAnalysisTaskRegistry(stored[STORAGE_KEYS.analysisTasks]).items
@@ -7385,6 +7555,7 @@ async function videoAssetFingerprint(blob) {
 
 async function createVideoBatchTask(message) {
   const [state, configuration] = await Promise.all([readState(), loadAiConfiguration()]);
+  if (message.scope) message = { ...message, entryIds: selectAnalysisScope(state.entries, state.organizerState, normalizeAnalysisScope(message.scope)).map(item => item.id) };
   const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const previous = normalizeAnalysisBatchJob(stored[STORAGE_KEYS.batchJob]);
   if (previous && ["running", "paused"].includes(previous.status)
@@ -7426,6 +7597,10 @@ async function createVideoBatchTask(message) {
     contractVersion: VIDEO_RECONSTRUCTION_CONTRACT_VERSION,
     outputLocale
   });
+  if (!sameAnalysisTargets(message.expectedItems, job.items)) {
+    return { ok: false, previewChanged: true, message: "待分析案例已变化，请重新检查后确认费用" };
+  }
+  job.scope = normalizeAnalysisScope(message.scope);
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
   await libraryStorage.remove(STORAGE_KEYS.analysisBatchUndo);
   await ensureAnalysisBatchAlarm(true);
@@ -7439,6 +7614,7 @@ async function createVideoBatchTask(message) {
 
 async function createVisionBatchTask(message) {
   const state = await readState();
+  if (message.scope) message = { ...message, entryIds: selectAnalysisScope(state.entries, state.organizerState, normalizeAnalysisScope(message.scope)).map(item => item.id) };
   const stored = await libraryStorage.get(STORAGE_KEYS.batchJob);
   const configuration = await loadAiConfiguration();
   const settings = resolveVisionTaskSettings("imageAnalysis", configuration, { requireConfigured: false });
@@ -7461,6 +7637,10 @@ async function createVisionBatchTask(message) {
     outputLocale: message.outputLocale,
     concurrency: configuration.assignments.imageAnalysis.concurrency
   });
+  if (!sameAnalysisTargets(message.expectedItems, job.items)) {
+    return { ok: false, previewChanged: true, message: "待分析案例已变化，请重新检查后确认费用" };
+  }
+  job.scope = normalizeAnalysisScope(message.scope);
   await commitLocalChanges({ [STORAGE_KEYS.batchJob]: job });
   await libraryStorage.remove(STORAGE_KEYS.analysisBatchUndo);
   await ensureAnalysisBatchAlarm(true);
@@ -9205,21 +9385,35 @@ async function createArchiveUrl(state, sharing = false) {
   return result;
 }
 
-async function connectSyncFolder(password) {
-  const directory = await getSyncDirectoryHandle();
+async function connectSyncFolder(password, directoryId) {
+  const directory = await getStagedSyncDirectoryHandle(directoryId);
   if (!directory) throw new Error("请先选择同步文件夹");
   await requireDirectoryPermission(directory);
   const vault = await createOrUnlockSyncVault(directory, String(password ?? ""));
   const stored = await libraryStorage.get(STORAGE_KEYS.syncSettings);
+  const current = normalizeSyncSettings(stored[STORAGE_KEYS.syncSettings]);
+  const changedVault = current.vaultId !== vault.header.vaultId;
   const settings = normalizeSyncSettings({
-    ...stored[STORAGE_KEYS.syncSettings],
+    ...current,
     enabled: true,
     vaultId: vault.header.vaultId,
+    lastSyncAt: changedVault ? "" : current.lastSyncAt,
     lastError: "",
     lastErrorCode: ""
   });
-  await saveSyncCryptoKey(vault.key);
-  await commitLocalChanges({ [STORAGE_KEYS.syncSettings]: settings });
+  const previousConnection = {
+    directory: await getSyncDirectoryHandle(),
+    key: await getSyncCryptoKey()
+  };
+  await saveSyncConnection({ directory, key: vault.key });
+  try {
+    const update = { [STORAGE_KEYS.syncSettings]: settings };
+    if (changedVault) update[STORAGE_KEYS.syncMeta] = normalizeSyncMeta({ localDirty: true });
+    await commitLocalChanges(update);
+  } catch (error) {
+    await saveSyncConnection(previousConnection);
+    throw error;
+  }
   return {
     ok: true,
     connected: true,

@@ -31,13 +31,44 @@ export async function rememberVerifiedFile(path, handle, hash) {
   verified.set(path, { signature: fileSignature(await handle.stat({ bigint: true })), hash, usedAt: Date.now() });
 }
 
-// Directory creation arbitrates cleanup with readers in other connector
-// processes. A crashed lease is left alone: uncertain ownership favors retention.
-export async function leaseCacheFile(path) {
+// Leases retain live readers, but an exited process must not pin a disposable
+// copy forever. Unique owner filenames let only one contender remove that owner.
+function processAlive(pid) {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return error.code !== 'ESRCH'; }
+}
+export async function leaseCacheFile(path, { ownerAlive = processAlive, now = Date.now() } = {}) {
   const lease = `${path}.lease`;
   try { await mkdir(lease, { mode: 0o700 }); }
-  catch (error) { if (error.code === 'EEXIST') return null; throw error; }
-  return () => rmdir(lease).catch(() => {});
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    try {
+      const names = await readdir(lease);
+      const ownerName = names.find(name => /^owner(?:-[\w-]+)?\.json$/u.test(name));
+      if (ownerName) {
+        const owner = JSON.parse(await readFile(join(lease, ownerName), 'utf8'));
+        if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || ownerAlive(owner.pid)) return null;
+        // A competing reclaimer that already removed this exact owner wins.
+        await unlink(join(lease, ownerName));
+      } else {
+        // Legacy empty directories have no process identity. Only retire them
+        // after the existing temporary-resource idle policy, never on a read race.
+        if (names.length || now - (await lstat(lease)).mtimeMs < CACHE_IDLE_MS) return null;
+      }
+      await rmdir(lease);
+    } catch (error) {
+      if (['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) return null;
+      throw error;
+    }
+    return leaseCacheFile(path, { ownerAlive, now });
+  }
+  const ownerName = `owner-${process.pid}-${randomUUID()}.json`;
+  try { await writeFile(join(lease, ownerName), JSON.stringify({ pid: process.pid, createdAt: now }), { flag: 'wx', mode: 0o600 }); }
+  catch (error) { await rmdir(lease).catch(() => {}); throw error; }
+  return async () => {
+    try { await unlink(join(lease, ownerName)); await rmdir(lease); }
+    catch { /* Auxiliary lease cleanup cannot invalidate an already read original. */ }
+  };
 }
 export async function recordCacheFile(path, { owned = false, now = Date.now() } = {}) {
   const receiptPath = path + suffix;

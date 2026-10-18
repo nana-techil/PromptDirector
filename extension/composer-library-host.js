@@ -8,7 +8,6 @@ import { createComposerLibraryTools } from './composer-library-tools.js';
 import { entryMediaAssets } from './media.js';
 import { materializeLogicalCases, normalizeCompoundCases } from './compound-cases.js';
 import { getDerivedMedia, getAllDerivedMetadata, getMediaBlob } from './media-store.js';
-import { getScreenshotBlob } from './image-store.js';
 import { blobToDataUrl } from './vision.js';
 import { createSearchIndexCache } from './search-index.js';
 import { filterCaseSearchEntries } from './case-search.js';
@@ -35,7 +34,7 @@ export function createLocalComposerLibraryTools(options) {
       const entries = materializeLogicalCases(state.entries, normalizeCompoundCases(state.compoundCases, state.entries));
       signal?.throwIfAborted();
       const needsIndex = name === 'search_cases';
-      const { minDurationMs, maxDurationMs, hasOriginalPrompt, ...indexScope } = args;
+      const { minDurationMs, maxDurationMs, hasOriginalPrompt, hasPrompt, ...indexScope } = args;
       if (needsIndex) filterCaseSearchEntries([], state.organizerState, args);
       const scoped = needsIndex ? filterCaseSearchEntries(entries, state.organizerState, indexScope) : entries;
       const documentEntries = needsIndex ? scoped : args.part === 'document' ? entries.filter(entry => entry.id === args.caseId) : [];
@@ -49,7 +48,7 @@ export function createLocalComposerLibraryTools(options) {
     },
     readImage: async (id, signal, expectedHash) => {
       signal?.throwIfAborted();
-      const blob = await getMediaBlob(id) ?? await getScreenshotBlob(id);
+      const blob = await getMediaBlob(id);
       if (!blob) throw new Error('指定图片已不存在');
       const sha256 = await sha256Blob(blob);
       if (sha256 === expectedHash) return { sha256 };

@@ -96,7 +96,7 @@ export function createStableMasonry(container, options = {}) {
 
   const scheduleReflow = () => {
     const width = container.clientWidth;
-    if (!geometry || Math.abs(width - geometry.containerWidth) <= 1) return;
+    if (!width || !geometry || Math.abs(width - geometry.containerWidth) <= 1) return;
     if (isScrollbarWidthChange(container, geometry, scrollContainer)) {
       scheduleCommittedWidthCheck();
       return;
@@ -320,7 +320,7 @@ export function createStableMasonry(container, options = {}) {
   }
 
   function restoreTrackedScrollAnchor(anchor) {
-    if (!anchor?.card?.isConnected) return;
+    if (!container.clientWidth || !anchor?.card?.isConnected) return;
     const delta = anchor.card.getBoundingClientRect().top - anchor.top;
     if (Math.abs(delta) <= 1) return;
     expectedInternalScrollPosition = currentScrollPosition() + delta;

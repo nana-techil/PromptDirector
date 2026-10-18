@@ -98,11 +98,11 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
         ...(record.args.sourceCaseIds || [])].filter(value => value != null).map(String).includes(step.targetId));
   }
   const requiresComplete = step => step.requireComplete ?? (mutations.has(step.operation) || ['source','supplement','document','original'].includes(step.part));
-  function pending() {
+  function pending(observed = observations, scopeProgress = captureProgress()) {
     if (!task || task.mode !== 'act') return [];
     return task.steps.filter(step => {
-      if (step.operation === 'save_capture' && !step.resultIds && captureProgress()?.complete) return false;
-      const records = observations.filter(record => matches(step, record));
+      if (step.operation === 'save_capture' && !step.resultIds && scopeProgress?.complete) return false;
+      const records = observed.filter(record => matches(step, record));
       const requireComplete = requiresComplete(step);
       const complete = record => succeeded(record, requireComplete) && (!requireComplete || sourceComplete(record, records, step.selector));
       if (step.resultIds) return step.resultIds.some(id => !records.some(record =>
@@ -320,9 +320,41 @@ export function withAssistantTaskRuntime(runtime, { messages = [], instruction =
         return { action: 'continue', state: { captureScopeMissing: true, saved: saved.map(item => item.entryId) },
           message: '模块批量已有保存回执，但尚未登记整项委托的范围，不能用本批成功代表全部完成。依据最新用户目标及已读目录，在declare_task补充captureScope（整个目标范围、冻结目录和项目），执行未处理项；已存原件与回执可直接核对，无需重复写入或再次询问许可。' };
       }
-      if (!task) return runtime.finishTurn?.(value);
+      if (!task) {
+        // Preparation is not a save receipt or a semantic statement that the
+        // user only wanted a preview. Resolve that distinction at the existing
+        // model boundary, without classifying either party's prose.
+        const captures = new Map();
+        for (const record of observations) if (['prepare_capture', 'update_capture', 'save_capture'].includes(record.name)) {
+          const id = record.data?.captureId || record.args.captureId;
+          if (id) captures.set(id, record);
+        }
+        const unresolved = [...captures.values()].filter(record => record.name !== 'save_capture' || !succeeded(record));
+        if (unresolved.length) return { action: 'continue', state: { captureIntentMissing: true,
+          captures: unresolved.map(record => ({ captureId: record.data?.captureId || record.args.captureId, state: record.data?.state })) },
+          message: '采集已有准备或选择，但尚无全部指定案例的保存回执，也未明确本轮完成条件。用declare_task表达对真实用户目标的语义判断：要求保存则登记实际目标并继续取得回执；仅查看或预览则用respond如实回答预览结果，不新增保存授权。真实阻塞登记后使用settle_task；不把预览或结束文案当作已保存。' };
+        return runtime.finishTurn?.(value);
+      }
       if (['blocked', 'waiting'].includes(task.state)) return { action: 'respond', content: task.reason };
       if (task.mode !== 'act') return;
+      const latestSaves = new Map();
+      for (const record of observations.filter(record => record.name === 'save_capture')) for (const item of record.data?.results || []) if (item.entryId) latestSaves.set(item.entryId, item);
+      const sourceLimits = observations.filter(record => record.name === 'save_capture' && record.data?.ok !== false
+        && record.data.results?.some(item => item.sourceLimited && item.originalVerification?.readback === 'matched' && latestSaves.get(item.entryId) === item));
+      if (sourceLimits.length) {
+        // Only ask whether further writes are missing. The original receipts
+        // remain partial and the user's full-original goal remains waiting.
+        const accounted = record => record.name !== 'save_capture' || !record.data?.results ? record : { ...record, data: { ...record.data,
+          results: record.data.results.map(item => item.sourceLimited && item.originalVerification?.readback === 'matched'
+            ? { ...item, status: 'saved', originalVerification: { ...item.originalVerification, status: 'verified',
+              sources: item.originalVerification.sources?.map(source => ({ ...source, completeness: 'complete' })) } } : item) } };
+        const progressWithLimits = task.captureScope ? captureScopeProgress(journal.map(accounted), task.captureScope, task.contentTypeId) : undefined;
+        if ((!progressWithLimits || progressWithLimits.complete) && !pending(observations.map(accounted), progressWithLimits).length) {
+          const reason = '已保存当前取得的内容；来源正文仍被折叠，尚未取得全文。已有成果保留，展开来源后可继续补采。';
+          task = { ...task, reason }; await recordState('waiting');
+          return { action: 'respond', content: reason };
+        }
+      }
       const progress = captureProgress();
       if (progress && !progress.complete) return { action: 'continue', state: progress,
         message: `批量目标尚未完成：${JSON.stringify(progress)}。只继续未处理项；已核对的成果不重复保存。有可用路线继续执行，真实失败或缺失信息使用settle_task，不以部分保存或文字宣称完成结束。` };

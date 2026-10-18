@@ -173,3 +173,66 @@ test('chat opening projection commits with sessions and never contains their ful
  assert.equal(run.calls.length,1,'projection and full records commit atomically');
  await run.storage.set({composerSessions:[]});assert.deepEqual(run.data.assistantChatViews.chats,[]);
 });
+
+test('fifty tool reads write only new journal facts while backup, sync, drafts and task continuation retain exact originals', async () => {
+  const { createComposerToolProgress } = await import('../extension/composer-tool-progress.js');
+  const original = 'Original source\n'.repeat(10000);
+  const sessions = Array.from({ length: 8 }, (_, i) => ({ id: 'chat-' + i, chatRevision: 1,
+    currentInstruction: 'unsent', assistantState: { turns: [{ diagnostic: { content: original } }] },
+    toolContext: [{ turnId: 'old', callId: 'old', name: 'read_case', data: { content: original } }] }));
+  async function measure(legacy) {
+    const f = fixture(); await f.storage.set({ composerSessions: sessions });
+    f.calls.length = 0;
+    const runtime = createComposerToolProgress({ storage: legacy ? { get: f.storage.get, update: f.storage.update } : f.storage,
+      sessionId: 'chat-0', userMessageId: 'now' });
+    for (let i = 0; i < 50; i++) await runtime.recordToolResult({ callId: 'read-' + i, name: 'read_capture', args: { part: 'source' }, data: { content: original + i } });
+    return { f, runtime, bytes: f.calls.reduce((total, call) => total + new Blob([JSON.stringify(call)]).size, 0) };
+  }
+  const baseline = await measure(true), optimized = await measure(false);
+  assert(optimized.bytes < baseline.bytes / 10, `${optimized.bytes} vs ${baseline.bytes}`);
+  assert(optimized.f.calls.every(call => !call.composerSessions && !call.assistantChatViews && !call.composerSessionSummaries));
+  assert.equal((await optimized.runtime.loadContext()).length, 51);
+  const restarted = createComposerToolProgress({ storage: createLibraryStorage({ backend: optimized.f.backend, lock: optimized.f.lock }), sessionId: 'chat-0', userMessageId: 'now' });
+  assert.equal((await restarted.loadContext()).at(-1).data.content, original + 49);
+  await restarted.saveContinuation({ protocol: 'chat', body: { model: 'fixture', content: original } });
+  assert.equal((await restarted.loadContinuation({ protocol: 'chat', model: 'fixture' })).body.content, original);
+  const exported = await optimized.f.storage.get(null);
+  assert(!Object.keys(exported).some(key => key.startsWith('composerTool')));
+  assert.equal(exported.composerSessions[0].toolContext.at(-1).data.content, original + 49);
+  assert.equal(exported.composerSessions[0].currentInstruction, 'unsent');
+  assert.equal(exported.composerSessions[1].toolContext[0].data.content, original);
+  await optimized.f.storage.set({ composerSessions: exported.composerSessions });
+  assert(!Object.keys(optimized.f.data).some(key => key.startsWith('composerToolRecord:')));
+  assert.equal((await restarted.loadContext()).at(-1).data.content, original + 49);
+  await optimized.f.storage.set({ composerSessions: [] });
+  await assert.rejects(restarted.recordToolResult({ callId: 'late', name: 'read_case', data: {} }), /不存在/u);
+  console.log(JSON.stringify({ toolReads: 50, baselineBytes: baseline.bytes, journalBytes: optimized.bytes }));
+});
+
+test('Chrome object-key reordering cannot reorder tool facts or erase repeated legacy receipts on restart', async () => {
+  const { createComposerToolProgress } = await import('../extension/composer-tool-progress.js');
+  const f = fixture();
+  await f.storage.set({ composerSessions: [{ id: 'chat', toolContext: [{ callId: 'legacy', data: { content: 'first' } }, { callId: 'legacy', data: { content: 'second' } }] }] });
+  const sort = value => Array.isArray(value) ? value.map(sort) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sort(value[key])])) : value;
+  const get = f.backend.get; f.backend.get = async keys => sort(await get(keys));
+  const runtime = createComposerToolProgress({ storage: f.storage, sessionId: 'chat', userMessageId: 'human' });
+  for (let n = 0; n < 15; n++) await runtime.recordToolResult({ callId: 'read-' + n, name: 'read_capture', data: { content: String(n) } });
+  const restarted = createComposerToolProgress({ storage: createLibraryStorage({ backend: f.backend, lock: f.lock }), sessionId: 'chat', userMessageId: 'human' });
+  assert.deepEqual((await restarted.loadContext()).map(record => record.data.content), ['first', 'second', ...Array.from({ length: 15 }, (_, n) => String(n))]);
+});
+
+test('two tool writers and a normal conversation edit keep every committed fact and draft through journal folding', async () => {
+  const { createComposerToolProgress } = await import('../extension/composer-tool-progress.js');
+  const f = fixture(); await f.storage.set({ composerSessions: [{ id: 'chat', toolContext: [], toolContinuations: {}, currentInstruction: 'unsent' }] });
+  const other = createLibraryStorage({ backend: f.backend, lock: f.lock });
+  const a = createComposerToolProgress({ storage: f.storage, sessionId: 'chat', userMessageId: 'a' });
+  const b = createComposerToolProgress({ storage: other, sessionId: 'chat', userMessageId: 'b' });
+  await Promise.all([a.recordToolResult({ callId: 'one', name: 'read_capture', data: { content: 'first source' } }),
+    b.recordToolResult({ callId: 'two', name: 'read_capture', data: { content: 'second source' } })]);
+  await other.update('composerSessions', stored => ({ composerSessions: stored.composerSessions.map(session => ({ ...session, title: 'User edit' })) }));
+  await a.recordToolResult({ callId: 'three', name: 'save_capture', data: { entryId: 'saved-once' } });
+  const sessions = (await other.get('composerSessions')).composerSessions;
+  assert.deepEqual(sessions[0].toolContext.map(record => record.callId), ['one', 'two', 'three']);
+  assert.equal(sessions[0].currentInstruction, 'unsent'); assert.equal(sessions[0].title, 'User edit');
+});

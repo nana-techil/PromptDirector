@@ -32,6 +32,15 @@ def main():
   expect(dialog.locator('mark').first).to_be_visible()
   assert any('Fast' in text for text in dialog.locator('mark').all_text_contents())
   p.screenshot(path=str(out/'differences-wide.png'))
+  # Changing the keeper updates choices/differences without destroying the
+  # already loaded original or the reader's expanded full text.
+  first_case=dialog.locator('.dedupe-case').first
+  first_case.locator('details').filter(has=p.locator('summary',has_text='完整案例内容')).last.evaluate('(e)=>e.open=true')
+  first_case.evaluate('(e)=>{window.__dedupeFirstId=e.dataset.entryId;window.__dedupeImage=e.querySelector(".dedupe-preview img");}')
+  dialog.get_by_role('button',name='改为保留这份',exact=True).first.click()
+  assert p.evaluate('()=>document.querySelector(`.dedupe-case[data-entry-id="${window.__dedupeFirstId}"] .dedupe-preview img`)===window.__dedupeImage')
+  assert p.evaluate('()=>[...document.querySelectorAll(`.dedupe-case[data-entry-id="${window.__dedupeFirstId}"] details`)].some(e=>e.open && e.querySelector("summary").textContent==="完整案例内容")')
+
   p.set_viewport_size({'width':390,'height':900})
   assert dialog.evaluate('e=>e.scrollWidth<=e.clientWidth+1')
   p.screenshot(path=str(out/'differences-narrow.png'))
@@ -102,6 +111,10 @@ def main():
   expect(dialog.locator('.dedupe-case')).to_have_count(2)
   assert set(dialog.locator('.dedupe-case').evaluate_all("nodes=>nodes.map(n=>n.dataset.entryId)"))=={'video-case-0','video-case-1'}
   p.wait_for_function("()=>[...document.querySelectorAll('.dedupe-preview video')].length===2 && [...document.querySelectorAll('.dedupe-preview video')].every(v=>v.readyState>=1)")
+  dialog.locator('.dedupe-preview video').first.evaluate('async v=>{v.loop=true;v.muted=true;await v.play();window.__playingDuplicate=v;window.__duplicateTime=v.currentTime;}')
+  dialog.get_by_role('button',name='改为保留这份',exact=True).first.click()
+  assert p.evaluate('()=>window.__playingDuplicate.isConnected && !window.__playingDuplicate.paused')
+  p.wait_for_function('()=>window.__playingDuplicate.currentTime>window.__duplicateTime')
   p.screenshot(path=str(out/'identical-video-only.png'))
   assert not run.page_errors,run.page_errors
   print({'exactOriginalsOnly':True,'wordDifference':True,'crossProjectKept':True,'restoreAndOriginal':True,'tagDotFirst':True,'differentImagesNeverListed':True,'identicalVideoOnly':True,'widths':[1440,390],'screenshots':str(out)})

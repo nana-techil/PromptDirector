@@ -56,3 +56,23 @@ test('saving an attachment uses its staged original identity and protects attach
   await assert.rejects(resolveCaptureLocalMedia({ kind: 'video', localTransferId: file.transferId }, dependencies.transfers), { code: 'invalid_input' });
   assert.deepEqual(captureChatAssetIds({ history: [{ messages: [{ attachments: [file] }] }], pages: { current: { attachments: [file] } } }), [file.assetId]);
 });
+
+for (const kind of ['image', 'document', 'video']) test(`a committed ${kind} attachment reads and reuses the current library original after temporary preparation is cleared`, async () => {
+  const asset = { id: file.assetId, kind, mimeType: kind === 'image' ? 'image/png' : kind === 'video' ? 'video/mp4' : 'text/plain', posterAssetId: kind === 'video' ? 'poster' : undefined };
+  const committed = { ...record, state: 'committed', prepared: null, entryId: 'saved-case' };
+  let entry = { id: 'saved-case', text: 'case commentary is not the uploaded original', mediaAssets: [asset, ...(kind === 'video' ? [{ id: 'poster', kind: 'image', derivedFromAssetId: asset.id }] : [])] };
+  const deps = { ...dependencies, transfers: { get: async () => committed }, loadState: async () => ({ entries: entry ? [entry] : [] }),
+    readDerived: async id => { assert.equal(id, asset.id); return { searchText: 'Complete uploaded document' }; } };
+  const read = await readCaptureChatAttachment(file.transferId, deps);
+  assert.equal(read.data.localAssetId, asset.id);
+  assert.equal(read.data.text, 'Complete uploaded document');
+  assert.equal(read.images?.length || 0, kind === 'image' ? 1 : 0);
+  const reuse = await resolveCaptureLocalMedia({ kind, localTransferId: file.transferId }, deps.transfers, deps);
+  assert.equal(reuse.localAssetId, asset.id);
+  // Deleting the saved case or detaching the original must not resurrect it
+  // from a still-retained chat reference or transfer record.
+  entry.mediaAssets = [];
+  await assert.rejects(readCaptureChatAttachment(file.transferId, deps), { code: 'attachment_unavailable' });
+  entry = null;
+  await assert.rejects(resolveCaptureLocalMedia({ kind, localTransferId: file.transferId }, deps.transfers, deps), { code: 'attachment_unavailable' });
+});

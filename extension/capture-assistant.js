@@ -65,12 +65,14 @@ export async function runCaptureAssistant(input, { runtime, call, signal, sessio
     const previous = preview;
     // A type choice belongs to the supplied preview, not to an unrelated
     // capture prepared later in this conversation. Project choice persists.
-    input = { ...input, captureMetadata: { ...input.captureMetadata, contentTypeId: '', contentTypeExplicit: false } };
+    const reuseManualPreview = !previous && !args.url && !args.selector
+      && input.initialBatch?.tabId === targetTab && input.initialBatch?.sourceUrl === input.sourceUrl;
+    if (!reuseManualPreview) input = { ...input, captureMetadata: { ...input.captureMetadata, contentTypeId: '', contentTypeExplicit: false } };
     onStatus('正在读取网页…');
     const data = await completed('prepare_capture', { requestId: crypto.randomUUID(), ...(args.url ? { url: args.url } : { tabId: args.tabId ?? input.tabId }), mode: args.mode || 'loaded',
       ...(args.url && args.url === previous?.sourceUrl ? { preferredTabId: previous.tabId } : args.url && args.url === input.sourceUrl ? { preferredTabId: input.tabId } : {}),
       ...(args.selector ? { selector: args.selector } : {}), ...(args.maxCandidates ? { maxCandidates: args.maxCandidates } : {}),
-      ...(!previous && !args.url && !args.selector && input.initialBatch?.tabId === targetTab && input.initialBatch?.sourceUrl === input.sourceUrl ? { initialBatch: input.initialBatch } : {}) });
+      ...(reuseManualPreview ? { initialBatch: input.initialBatch } : {}) });
     // Refresh the live source identity, never overwrite the old draft or its
     // frozen originals. A plan may follow this receipt to the same webpage.
     previewReadFailed = false;
@@ -328,7 +330,7 @@ export function captureSourceSelectionCheck(calls, preview, task) {
   // A source can be inspected on a completed preview and committed in the next
   // batch. Match observed originals, not merely selectors or equal text lengths.
   const committedSources = sources.filter(source => verifiedSave(source, true));
-  const missing = sources.filter(source => (!requiredSources.size || requiredSources.has(source.selector))
+  const missing = sources.filter(source => requiredSources.has(source.selector)
       && !((!source.captureId || !preview?.captureId || source.captureId === preview.captureId) && bindings.some(binding => binding.selector === source.selector
         && binding.totalCharacters === source.totalCharacters && binding.completeness !== 'partial'))
       && !verifiedSave(source)

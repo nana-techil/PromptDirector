@@ -60,7 +60,9 @@ def main() -> None:
         setup.evaluate(
             """async () => {
               const {createVisionBatchJob} = await import(chrome.runtime.getURL('analysis-batch.js'));
-              const stored = await chrome.storage.local.get('entries');
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const storage = getLibraryStorage();
+              const stored = await storage.get('entries');
               const job = createVisionBatchJob(stored.entries, {
                 id: 'runner-failure-job',
                 entryIds: ['runner-failure'],
@@ -69,7 +71,7 @@ def main() -> None:
                 model: 'current-model',
                 now: '2026-08-26T00:00:00.000Z'
               });
-              await chrome.storage.local.set({batchJob: job});
+              await storage.set({batchJob: job});
             }"""
         )
 
@@ -78,7 +80,7 @@ def main() -> None:
         library.locator("#selection-select-filtered").click()
         library.locator("#selection-more-menu > summary").click()
         library.locator("#selection-analyze").click()
-        dialog = library.locator("#vision-batch-dialog")
+        dialog = library.locator("#text-batch-dialog")
         expect(dialog.locator("#vision-batch-summary")).to_contain_text("1 等待中")
 
         library.evaluate(
@@ -90,7 +92,7 @@ def main() -> None:
         expect(dialog.locator("#vision-batch-pause")).to_be_hidden(timeout=15_000)
 
         expect(dialog.locator("#vision-batch-start")).to_be_hidden()
-        dialog.locator("#vision-batch-close").click()
+        dialog.locator("#text-batch-close").click()
         expect(library.locator("#share-bar")).to_be_visible()
         expect(library.locator(".case-card.selected-for-share")).to_have_count(1)
         print({"runner_failure_visible": True, "retry_available": True})

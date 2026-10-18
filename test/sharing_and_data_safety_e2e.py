@@ -149,7 +149,7 @@ def main() -> None:
             assert shared["organizerState"]["collections"] == []
             serialized = json.dumps(shared, ensure_ascii=False)
             assert "apiKey" not in serialized
-            preview = archive.read("打开分享包.html").decode("utf-8")
+            preview = archive.read("index.html").decode("utf-8")
             assert "Content-Security-Policy" in preview
             assert "share-preview-foundation.css" in archive.namelist()
             assert "share-preview-masonry.js" in archive.namelist()
@@ -161,7 +161,7 @@ def main() -> None:
             archive.extractall(offline_root)
 
         offline = session.context.new_page()
-        offline.goto((offline_root / "打开分享包.html").as_uri(), wait_until="networkidle")
+        offline.goto((offline_root / "index.html").as_uri(), wait_until="networkidle")
         screenshots = Path(tempfile.gettempdir()) / "promptdirector-share-preview-evidence"
         screenshots.mkdir(parents=True, exist_ok=True)
         offline.screenshot(path=str(screenshots / "share-preview-desktop.png"), full_page=True)

@@ -270,3 +270,44 @@ test('opening a composer waits for its actual reader and preserves an existing p
   assert.equal((await api.open({surface:'composer'})).state,'choose_workspace');
   await assert.rejects(api.open({surface:'composer',tabId:99}),{code:'workspace_closed'});
 });
+
+for (const surface of ['library', 'composer']) test(`opening ${surface} waits through the initial missing Chrome context and returns the created tab`, async () => {
+  let contextReads = 0, reads = 0, created = 0;
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`,
+    getContexts: async () => ++contextReads < 3 ? [] : [{ tabId: 8, documentUrl: `chrome-extension://test/${surface}.html` }],
+    sendMessage: async () => { reads++; return { ok: true, result: { instruction: 'Retained human draft' } }; } },
+    tabs: { create: async () => { created++; return { id: 8, windowId: 1 }; }, get: async id => ({ id }) }, windows: { update: async () => {} } };
+  const result = await createAgentWorkspace({ chromeApi }).open({ surface });
+  assert.equal(result.state, 'ready'); assert.equal(result.tabId, 8);
+  assert.equal(result.instruction, 'Retained human draft'); assert.equal(reads, 1); assert.equal(created, 1);
+});
+
+test('a slow new workspace returns its opening tab after the existing wait budget instead of reporting no workspace', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  let contextReads = 0;
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`, getContexts: async () => {
+    if (++contextReads > 1) t.mock.timers.tick(15000);
+    return [];
+  } }, tabs: { create: async () => ({ id: 8, windowId: 1 }), get: async id => ({ id }) }, windows: { update: async () => {} } };
+  const result = await createAgentWorkspace({ chromeApi }).open({ surface: 'library' });
+  assert.equal(result.state, 'opening'); assert.equal(result.tabId, 8);
+});
+
+test('closing the newly created tab during initial loading reports closure without waiting for another page', async () => {
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`, getContexts: async () => [] },
+    tabs: { create: async () => ({ id: 8, windowId: 1 }), get: async () => { throw new Error('No tab with id: 8'); } },
+    windows: { update: async () => {} } };
+  await assert.rejects(createAgentWorkspace({ chromeApi }).open({ surface: 'library' }), { code: 'workspace_closed' });
+});
+
+test('showing a case waits through context loading until that exact case is visible', async () => {
+  let contexts = 0, reads = 0;
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`,
+    getContexts: async () => ++contexts === 1 ? [] : [{ tabId: 8, documentUrl: 'chrome-extension://test/library.html' }],
+    sendMessage: async () => ({ ok: true, result: { viewedCaseId: ++reads === 1 ? 'previous-case' : 'requested-case' } }) },
+    tabs: { create: async () => ({ id: 8, windowId: 1 }), get: async id => ({ id }) }, windows: { update: async () => {} } };
+  const readCase = async ({ caseId }) => { assert.equal(caseId, 'requested-case'); };
+  const result = await createAgentWorkspace({ chromeApi, readCase }).show({ caseId: 'requested-case' });
+  assert.equal(result.state, 'ready'); assert.equal(result.tabId, 8);
+  assert.equal(result.viewedCaseId, 'requested-case'); assert.equal(reads, 2);
+});

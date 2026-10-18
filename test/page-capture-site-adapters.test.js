@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { collectPageCaptureSnapshot, PAGE_CAPTURE_ADAPTERS } from "../extension/page-capture.js";
+import { resolveCapturedVideoOriginal } from "../extension/captured-video-original.js";
 
 import {
   collectPageCaptureSitePayload,
@@ -451,6 +453,92 @@ test("Higgsfield public community ItemList emits projects without page-shell cop
   assert.equal(normalized.candidates[0].sourceFacts.itemId, "public-creator/fashion-motion-study");
   assert.equal(normalized.candidates[0].title, "Fashion Motion Study");
   assert.doesNotMatch(normalized.candidates[0].contentText, /create|sign in|pricing/iu);
+});
+
+test("Higgsfield public player records bind original video files to their own playback sources without duplicating JSON-LD media", async () => {
+  const injected = (0, eval)(`(${collectPageCaptureSitePayload.toString()})`);
+  const snapshot = (0, eval)(`(${collectPageCaptureSnapshot.toString()})`);
+  const keys = ["location", "document", "window", "chrome", "Readability", "Element", "HTMLCanvasElement"];
+  const original = Object.fromEntries(keys.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const pageUrl = "https://higgsfield.ai/@public-creator/projects/film";
+  const poster = "https://d2ol7oe51mr4n9.cloudfront.net/public/shared-poster.png";
+  // Same public project.media shape as the SSR project and hydrated player.
+  const project = { media: ["film", "second-film", "unrelated"].map(id => ({
+    id, kind: "video", src: `https://cdn.higgsfield.ai/hls/video_input/${id}/index.m3u8`,
+    originalSrc: `https://d2ol7oe51mr4n9.cloudfront.net/public/${id}.mp4`,
+    thumbnail: poster, width: 3840, height: 2160, accountSession: "PRIVATE_MUST_NOT_LEAK"
+  })) };
+  const videos = project.media.slice(0, 2).map(item => ({ "@type": "VideoObject", contentUrl: item.src, thumbnailUrl: poster }));
+  const work = { "@type": "CreativeWork", url: pageUrl, name: "Film", description: "Complete project description",
+    author: { name: "Public creator" }, video: videos };
+  const fiber = { memoizedProps: { project, privateAccount: "PRIVATE_MUST_NOT_LEAK" } };
+  fiber.return = fiber; // A malformed parent cycle must not hang capture.
+  const player = { __reactFiber$fixture: { memoizedProps: { src: videos[0].contentUrl }, return: fiber } };
+  const body = { innerText: work.description, scrollHeight: 800, querySelector: () => null, querySelectorAll: () => [] };
+  Object.assign(globalThis, { location: new URL(pageUrl), chrome: undefined, Readability: undefined,
+    window: { scrollX: 0, scrollY: 0, scrollTo: () => {} },
+    document: { title: work.name, body, baseURI: pageUrl, documentElement: { scrollHeight: 800 },
+      querySelector: () => null,
+      querySelectorAll: selector => selector === "video" ? [player]
+        : selector === 'script[type="application/ld+json"]' ? [{ textContent: JSON.stringify(work) }] : [] }
+  });
+  try {
+    const payload = injected({ maxCandidates: 20, maxMedia: 8, maxTextCharacters: 10000 });
+    assert(!JSON.stringify(payload).includes("PRIVATE_MUST_NOT_LEAK"));
+    const siteData = normalizePageCaptureSitePayload(payload, pageUrl);
+    assert.equal(siteData.media.length, 2, "Only videos declared by this work enter the capture");
+    assert.deepEqual(siteData.media.map(item => item.url), project.media.slice(0, 2).map(item => item.originalSrc));
+    assert.deepEqual(siteData.media.map(item => item.streamUrl), project.media.slice(0, 2).map(item => item.src));
+    assert(siteData.media.every(item => item.width === 3840 && item.height === 2160));
+    const captured = await snapshot({ adapters: PAGE_CAPTURE_ADAPTERS, siteData });
+    assert.equal(captured.candidates[0].media.length, 2, "Playback JSON-LD copies must not reappear as extra videos");
+    assert.deepEqual(captured.candidates[0].media.map(item => item.url), project.media.slice(0, 2).map(item => item.originalSrc));
+    const requested = [];
+    const bytes = new Blob(["fixture-original"], { type: "video/mp4" });
+    const resolved = await resolveCapturedVideoOriginal(captured.candidates[0].media[0], captured.candidates[0], {
+      download: async url => { requested.push(url); return bytes; }
+    });
+    assert.equal(resolved, bytes);
+    assert.deepEqual(requested, [project.media[0].originalSrc], "The shared save path downloads the original, not the HLS manifest");
+
+    // A distinct source with the same cover still remains a distinct video.
+    const partialSiteData = { ...siteData, media: siteData.media.slice(0, 1) };
+    const partial = await snapshot({ adapters: PAGE_CAPTURE_ADAPTERS, siteData: partialSiteData });
+    assert.equal(partial.candidates[0].media.length, 2);
+    assert.deepEqual(partial.candidates[0].media.map(item => item.url), [project.media[0].originalSrc, project.media[1].src]);
+
+    // Exercise real snapshot DOM/structured pairing, with reverse DOM order so
+    // a shared poster cannot accidentally bind both originals to the first player.
+    class Element {}
+    globalThis.Element = Element;
+    globalThis.HTMLCanvasElement = class extends Element {};
+    body.childNodes = project.media.slice(0, 2).reverse().map(item => Object.assign(new Element(), {
+      localName: "video", tagName: "VIDEO", currentSrc: item.src, src: item.src, poster,
+      videoWidth: 1280, videoHeight: 720, childNodes: [],
+      matches: selector => selector.split(",").includes("video"), closest: () => null,
+      getAttribute: name => name === "src" ? item.src : "", querySelectorAll: () => [],
+      getBoundingClientRect: () => ({ x: 0, y: 0, top: 0, bottom: 720, width: 1280, height: 720 })
+    }));
+    const withPlayers = await snapshot({ adapters: PAGE_CAPTURE_ADAPTERS, siteData });
+    assert.equal(withPlayers.captureError, undefined);
+    assert.equal(withPlayers.candidates[0].media.length, 2);
+    for (const [index, media] of withPlayers.candidates[0].media.entries()) {
+      assert.equal(media.url, project.media[index].originalSrc);
+      assert(media.variants.every(variant => variant.url === project.media[index].originalSrc || variant.url === project.media[index].src),
+        "Each original must retain only its own actual playback variants");
+    }
+
+    // Untrusted originals never displace the trusted playback source.
+    project.media[0].originalSrc = "https://unrelated.example/private.mp4";
+    const rejected = normalizePageCaptureSitePayload(injected({ maxCandidates: 20, maxMedia: 8, maxTextCharacters: 10000 }), pageUrl);
+    assert.equal(rejected.media[0].url, project.media[0].src);
+    assert(!JSON.stringify(rejected).includes("unrelated.example"));
+  } finally {
+    for (const key of keys) {
+      if (original[key]) Object.defineProperty(globalThis, key, original[key]);
+      else delete globalThis[key];
+    }
+  }
 });
 
 test("Higgsfield collector exposes only bounded public CreativeWork JSON-LD and the project brief", () => {

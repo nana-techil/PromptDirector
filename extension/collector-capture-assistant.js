@@ -8,6 +8,7 @@ import { prepareReviewFile } from './review-file-transfer.js';
 import { restoreCaptureSessions, captureSessionForPage, newCaptureConversation, pageWork, recentCaptureConversations } from './capture-assistant-sessions.js';
 import { buildCaptureDiagnostic, captureDiagnosticValue } from './capture-assistant-diagnostics.js';
 import { diagnosticFilename } from './composer-diagnostics.js';
+import { bindDiagnosticControls } from './diagnostic-controls.js';
 import { confirmAppAction } from './ui-dialogs.js';
 import { LOCAL_ASSET_FILE_ACCEPT } from './local-media.js';
 import { availableAiModelChoicesForTask } from './ai-provider-registry.js';
@@ -24,6 +25,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
   const contextRow = node('div', 'capture-assistant-context-row');
   const context = node('p', 'capture-assistant-context');
   const diagnosticButton = button('导出对话诊断', 'quiet compact capture-assistant-diagnostic'); diagnosticButton.id = 'capture-assistant-diagnostic';
+  bindDiagnosticControls({ controls: [diagnosticButton], onError: error => feedback(error.message, true) });
   const chats = node('select', 'capture-assistant-model capture-assistant-chats'); chats.id = 'capture-assistant-chats'; chats.setAttribute('aria-label', t('切换对话'));
   contextRow.append(context, diagnosticButton);
   const conversation = node('div', 'capture-assistant-conversation ui-scrollbar'); conversation.setAttribute('aria-label', t('采集助手')); conversation.setAttribute('role', 'log');

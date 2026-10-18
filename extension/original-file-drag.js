@@ -1,14 +1,27 @@
 import { AGENT_CHUNK_BYTES, bytesToBase64 } from './agent-protocol.js';
 
 const SCRIPT_ID = 'pd-original-file-drop';
+export const ORIGINAL_FILE_DRAG_SOURCE_PORT = 'pd-original-file-drag-source';
 export const ORIGINAL_FILE_DRAG_PORT = 'pd-original-file-drag';
 
 // Reuse granted web access; this never requests a permission or opens a file.
-export function createOriginalFileDragHost(api, fetchBlob = async url => {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error('原件已不可读，请回到资料库重新拖动');
-  return response.blob();
-}) {
+// Only a library page can expose its currently dragged asset. The opaque URL is
+// a drag capability, not a fetch location; cache eviction cannot invalidate bytes.
+export function createOriginalFileDragSource(api) {
+  let port;
+  return {
+    expose(url, assetId) {
+      if (!port) {
+        port = api.runtime.connect({ name: ORIGINAL_FILE_DRAG_SOURCE_PORT });
+        port.onDisconnect.addListener(() => { port = undefined; });
+      }
+      port.postMessage({ url, assetId });
+    }
+  };
+}
+
+export function createOriginalFileDragHost(api, readBlob) {
+  const sources = new Map();
   let registration = Promise.resolve();
   const synchronize = async () => {
     const { origins = [] } = await api.permissions.getAll();
@@ -30,6 +43,19 @@ export function createOriginalFileDragHost(api, fetchBlob = async url => {
       return registration;
     },
     connect(port) {
+      if (port.name === ORIGINAL_FILE_DRAG_SOURCE_PORT) {
+        const sourcePage = String(port.sender?.url || '').split(/[?#]/u)[0];
+        if (sourcePage !== api.runtime.getURL('library.html')) { port.disconnect(); return true; }
+        const receive = message => {
+          const prefix = `blob:${api.runtime.getURL('')}`;
+          if (typeof message?.assetId !== 'string' || !message.assetId ||
+              !String(message.url).startsWith(prefix) || !/^[a-f0-9-]+$/iu.test(message.url.slice(prefix.length))) return;
+          sources.set(port, { url: message.url, assetId: message.assetId });
+        };
+        port.onMessage.addListener(receive);
+        port.onDisconnect.addListener(() => { sources.delete(port); port.onMessage.removeListener(receive); });
+        return true;
+      }
       if (port.name !== ORIGINAL_FILE_DRAG_PORT) return false;
       let blob, offset = 0, closed = false;
       let queue = Promise.resolve();
@@ -45,7 +71,10 @@ export function createOriginalFileDragHost(api, fetchBlob = async url => {
           if (!await api.permissions.contains({ origins: [`${new URL(port.sender.url).origin}/*`] })) {
             throw new Error('接收网页未获授权，未读取原件');
           }
-          blob = await fetchBlob(source.href);
+          const exposed = [...sources.values()].find(value => value.url === source.href);
+          if (!exposed) throw new Error('原件拖动已结束，请回到资料库重新拖动');
+          blob = await readBlob(exposed.assetId);
+          if (!blob) throw new Error('原件已不可读，请回到资料库重新拖动');
           if (!closed) port.postMessage({ type: 'file', size: blob.size, mimeType: blob.type });
           return;
         }

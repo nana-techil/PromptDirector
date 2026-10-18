@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { load } from "cheerio";
+import { canonicalTextAnalysisInput } from "../extension/analysis-input.js";
 
 const [library, html, css, background, composerHtml, composerCss, i18n] = await Promise.all([
   readFile(new URL("../extension/library.js", import.meta.url), "utf8"),
@@ -77,9 +78,9 @@ test("vision batch dialog only revives running or paused jobs and otherwise show
   assert.match(renderVisionBatchDialog, /elements\.visionBatchProgress\.hidden = !job/);
   assert.match(renderVisionBatchDialog, /setTaskProgress\(elements\.visionBatchProgressBar, \{ completed: processedCount, total: requestCount \|\| job\?\.requestCount/);
   assert.match(renderVisionBatchDialog, /Math\.min\([\s\S]*requestCount,[\s\S]*counts\.succeeded[\s\S]*counts\.failed/);
-  assert.match(previewSelectedVisionBatch, /visionBatchJob\.kind !== "vision" \|\| visionBatchJob\.providerType !== visionSettings\.activeProvider/);
-  assert.match(previewSelectedVisionBatch, /if \(providerChanged \|\| visionBatchJob\.model !== currentModel\)/);
-  assert.match(previewSelectedVisionBatch, /chrome\.runtime\.sendMessage\(\{ type: "CANCEL_VISION_BATCH", jobId: visionBatchJob\.id \}\)/);
+  assert.doesNotMatch(previewSelectedVisionBatch, /type: "CANCEL_VISION_BATCH"/, "opening a running task must not cancel it after a service setting changes");
+  assert.match(previewSelectedVisionBatch, /revision !== batchDialog\.revision/, "a previous scope's reply must not overwrite the latest preview");
+  assert.match(library, /visionBatchJob = response\.visionBatchJob;\s*mediaBatchPreview = null;/, "the completed task must not fall back to its old paid preview");
 });
 
 test("image-analysis UI keeps one prompt surface instead of duplicating the reconstruction prompt", () => {
@@ -115,17 +116,26 @@ test("analysis progress reports failures without exposing incomplete-result word
 });
 
 test("detail text analysis follows the currently displayed image prompt", () => {
-  const createPromptSection = library.slice(
-    library.indexOf("function createPromptSection"),
-    library.indexOf("async function analyzeEntryVisualSet")
-  );
-  const analyzeSingleEntry = library.slice(
-    library.indexOf("async function analyzeSingleEntry"),
-    library.indexOf("async function privateAiSettings")
-  );
-  assert.match(library.slice(library.indexOf("function createMediaPromptSection"), library.indexOf("function createPromptSection")), /canonicalTextAnalysisInput\(entry, asset\.id\)/);
-  assert.match(createPromptSection, /if \(analysisInput\.text\)/);
-  assert.match(createPromptSection, /analyzeSingleEntry\(entry, analyze, analysisInput\)/);
+  const media = library.slice(library.indexOf("function createMediaPromptSection"), library.indexOf("function createTextAnalysisAction"));
+  const action = library.slice(library.indexOf("function createTextAnalysisAction"), library.indexOf("function createCodeSourceSection"));
+  assert.match(media, /createTextAnalysisAction\(entry, asset\.id\)/);
+  const entry = { id: 'case', text: 'Shared case context', mediaAssets: [{ id: 'first', kind: 'image' }, { id: 'second', kind: 'image' }],
+    mediaPrompts: [{ assetId: 'first', text: 'First image original', source: 'manual' }, { assetId: 'second', text: 'Second image original', source: 'manual' }] };
+  const before = structuredClone(entry), calls = [];
+  const createAction = new Function('canonicalTextAnalysisInput', 'promptIconButton', 't', 'analyzeSingleEntry',
+    action + '; return createTextAnalysisAction;')(canonicalTextAnalysisInput,
+    () => ({ addEventListener(event, callback) { assert.equal(event, 'click'); this.click = callback; } }), value => value,
+    (actualEntry, button, input) => calls.push({ actualEntry, button, input }));
+  for (const asset of entry.mediaAssets) {
+    const button = createAction(entry, asset.id); button.click();
+    const call = calls.at(-1);
+    assert.equal(call.actualEntry, entry); assert.equal(call.button, button);
+    assert.equal(call.input.assetId, asset.id);
+    assert.equal(call.input.text, entry.mediaPrompts.find(prompt => prompt.assetId === asset.id).text);
+  }
+  assert.equal(createAction({ text: '', mediaAssets: [] }), null, 'empty text must not become an analysis request');
+  assert.deepEqual(entry, before, 'analysis selection never edits the originals');
+  const analyzeSingleEntry = library.slice(library.indexOf("async function analyzeSingleEntry"), library.indexOf("async function privateAiSettings"));
   assert.match(analyzeSingleEntry, /fingerprint = await textFingerprint\(analysisInput\.text\)/);
   assert.match(analyzeSingleEntry, /assetId: analysisInput\.assetId/);
   assert.doesNotMatch(analyzeSingleEntry, /textFingerprint\(entry\.text\)/);
@@ -143,8 +153,13 @@ test("composer groups direction and reference inputs in their menus and secondar
   for (const id of ['composer-send-images', 'composer-send-videos']) {
     assert.equal($(`#composer-reference-inputs #${id}`).length, 1);
   }
-  for (const id of ['composer-route', 'composer-platform', 'composer-output-language', 'composer-production-review', 'composer-thinking']) {
+  for (const id of ['composer-production-review', 'composer-thinking', 'composer-create-image']) {
     assert.equal($(`#${id}`).closest('details').attr('id'), 'composer-options');
   }
+  for (const id of ['composer-route', 'composer-platform', 'composer-output-language']) {
+    assert.equal($(`#${id}`).length, 0, 'Task, target and language are inferred for new UI conversations');
+  }
+  assert.equal($('.composer-option-toggles > .composer-option-toggle').length, 3);
+  assert.equal($('#composer-create-image').attr('aria-describedby'), 'composer-create-image-note');
   assert.match(composerCss, /\.composer-input-tools\s*\{[^}]*flex-wrap:\s*nowrap/);
 });

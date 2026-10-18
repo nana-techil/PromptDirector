@@ -13,6 +13,23 @@ export const SUPPORTED_DOCUMENT_MIME_TYPES = Object.freeze([
 ]);
 const DOCUMENT_MIME_TYPES = new Set(SUPPORTED_DOCUMENT_MIME_TYPES);
 
+export function mediaDownloadFailure(error, details) {
+  if (error?.mediaDownload) return error;
+  const stages = { permission: '权限检查', request: '请求媒体', response: '检查响应', read: '读取媒体', blob: '构建媒体文件', verify: '验证媒体' };
+  const stage = Object.hasOwn(stages, details.stage) ? details.stage : 'response';
+  const receivedBytes = Number.isSafeInteger(details.receivedBytes) && details.receivedBytes >= 0 ? details.receivedBytes : 0;
+  const message = String(error?.message || error || '媒体读取失败')
+    .replace(/https?:\/\/[^\s<>"']+/giu, '[媒体地址]')
+    .replace(/\b(?:authorization|cookie)\s*[:=][^\r\n]*/giu, '[凭据]')
+    .replace(/\b(?:Bearer|Basic)\s+\S+/giu, '[凭据]')
+    .replace(/\b(?:token|api[_-]?key|password|signature)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s;,]+)/giu, '[凭据]');
+  const failure = new Error(`${message}（${stages[stage]}，已收到 ${receivedBytes} bytes）`, { cause: error });
+  failure.name = /^(?:[A-Za-z]+)?Error$/u.test(error?.name) ? error.name : 'Error';
+  if (error?.code) failure.code = error.code;
+  failure.mediaDownload = { stage, receivedBytes };
+  return failure;
+}
+
 export async function fetchBoundedMedia(value, options = {}) {
   return withMediaDownloadSlot(() => fetchMediaWithDeadline(value, options), options.signal);
 }
@@ -27,6 +44,7 @@ async function fetchMediaWithDeadline(value, options) {
   options.signal?.addEventListener?.("abort", abort, { once: true });
   const timeoutMs = positiveInteger(options.timeoutMs, operationBudget(options.budget).maxDurationMs);
   const timeout = timeoutMs ? setTimeout(abort, timeoutMs) : 0;
+  let stage = 'request';
   try {
     const response = await fetchImpl(url.href, {
       credentials: "omit",
@@ -38,10 +56,13 @@ async function fetchMediaWithDeadline(value, options) {
       signal: controller.signal,
       headers: options.accept ? { accept: String(options.accept) } : undefined
     });
+    stage = 'response';
     if (!response.ok) throw new Error(`媒体下载失败（HTTP ${response.status}）`);
     const availableBytes = await stagingByteBudget(options);
     if (!availableBytes) throw new Error("本机没有足够的下载暂存空间");
     return await boundedMediaBlobFromResponse(response, { ...options, maxBytes: Math.min(options.maxBytes || Number.MAX_SAFE_INTEGER, availableBytes), controller });
+  } catch (error) {
+    throw mediaDownloadFailure(error, { stage, receivedBytes: 0 });
   } finally {
     if (timeout) clearTimeout(timeout);
     options.signal?.removeEventListener?.("abort", abort);
@@ -49,6 +70,8 @@ async function fetchMediaWithDeadline(value, options) {
 }
 
 export async function boundedMediaBlobFromResponse(response, options = {}) {
+  const diagnostics = { stage: 'response', receivedBytes: 0 };
+  try {
   const kind = mediaKind(options.kind);
   const maxBytes = positiveInteger(options.maxBytes, defaultLimit(kind));
   const declared = Number(response?.headers?.get?.("content-length"));
@@ -60,7 +83,14 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
   // a compressed or absent length cannot be used as a reliable percentage.
   const encoding = response?.headers?.get?.('content-encoding');
   const totalBytes = Number.isSafeInteger(declared) && declared > 0 && (!encoding || encoding === 'identity') ? declared : null;
-  const blob = await readBoundedBlob(response, maxBytes, options.controller?.signal ?? options.signal, options.onProgress, totalBytes);
+  const blob = await readBoundedBlob(response, maxBytes, options.controller?.signal ?? options.signal, options.onProgress, totalBytes, diagnostics);
+  diagnostics.stage = 'verify';
+  if (kind === 'video' && response.status === 206) {
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/u.exec(response.headers?.get?.('content-range') || '');
+    if (!range || Number(range[1]) !== 0 || Number(range[2]) + 1 !== Number(range[3]) || blob.size !== Number(range[3])) {
+      throw new Error('来源只返回了视频片段，完整视频原件未保存');
+    }
+  }
   // Only inspect a header window. The browser-managed Blob sink can spill to
   // disk; retaining all chunks and concatenating them duplicates large files.
   const bytes = new Uint8Array(await blob.slice(0, 1024 * 1024).arrayBuffer());
@@ -70,7 +100,7 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
     if (options.expectedMimeType !== "application/zip" || !zip) throw new Error("来源没有返回有效的 Skill 文件");
     return blob.slice(0, blob.size, "application/zip");
   }
-  if (kind === 'document') return verifiedDocumentBlob(blob.slice(0, blob.size, declaredType), options.expectedMimeType, maxBytes, options.controller?.signal ?? options.signal);
+  if (kind === 'document') return await verifiedDocumentBlob(blob.slice(0, blob.size, declaredType), options.expectedMimeType, maxBytes, options.controller?.signal ?? options.signal);
   const detectedType = detectMediaMimeType(bytes);
   const mimeType = detectedType || declaredType;
   if (kind !== "document" && (!mimeType.startsWith(`${kind}/`) || !detectedType)) {
@@ -83,6 +113,9 @@ export async function boundedMediaBlobFromResponse(response, options = {}) {
   }
   options.onMetadata?.({ mimeType, ...(dimensions || {}) });
   return blob.slice(0, blob.size, mimeType);
+  } catch (error) {
+    throw mediaDownloadFailure(error, diagnostics);
+  }
 }
 
 export function isSupportedDocumentMimeType(value) {
@@ -170,22 +203,25 @@ export function assertRemoteMediaUrl(value, options = {}) {
   return url;
 }
 
-async function readBoundedBlob(response, limit, signal, onProgress, totalBytes) {
+async function readBoundedBlob(response, limit, signal, onProgress, totalBytes, diagnostics) {
   if (!response?.body?.getReader) throw new Error("媒体响应无法流式读取");
   signal?.throwIfAborted();
   let total = 0;
   const report = () => onProgress?.({ receivedBytes: total, totalBytes: totalBytes !== null && total <= totalBytes ? totalBytes : null });
   report();
+  diagnostics.stage = 'read';
   const checked = response.body.pipeThrough(new TransformStream({
     transform(value, controller) {
       signal?.throwIfAborted();
       total += value.byteLength;
+      diagnostics.receivedBytes = total;
       if (total > limit) {
         throw new Error(`媒体文件超过本次接收预算（${limit} bytes）`);
       }
       controller.enqueue(value);
       report();
-    }
+    },
+    flush() { diagnostics.stage = 'blob'; }
   }), { signal });
   const blob = await new Response(checked).blob();
   signal?.throwIfAborted();

@@ -136,7 +136,7 @@ def main() -> None:
                 library.locator('[data-settings-tab="tasks"]').click()
                 started = time.perf_counter()
                 library.locator("#preview-analysis-batch").click()
-                library.locator("#analysis-batch-summary").filter(has_text="没有需要分析的案例").wait_for(timeout=60_000)
+                library.locator("#analysis-batch-summary").filter(has_text="待处理 0").wait_for(timeout=60_000)
                 text_preview_ms = (time.perf_counter() - started) * 1000
                 library.locator("#settings-close").click()
 
@@ -150,15 +150,12 @@ def main() -> None:
                 project_menu.locator("summary").click()
                 started = time.perf_counter()
                 project_menu.get_by_role("button", name="批量分析", exact=True).click()
-                library.locator("#project-selection-title").filter(has_text="批量分析画面").wait_for(timeout=60_000)
-                selection_text = library.locator("#project-selection-count").text_content() or ""
-                assert "已选 0" not in selection_text, selection_text
+                expect(library.locator("#batch-scope-project")).not_to_have_value("")
+                library.locator("#text-batch-dialog").wait_for(state="visible", timeout=60_000)
                 vision_selection_ms = (time.perf_counter() - started) * 1000
-                assert not library.locator("#project-selection-save").is_disabled()
-
                 started = time.perf_counter()
-                library.locator("#project-selection-save").click()
-                library.locator("#vision-batch-dialog").wait_for(state="visible", timeout=60_000)
+                library.locator('[data-batch-kind="image"]').click()
+                library.locator("#vision-batch-summary").filter(has_text="次图片请求").wait_for(timeout=60_000)
                 vision_preview_ms = (time.perf_counter() - started) * 1000
 
                 print({

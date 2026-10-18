@@ -369,6 +369,23 @@ export function collectPageCaptureSitePayload(options = {}) {
     return { adapter: "krea", pageKind: "feed", canonicalUrl: clean(globalThis.location?.href), items, status: items.length ? "complete" : "partial" };
   }
   if (host === "higgsfield.ai" || host.endsWith(".higgsfield.ai")) {
+    // The public player receives the same project.media records as SSR. Its
+    // schema exposes playback src, while originalSrc belongs to that exact item.
+    // Read only player ancestors, never walk the application's account state.
+    const originalVideos = new Map();
+    const seenVideoLists = new Set();
+    for (const player of globalThis.document?.querySelectorAll?.('video') || []) {
+      for (const props of componentProps(player)) {
+        const media = props.project?.media || props.media;
+        if (!Array.isArray(media) || seenVideoLists.has(media)) continue;
+        seenVideoLists.add(media);
+        for (const item of media) {
+          if (item?.kind === 'video' && item.src && item.originalSrc) originalVideos.set(clean(item.src), {
+            originalSrc: clean(item.originalSrc), width: Number(item.width) || 0, height: Number(item.height) || 0
+          });
+        }
+      }
+    }
     // Asset previews keep the project URL and schema behind the dialog.
     // Read only the selected output and its prompt, never the background brief.
     const assetDialog = globalThis.document?.querySelector?.('[role="dialog"][aria-description="asset showcase dialog view"][data-state="open"]');
@@ -415,12 +432,14 @@ export function collectPageCaptureSitePayload(options = {}) {
     const compactImage = (value) => {
       if (typeof value === "string") return clean(value);
       if (!value || typeof value !== "object") return "";
+      const original = originalVideos.get(clean(value.contentUrl || value.url));
       return {
         url: clean(value.url),
         contentUrl: clean(value.contentUrl),
+        ...(original ? { originalSrc: original.originalSrc } : {}),
         thumbnailUrl: clean(value.thumbnailUrl),
-        width: Number(value.width?.value || value.width) || 0,
-        height: Number(value.height?.value || value.height) || 0
+        width: original?.width || Number(value.width?.value || value.width) || 0,
+        height: original?.height || Number(value.height?.value || value.height) || 0
       };
     };
     const compactStatistics = (value) => (Array.isArray(value) ? value : value ? [value] : []).slice(0, maxMedia).map((item) => ({
@@ -436,10 +455,7 @@ export function collectPageCaptureSitePayload(options = {}) {
       author: compactPerson(value?.author || value?.creator),
       datePublished: clean(value?.datePublished || value?.dateCreated || value?.uploadDate),
       image: (Array.isArray(value?.image) ? value.image : value?.image ? [value.image] : []).slice(0, maxMedia).map(compactImage).filter(Boolean),
-      thumbnailUrl: clean(value?.thumbnailUrl),
-      contentUrl: clean(value?.contentUrl),
-      width: Number(value?.width?.value || value?.width) || 0,
-      height: Number(value?.height?.value || value?.height) || 0,
+      ...compactImage(value),
       video: (Array.isArray(value?.video) ? value.video : value?.video ? [value.video] : []).slice(0, maxMedia).map(compactImage),
       interactionStatistic: compactStatistics(value?.interactionStatistic)
     });
@@ -643,14 +659,14 @@ export function collectPageCaptureSitePayload(options = {}) {
   const rawLastPart = path.split("/").filter(Boolean).at(-1) || "";
   const routeWorkId = /^\d{8,32}$/u.test(rawLastPart) ? rawLastPart : "";
   // Read only the public work data attached to the current rendered surface.
-  const componentProps = function* (element) {
+  function* componentProps(element) {
     const key = Object.keys(element || {}).find((name) => name.startsWith("__reactFiber$"));
     const visited = new Set();
     for (let fiber = element?.[key]; fiber && !visited.has(fiber); fiber = fiber.return) {
       visited.add(fiber);
       if (fiber.memoizedProps) yield fiber.memoizedProps;
     }
-  };
+  }
   const visibleDetail = [...globalThis.document?.querySelectorAll?.('[data-detail-container-appearance]') || []]
     .find(element => element.getClientRects?.().length);
   const visibleDialog = [...globalThis.document?.querySelectorAll?.('[role="dialog"]') || []]
@@ -1181,16 +1197,19 @@ function normalizeHiggsfieldWork(value, briefValue) {
   const media = [];
   const seen = new Set();
   const addMedia = (item, kind) => {
-    const url = safeTrustedMediaUrl("higgsfield", typeof item === "string" ? item : item?.contentUrl || item?.url);
+    const playbackUrl = safeTrustedMediaUrl("higgsfield", typeof item === "string" ? item : item?.contentUrl || item?.url);
+    const url = kind === "video" && safeTrustedMediaUrl("higgsfield", item?.originalSrc) || playbackUrl;
     if (!url || seen.has(url)) return;
     seen.add(url);
     const width = positiveInteger(item?.width?.value || item?.width);
     const height = positiveInteger(item?.height?.value || item?.height);
     media.push({
       id: `higgsfield:${stableTextHash(itemId)}:${stableTextHash(url)}`, kind, url, width, height,
-      ...(kind === "video" ? { posterUrl: safeTrustedMediaUrl("higgsfield", item?.thumbnailUrl) } : {}),
+      ...(kind === "video" ? { posterUrl: safeTrustedMediaUrl("higgsfield", item?.thumbnailUrl),
+        ...(/\.m3u8(?:[?#]|$)/iu.test(playbackUrl) ? { streamUrl: playbackUrl } : {}) } : {}),
       sourceKind: "site-original", captureMethod: "source",
-      variants: [{ url, sourceKind: "site-original", width, height }]
+      variants: [{ url, sourceKind: "site-original", width, height },
+        ...(playbackUrl && playbackUrl !== url ? [{ url: playbackUrl, sourceKind: "video-element" }] : [])]
     });
   };
   videoValues.forEach((item) => addMedia(item, "video"));

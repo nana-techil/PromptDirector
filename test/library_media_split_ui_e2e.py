@@ -17,11 +17,31 @@ def main():
         color=page.locator('#detail-content button[data-tag-color]').first
         color.click()
         palette=page.locator('.tag-color-palette');expect(palette).to_be_visible()
-        palette.get_by_role('button',name='#b98c9b',exact=True).click()
-        wait_for_async_condition(page,"async()=> (await chrome.storage.local.get('uiPreferences')).uiPreferences.customTagColors?.director==='#b98c9b'")
+        expect(palette.locator('.tag-color-choice')).to_have_count(18)
+        # Every swatch keeps its own color on hover/focus, not the global green.
+        for choice in palette.locator('.tag-color-choice:not(.tag-color-default)').all():
+            choice.hover(); choice.focus()
+            assert choice.evaluate("e=>{const c=document.createElement('span');c.style.color=e.style.getPropertyValue('--tag-color');document.body.append(c);const expected=getComputedStyle(c).color;c.remove();return getComputedStyle(e).backgroundColor===expected&&(!e.matches(':focus-visible')||getComputedStyle(e).outlineColor===expected)}")
+        page.screenshot(path=str(output/'tag-palette-light.png'))
+        palette.get_by_role('button',name='#ec4899',exact=True).click()
+        wait_for_async_condition(page,"async()=> (await chrome.storage.local.get('uiPreferences')).uiPreferences.customTagColors?.director==='#ec4899'")
+        chip=page.locator('#detail-content [data-custom-tag="director"]').first
+        page.wait_for_function("()=>getComputedStyle(document.querySelector('#detail-content [data-custom-tag=director]')).borderTopColor==='rgb(236, 72, 153)'")
+        for theme in ['dark','light']:
+            page.evaluate("async theme=>(await import('./i18n.js')).initializeUi({theme,locale:'en',motion:'reduced'})",theme)
+            if not color.count(): page.locator('[data-entry-id="split-ui"].case-card').click()
+            color.click()
+            selected=palette.get_by_role('button',name='#ec4899',exact=True)
+            expect(selected).to_have_attribute('aria-pressed','true')
+            selected.hover()
+            assert selected.evaluate("e=>getComputedStyle(e).backgroundColor==='rgb(236, 72, 153)'")
+            page.screenshot(path=str(output/f'tag-selected-{theme}.png'))
+            selected.press('Escape')
+        page.reload(wait_until='networkidle');page.locator('[data-entry-id="split-ui"].case-card').click()
+        page.wait_for_function("()=>{const e=document.querySelector('#detail-content button[data-tag-color]');return e&&getComputedStyle(e).backgroundColor==='rgb(236, 72, 153)'}")
         # Concurrent distinct labels merge against latest preferences.
         result=page.evaluate('''async()=>{await Promise.all(['a','b'].map(key=>chrome.runtime.sendMessage({type:'UPDATE_UI_PREFERENCES',preferences:{customTagColors:{[key]:'#abcdef'}}})));return (await chrome.storage.local.get('uiPreferences')).uiPreferences.customTagColors;}''')
-        assert result=={'director':'#b98c9b','a':'#abcdef','b':'#abcdef'}
+        assert result=={'director':'#ec4899','a':'#abcdef','b':'#abcdef'}
         page.locator('.entry-editor-inline > summary').click()
         for width in [1440,390]:
             page.set_viewport_size({'width':width,'height':900})

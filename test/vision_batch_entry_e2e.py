@@ -83,7 +83,9 @@ def main() -> None:
               for (const entry of entries) {
                 await saveMediaBlob(entry.primaryMediaId, blob, {checkCapacity: false});
               }
-              const stored = await chrome.storage.local.get('entries');
+              const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+              const storage = getLibraryStorage();
+              const stored = await storage.get('entries');
               const job = createVisionBatchJob(stored.entries, {
                 id: 'completed-old-vision-job',
                 entryIds: stored.entries.map(entry => entry.id),
@@ -103,7 +105,7 @@ def main() -> None:
                 claimId: `done-${index + 1}`,
               }));
               job.usage = {promptTokens: 8, completionTokens: 4, totalTokens: 12, cacheHitTokens: 0};
-              await chrome.storage.local.set({batchJob: job});
+              await storage.set({batchJob: job});
             }""",
             {"entries": entries, "png": PNG_BASE64},
         )
@@ -114,16 +116,14 @@ def main() -> None:
         project_menu.locator(":scope > summary").click()
         project_menu.get_by_role("button", name="批量分析").click()
 
-        expect(library.locator("#project-selection-title")).to_contain_text("批量分析画面")
-        expect(library.locator("#project-selection-count")).to_have_text("已选 2 / 当前 2 / 全部 2")
-        assert not library.locator("#project-selection-save").is_disabled()
-
-        library.locator("#project-selection-save").click()
-        dialog = library.locator("#vision-batch-dialog")
+        expect(library.locator('#text-batch-dialog')).to_be_visible()
+        expect(library.locator('#batch-scope-project')).to_have_value('collection:vision-batch')
+        library.locator('[data-batch-kind="image"]').click()
+        dialog = library.locator("#text-batch-dialog")
         assert_current_preview(dialog, expected_model="deepseek-v4-vision", forbidden_model="gpt-old")
-        dialog.locator("#vision-batch-close").click()
+
+        dialog.locator("#text-batch-close").click()
         expect(dialog).not_to_be_visible()
-        library.locator("#project-selection-cancel").click()
 
         library.locator("#select-cases").click()
         library.locator("#selection-select-filtered").click()
@@ -134,10 +134,29 @@ def main() -> None:
 
         assert_current_preview(dialog, expected_model="deepseek-v4-vision", forbidden_model="gpt-old")
 
+        dialog.locator("#text-batch-close").click()
+        library.evaluate("""async () => {
+          const {getLibraryStorage} = await import(chrome.runtime.getURL('library-storage.js'));
+          const storage = getLibraryStorage();
+          const {batchJob} = await storage.get('batchJob');
+          batchJob.status = 'paused';
+          batchJob.items.forEach(item => { item.status = 'pending'; item.claimId = ''; });
+          await storage.set({batchJob});
+        }""")
+        library.reload(wait_until="networkidle")
+        project_menu = library.locator("#collection-filters details.project-menu")
+        project_menu.locator("summary").click()
+        project_menu.get_by_role("button", name="批量分析", exact=True).click()
+        expect(dialog.locator("#vision-batch-service")).to_contain_text("gpt-old")
+        expect(library.locator("#batch-scope-project")).to_be_disabled()
+        active = library.evaluate("async () => (await chrome.runtime.sendMessage({type:'GET_STATE'})).visionBatchJob")
+        assert active['status'] == 'paused' and active['model'] == 'gpt-old', active
+
         print({
             "project_menu_entry_preselected": True,
             "selection_toolbar_entry_works": True,
             "stale_completed_job_did_not_override_preview_model": True,
+            "running_task_preserved_after_route_changes": True,
         })
 
 

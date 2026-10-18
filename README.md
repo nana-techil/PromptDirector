@@ -1,14 +1,70 @@
-<p align="center"><img src="docs/assets/github-banner.svg" alt="PromptDirector — Capture, collect, organize" width="100%"></p>
+<p align="center">
+  <img src="store/brand/prompt-director-mark-source.png" alt="PromptDirector logo" width="88">
+</p>
+
+<h1 align="center">PromptDirector 提示词导演</h1>
+
+<p align="center"><strong>Spot it. Save it.</strong><br>刷到就存，要用就有</p>
+
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm"><img src="https://img.shields.io/chrome-web-store/users/iahakaahijddcjjldidbclicedibgpjm?label=Chrome%20users&color=D1FE17&labelColor=101416" alt="Chrome Web Store users"></a>
+  <a href="https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm"><img src="https://img.shields.io/chrome-web-store/v/iahakaahijddcjjldidbclicedibgpjm?label=Chrome%20Web%20Store&color=D1FE17&labelColor=101416" alt="Chrome Web Store version"></a>
+  <a href="https://github.com/wchao6891/PromptDirector/releases/latest"><img src="https://img.shields.io/github/v/release/wchao6891/PromptDirector?filter=v*&label=release&color=D1FE17&labelColor=101416" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/wchao6891/PromptDirector?color=D1FE17&labelColor=101416" alt="License"></a>
+</p>
 
 <p align="center"><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
-<h1 align="center">Turn great references into your next creation.</h1>
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm"><img src="https://img.shields.io/badge/Add%20to%20Chrome-It's%20free-D1FE17?style=for-the-badge&logo=googlechrome&logoColor=101416&labelColor=D1FE17&color=101416" alt="Add to Chrome — it's free" height="44"></a>
+</p>
 
-<p align="center"><strong>One-click capture. A visual prompt library. Ready for your Agent.</strong><br>Collect from Jimeng, Higgsfield, X, HeyBox, WeChat articles, Feishu docs and more.<br>Keep the image, the prompt and the context — then put them to work in your next project.</p>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=ttbNMJ7Gm7Q"><img src="docs/assets/demo.gif" alt="PromptDirector demo: browse your library, save cases in one click" width="800"></a><br>
+  <a href="https://www.youtube.com/watch?v=ttbNMJ7Gm7Q">▶ Watch the 71-second demo</a>
+</p>
 
-<p align="center"><a href="https://github.com/wchao6891/PromptDirector/releases/latest"><strong>Download the latest release</strong></a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/">Explore curated cases</a> · <a href="#install-and-update">Installation guide</a></p>
+- **One click: image + prompt.** Save works, videos and their public prompts from Jimeng, Higgsfield, Midjourney, X, WeChat, Feishu and 20+ sites.
+- **A library you browse by eye.** An image-first case wall with tags and projects. It's local-first and needs no account.
+- **Your Agent can use it.** Codex, Claude Code and WorkBuddy can search, read and save back to your library through local MCP.
 
-<p align="center">Free & open source · Local first · No account required · Local MCP Agent access</p>
+<p align="center"><strong>1,000+ curated cases, ready to import:</strong> <a href="https://wchao6891.github.io/PromptDirector-Curated/en/">Browse (English)</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/?lang=zh-CN">浏览（中文）</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/en/guide.html">Quick start</a></p>
+
+<p align="center"><sub>Free & open source · Local first · No account · Chrome / Edge on Windows, macOS, Linux</sub></p>
+
+---
+
+## See it in action
+
+**1 · Spot it, save it.** Open a Higgsfield article and capture it. PromptDirector splits it into cases, keeps each image, video and prompt together and saves them to your library.
+
+<p align="center"><img src="docs/assets/feature-capture-higgsfield.gif" alt="Capturing a Higgsfield article into separate cases with one click" width="800"></p>
+
+**2 · Turn references into a Skill.** Ask the Composer to find a creator's action cases in your library. It reads them and distills a reusable Skill.
+
+<p align="center"><img src="docs/assets/feature-skill.gif" alt="The Composer finds action cases and distills them into a reusable Skill" width="800"></p>
+
+**3 · Create with it.** Mix reference images and the Skill in the Composer to write a shot-by-shot video prompt, then generate with your favorite model.
+
+<p align="center"><img src="docs/assets/feature-action.gif" alt="Example action sequence generated from an action-Skill prompt" width="560"></p>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/assets/screens/library.jpg" alt="Image-first case library with projects"></td>
+<td width="50%"><img src="docs/assets/screens/capture-x-post.jpg" alt="Capturing an X post, including the prompt from the author's reply"></td>
+</tr>
+<tr><td align="center"><sub><b>Case wall.</b> Browse by eye, organize by project.</sub></td><td align="center"><sub><b>Capture from X.</b> Even the prompt in the author's reply.</sub></td></tr>
+<tr>
+<td width="50%"><img src="docs/assets/screens/case-detail.jpg" alt="Case detail with media, original prompt and project"></td>
+<td width="50%"><img src="docs/assets/screens/curated-packs.jpg" alt="Curated case packs ready to import"></td>
+</tr>
+<tr><td align="center"><sub><b>Case detail.</b> Media, original prompt and source in one place.</sub></td><td align="center"><sub><b>Curated packs.</b> Import 1,000+ cases in one click.</sub></td></tr>
+<tr>
+<td width="50%"><img src="docs/assets/screens/skill-center.jpg" alt="Creative Skill center"></td>
+<td width="50%"><img src="docs/assets/screens/composer.jpg" alt="Composer mixing reference cases and a Skill to write a video prompt"></td>
+</tr>
+<tr><td align="center"><sub><b>Skill center.</b> Build, import and reuse creative Skills.</sub></td><td align="center"><sub><b>Composer.</b> References + Skill → a ready-to-use prompt.</sub></td></tr>
+</table>
 
 ## Found a great reference? Start capturing in one click.
 
@@ -52,7 +108,7 @@ Try requests like:
 >
 > “Save the approved prompt and generated images back to PromptDirector.”
 
-**Google Chrome on Windows, macOS and Linux.** Configuration entry points are provided for Codex, Claude Code and WorkBuddy; other local MCP clients can use the generic configuration. The Agent installs a separate local connector, and the first connection requires browser authorization. Cloud-only workspaces cannot use this local flow. Creative and generation capabilities depend on your Agent and its tools. [Agent setup guide →](connector/INSTALL.md)
+**Google Chrome on Windows, macOS and Linux.** Configuration entry points are provided for Codex, Claude Code and WorkBuddy; other local MCP clients can use the generic configuration. The Agent installs a separate local connector, and the first connection requires browser authorization. Cloud-only workspaces cannot use this local flow. Creative and generation capabilities depend on your Agent and its tools. [Agent setup guide →](connector/INSTALL.en.md)
 
 ## Build a library that grows with your creative practice
 
@@ -72,9 +128,9 @@ See the image, read the prompt and save what fits your project. Here are a few e
 
 <table>
 <tr>
-<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/133a11be119a75a17b40-fe515974461558ef.webp" alt="Celestial ensemble: composition and staging reference"></a></td>
-<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/a2b45b757798adb2685d-8dea3cc7d3e303fd.webp" alt="War-tent confrontation: character blocking and lighting reference"></a></td>
-<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/6652ed14274cd7be008f-73367e80019b085c.webp" alt="Foxfire paper shadows: material and style reference"></a></td>
+<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/en/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/133a11be119a75a17b40-fe515974461558ef.webp" alt="Celestial ensemble: composition and staging reference"></a></td>
+<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/en/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/a2b45b757798adb2685d-8dea3cc7d3e303fd.webp" alt="War-tent confrontation: character blocking and lighting reference"></a></td>
+<td width="33%"><a href="https://wchao6891.github.io/PromptDirector-Curated/en/"><img src="https://wchao6891.github.io/PromptDirector-Curated/previews/featured-cases-vol-1/media/6652ed14274cd7be008f-73367e80019b085c.webp" alt="Foxfire paper shadows: material and style reference"></a></td>
 </tr>
 <tr><td>Celestial ensemble</td><td>War-tent confrontation</td><td>Foxfire paper shadows</td></tr>
 </table>
@@ -85,7 +141,7 @@ These are curated content previews, not demonstrations of platform capture. Refe
 
 ## Your library stays yours
 
-Cases, media, tags and settings are stored in your current browser by default. No account, ads or usage analytics. AI features are opt-in and use your own service keys; the interface explains what will be sent. Read the [privacy policy](store/PRIVACY_POLICY.md).
+Cases, media, tags and settings are stored in your current browser by default. No account, ads or usage analytics. AI features are opt-in and use your own service keys; the interface explains what will be sent. Read the [privacy policy](https://wchao6891.github.io/PromptDirector-Curated/en/privacy.html).
 
 ## Install and update
 
@@ -110,6 +166,6 @@ You can also install through the [Chrome Web Store](https://chromewebstore.googl
 
 Contributions to capture adaptations, interactions, tests and documentation are welcome. When [reporting an issue](https://github.com/wchao6891/PromptDirector/issues), describe the page type, observable behavior and reproduction steps. Remove API keys, private data and unauthorized media from examples. Run `npm run verify` before submitting code.
 
-See the [development guide](docs/DEVELOPMENT.md) to build and test contributions.
+See the [development guide](docs/DEVELOPMENT.md) to build and test contributions. The [video component guide](docs/VIDEO_COMPONENT.md) covers the free source package, platform installation checks and optional signed installer builds.
 
 Code is licensed under [Apache License 2.0](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for dependencies. The code license does not grant rights to third-party case media.

@@ -6,6 +6,8 @@
 
 ## 当前参考与引用
 
+视频原件采集使用独立的[视频组件](../docs/VIDEO_COMPONENT.md)，在采集侧栏按提示安装即可，不需要 Agent 配对或预装开发工具。组件安装包自带解析和音画合并工具，不修改 Agent 的注册、配对或配置。
+
 在案例库使用多选选择参考，选择自动保存；外部Agent直接调用 `read_workspace_content(part=selection)` 读取完整参考，首次第一页可省略版本，续页携带返回的 `revision`。只需概览时使用 `read_workspace_context`。无需进入创作台、导出或发送参考；已有创作台可通过显式页面上下文接续。内部模型API不是外部调用前置。
 
 `resolve_reference` 接受名称链接中的 `#pd-reference=…` 片段，或 `promptdirector://reference?v=1&library=…&case=…&asset=…`，校验身份后再调用现有原文、结构和媒体接口，无需访问链接网页。引用身份不包含密钥；错误库或错误媒体归属明确失败。此接口可用不等于各宿主拖拽已通过，跨应用接收按实际验收记录判断。`open_workspace` 打开或接续案例库/创作台；`show_case` 打开独立详情页面。两者等待现场可读后返回ready；opening表示尚未完成，按tabId继续读取。人工选择和草稿保留。
@@ -246,7 +248,7 @@ npm run check
 
 ## Release 安装包
 
-从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.4.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.4.0 支持查看、编辑、整理、参考交接及CLI，并新增可恢复删除、未入库文字相似检索和工作页面截图；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
+从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.5.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.5.0 支持查看、编辑、整理、参考交接及CLI，并新增可恢复删除、未入库文字相似检索和工作页面截图；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
 
 读取与保存的正常路径：同次固定选择并读取完整内容 → 按名称/路径定位项目 → 保存。选材 `originalText` 完整保留一次；`referenceTextParts` 按序包含字符串及指向 `originalText` 或 `referenceSources[index].text` 的引用，来源 `textSource=originalText` 同理。`media` 返回所属案例、原件角色、封面编号与已知尺寸/时长；未知值不伪造。来源版本覆盖案例和组织关系，分页仍拒绝变化。
 

@@ -47,10 +47,11 @@ export function bindTransientMenus(root = document, selector = "") {
 
 // Keep disclosure menus out of toolbar layout and above scrolling dialog bodies.
 // Uses the same top-layer pattern as the tag palette and shared popover spacing.
-export function bindPopoverMenu(details, panel) {
+export function bindPopoverMenu(details, panel, { actionMenu = true, preferAbove = false } = {}) {
   const anchor = details.querySelector(':scope > summary');
   panel.popover = 'manual';
-  panel.classList.add('ui-floating-panel', 'ui-action-menu', 'ui-popover-menu');
+  panel.classList.add('ui-floating-panel', 'ui-popover-menu');
+  if (actionMenu) panel.classList.add('ui-action-menu');
   panel.id ||= `menu-${crypto.randomUUID()}`;
   anchor.setAttribute('aria-controls', panel.id);
   let events;
@@ -65,7 +66,10 @@ export function bindPopoverMenu(details, panel) {
     const gap = parseFloat(style.getPropertyValue('--ui-popover-gap'));
     const bounds = anchor.getBoundingClientRect();
     panel.style.left = `${Math.max(inset, Math.min(bounds.left, innerWidth - panel.offsetWidth - inset))}px`;
-    panel.style.top = `${Math.max(inset, Math.min(bounds.bottom + gap, innerHeight - panel.offsetHeight - inset))}px`;
+    const above = bounds.top - panel.offsetHeight - gap;
+    const below = bounds.bottom + gap;
+    const top = (preferAbove || below + panel.offsetHeight > innerHeight - inset) && above >= inset ? above : below;
+    panel.style.top = `${Math.max(inset, Math.min(top, innerHeight - panel.offsetHeight - inset))}px`;
     events = new AbortController();
     window.addEventListener('resize', close, { signal: events.signal });
     document.addEventListener('scroll', event => { if (!panel.contains(event.target)) close(); }, { signal: events.signal, capture: true });

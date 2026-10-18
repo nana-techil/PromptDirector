@@ -38,6 +38,10 @@ export function createGalleryControls({ getPreferences, onSort, onSize, onSizeCo
   document.addEventListener('click', event => { if (!menu.contains(event.target)) menu.open = false; });
   menu.addEventListener('keydown', event => { if (event.key === 'Escape') { menu.open = false; menu.querySelector('summary').focus(); } });
   const range = document.querySelector('#gallery-size');
+  const sizeTip = document.createElement('output');
+  sizeTip.className = 'gallery-size-value';
+  sizeTip.setAttribute('aria-hidden', 'true');
+  range.closest('label').append(sizeTip);
   range.addEventListener('input', () => onSize(Number(range.value)));
   range.addEventListener('change', () => onSizeCommit(Number(range.value)));
   range.addEventListener('dblclick', event => {
@@ -46,7 +50,9 @@ export function createGalleryControls({ getPreferences, onSort, onSize, onSizeCo
   function applySize() {
     const preferences = getPreferences(), sizes = gallerySizesForZoom(preferences.galleryZoom);
     range.min = 0; range.max = 100; range.value = preferences.galleryZoom;
-    range.setAttribute('aria-valuetext', `${preferences.galleryZoom}%`);
+    const sizeText = `${sizes[preferences.galleryView]} px`;
+    sizeTip.textContent = sizeText;
+    range.setAttribute('aria-valuetext', sizeText);
     shell.style.setProperty('--masonry-card-min-width', `${sizes.waterfall}px`);
     shell.style.setProperty('--list-thumb', `${sizes.list}px`);
   }

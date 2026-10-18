@@ -2,7 +2,7 @@ import { articleBlockIsMarkdown } from "./article-document.js";
 import { renderMarkdownDocument } from "./markdown-renderer.js";
 
 // Reading markup must never become the source saved by the editor.
-export function renderArticleBlockText(node, block, { editing = false, entry } = {}) {
+export function renderArticleBlockText(node, block, { editing = false, entry, markdownOptions } = {}) {
   const markdown = articleBlockIsMarkdown(block, entry);
   node.classList.toggle("markdown-reader", markdown && !editing);
   if (markdown && editing) {
@@ -13,7 +13,7 @@ export function renderArticleBlockText(node, block, { editing = false, entry } =
     return;
   }
   if (markdown && !editing) {
-    node.replaceChildren(...renderMarkdownDocument(block.text).childNodes);
+    node.replaceChildren(...renderMarkdownDocument(block.text, markdownOptions).childNodes);
     return;
   }
   if (block.kind !== "list" || editing) {

@@ -204,11 +204,9 @@
 .composer-options-panel > strong { padding: 2px 2px 4px; font-size: 11px; }
 .composer-option-field { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 10px; color: var(--muted); font-size: 10px; font-weight: 750; }
 .composer-option-field input, .composer-option-field select { min-height: 34px; border-color: var(--line); padding: 5px 8px; font-size: 11px; }
-.composer-option-toggle { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 2px; color: var(--ink); }
-.composer-option-toggle > span { display: grid; gap: 2px; }
-.composer-option-toggle b { font-size: 11px; }
-.composer-option-toggle small { color: var(--muted); font-size: 9px; line-height: 1.4; }
-.composer-option-toggle input { width: 32px; min-height: 18px; }
+.composer-option-toggles { display: grid; gap: 0; }
+.composer-option-toggle { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 2px; color: var(--ink); font-size: 12px; font-weight: 400; }
+.composer-option-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .composer-generation-settings { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
 .composer-generation-settings[hidden] { display: none; }
 .composer-generation-settings > strong { font-size: 11px; }

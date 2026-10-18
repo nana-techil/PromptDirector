@@ -7,12 +7,24 @@ from e2e_support import base_entry, extension_session
 with extension_session('pd-trash-feedback-') as run:
     page = run.open_page('collector.html')
     gone = base_entry('gone', 'Deleted case', 'Keep until confirmed', 'content:prompt:image')
+    gone.update(mediaAssets=[{'id':'gone-image','kind':'image','storageMode':'managed','mimeType':'image/png'}],primaryMediaId='gone-image')
     run.seed_storage(page, {'entries': [base_entry('live', 'Kept', 'Kept', 'content:prompt:image')], 'trashState': {'version': 1, 'items': [{
         'id': 'trash:entry:gone', 'kind': 'entry', 'targetId': 'gone',
         'deletedAt': '2026-10-09T00:00:00Z', 'snapshot': gone}]}})
+    page.evaluate('''async()=>{
+      const c=document.createElement('canvas');c.width=64;c.height=64;
+      c.getContext('2d').fillRect(0,0,64,64);
+      await (await import('./media-store.js')).saveMediaBlob('gone-image',await new Promise(r=>c.toBlob(r)));
+    }''')
     library = run.open_page('library.html')
     expect(library.locator("body[data-library-state='ready']")).to_be_visible()
     library.locator('#open-trash').click()
+    expect(library.locator('.trash-item-cover img')).to_be_visible()
+    library.locator('.trash-item-cover img').evaluate("img=>img.src='data:image/png;base64,broken'")
+    expect(library.locator('.trash-item-cover img')).to_be_hidden()
+    expect(library.locator('.trash-item-cover .ui-icon')).to_be_visible()
+    library.locator('#trash-close').click();library.locator('#open-trash').click()
+    expect(library.locator('.trash-item-cover img')).to_be_visible()
     worker = run.context.service_workers[0]
     worker.evaluate('''() => {
       const set=chrome.storage.local.set.bind(chrome.storage.local);
@@ -34,9 +46,14 @@ with extension_session('pd-trash-feedback-') as run:
     expect(library.locator('#trash-feedback')).to_contain_text('正在')
     expect(library.locator('#trash-dialog')).to_have_attribute('aria-busy', 'true')
     expect(library.locator('#trash-progress')).to_be_visible()
+    expect(library.locator('.trash-item-cover img')).to_be_hidden()
+    expect(library.locator('.trash-item-cover .ui-icon')).to_be_visible()
     assert library.locator('#trash-feedback').evaluate('(el)=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight}')
     expect(library.locator('#trash-empty')).to_be_disabled()
     expect(library.locator('#trash-restore-all')).to_be_disabled()
+    if os.environ.get('PROMPTDIRECTOR_E2E_ARTIFACT_DIR'):
+        target = Path(os.environ['PROMPTDIRECTOR_E2E_ARTIFACT_DIR']); target.mkdir(parents=True, exist_ok=True)
+        library.screenshot(path=str(target / 'trash-clearing-covers.png'))
     library.locator('#trash-close').click()
     library.locator('#open-trash').click()
     expect(library.locator('#trash-feedback')).to_contain_text('正在')

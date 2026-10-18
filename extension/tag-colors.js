@@ -3,12 +3,8 @@ import { t, updateUiPreferences } from './i18n.js';
 
 let colors = {}, initialization, closePalette;
 // Shared compact palette; existing saved colors remain unchanged until selected or reset.
-const PALETTE = ['#8bada9', '#d6af84', '#b98c9b', '#8e9fbb', '#999999'];
+const PALETTE = ['#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16', '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9', '#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#ec4899', '#f43f5e', '#64748b'];
 function renderColors() {
-  let sheet = document.querySelector('#custom-tag-colors');
-  if (!sheet) { sheet = document.createElement('style'); sheet.id = 'custom-tag-colors'; document.head.append(sheet); }
-  sheet.textContent = Object.entries(colors).map(([key, color]) =>
-    `[data-custom-tag="${CSS.escape(key)}"]{border:1px solid ${color};background:color-mix(in srgb,${color} 12%,var(--panel));}`).join('\n');
   for (const button of document.querySelectorAll('button[data-tag-color]')) {
     button.style.setProperty('--tag-color', colors[button.dataset.tagColor] || '#65736d');
   }
@@ -35,7 +31,8 @@ export function decorateCustomTag(node, name, { editable = false } = {}) {
   button.setAttribute('aria-haspopup', 'dialog'); button.setAttribute('aria-expanded', 'false');
   button.style.setProperty('--tag-color', colors[key] || '#65736d');
   node.prepend(button);
-  void ready.then(renderColors).catch(() => {});
+  // New tags initialize only their own swatch; saved colors remain unchanged.
+  void ready.then(() => button.style.setProperty('--tag-color', colors[key] || '#65736d')).catch(() => {});
   button.addEventListener('click', event => {
     event.stopPropagation();
     if (button.getAttribute('aria-expanded') === 'true') return closePalette?.();

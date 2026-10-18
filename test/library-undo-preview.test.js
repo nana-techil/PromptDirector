@@ -65,3 +65,25 @@ test('a confirmed import or analysis batch cannot authorize undoing another batc
   assert.throws(()=>confirmations.guard('import',preview.confirmationToken,'second'),/请先查看/);
   assert.doesNotThrow(()=>confirmations.guard('import',preview.confirmationToken,'first'));
 });
+
+test('whole-library impact discloses overwritten conversations and unsent drafts without exposing their text', () => {
+  const impact = replacementImpact({ entries: [], composerSessions: [{ id: 'later', title: 'Later chat', currentInstruction: 'secret unsent draft' }, { id: 'same', title: 'Same', messages: [{ content: 'new message' }] }] },
+    { entries: [], composerSessions: [{ id: 'same', title: 'Same', messages: [] }, { id: 'old', title: 'Previous', currentInstruction: 'old draft' }] });
+  assert.deepEqual(impact.conversations, { removed: [{ id: 'later', title: 'Later chat' }], changed: [{ id: 'same', title: 'Same' }], restored: [{ id: 'old', title: 'Previous' }] });
+  assert.deepEqual(impact.drafts, { currentCount: 1, targetCount: 1 });
+  assert(!JSON.stringify(impact).includes('secret unsent draft'));
+});
+
+test('recovery confirmation uses one lightweight conversation revision and rejects later tool facts or unsent drafts', async () => {
+  const { data, storage, confirmations, commit } = fixture();
+  await storage.set({ composerSessions: [{ id: 'chat', toolContext: [], toolContinuations: {}, currentInstruction: 'draft' }] });
+  const preview = await confirmations.prepare('restore', ['caseLibraryRevision', 'composerSessions'], async () => ({}));
+  const guard = confirmations.guard('restore', preview.confirmationToken);
+  assert(!guard.keys.includes('composerSessions'), 'guard must not deserialize the full history again');
+  await storage.updateComposerToolState('chat', state => ({ ...state, toolContext: [{ turnId: 'human', callId: 'saved', name: 'save_capture', data: { entryId: 'kept' } }] }), value => value);
+  await assert.rejects(commit({ entries: [] }, { guard }), /确认期间资料已变化/u);
+  const next = await confirmations.prepare('restore', ['composerSessions'], async () => ({}));
+  await storage.set({ composerSessionDrafts: { chat: { chatRevision: 2, currentInstruction: 'new unsent draft' } } });
+  await assert.rejects(commit({ entries: [] }, { guard: confirmations.guard('restore', next.confirmationToken) }), /确认期间资料已变化/u);
+  assert.equal(data.entries[0].text, 'latest');
+});

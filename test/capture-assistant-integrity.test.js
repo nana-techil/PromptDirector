@@ -120,7 +120,7 @@ test('current scene remains a usable selector index when many long originals exc
 
 test('complete source selection is checked from tool facts regardless of assistant wording', () => {
   const read = { name: 'read_capture', args: { part: 'source', selector: '#comment' }, result: { data: { selector: '#comment', totalCharacters: 2700 } } };
-  const task = { steps: [{ operation: 'save_capture' }] };
+  const task = { steps: [{ operation: 'read_capture', part: 'source', selector: '#comment' }, { operation: 'save_capture' }] };
   const preview = { revision: 2, selections: [{ candidateId: 'post', includeText: true }], candidates: [{ id: 'post' }] };
   assert(captureSourceSelectionCheck([read], preview, task));
   preview.candidates[0].textSources = [{ selector: '#comment', totalCharacters: 2700, completeness: 'complete' }];
@@ -225,10 +225,16 @@ test('separate batch previews recognize earlier verified saves without forcing t
 test('the same original read across batch boundaries is satisfied by its later verified save, not by matching length alone',()=>{
  const read=(captureId,content='exact original',sourceUrl='https://example.test/effects')=>({name:'read_capture',args:{captureId,part:'source',selector:'#next pre'},result:{data:{captureId,sourceUrl,selector:'#next pre',content,offset:0,totalCharacters:14,nextOffset:null}}});
  const save={name:'save_capture',args:{captureId:'next'},result:{data:{captureId:'next',results:[{entryId:'saved-next',status:'saved',originalVerification:{status:'verified',sources:[{selector:'#next pre',totalCharacters:14}]}}]}}};
- const task={steps:[{operation:'save_capture'}]},preview={captureId:'last',candidates:[],selections:[]};
+ const task={steps:[{operation:'read_capture',part:'source',selector:'#next pre'},{operation:'save_capture'}]},preview={captureId:'last',candidates:[],selections:[]};
  assert.equal(captureSourceSelectionCheck([read('old'),read('next'),save],preview,task),undefined);
  for(const other of [read('next','changed source'),read('next','exact original','https://other.test/effects')]) {
   assert.deepEqual(captureSourceSelectionCheck([read('old'),other,save],preview,task).missing,['#next pre']);
  }
  assert(captureSourceSelectionCheck([read('old'),save,read('next')],preview,task),'a read made after saving cannot prove that source was committed');
+});
+
+test('reading an alternative without declaring it as a target never forces it into the saved case', () => {
+  const read = { name: 'read_capture', args: { part: 'source', selector: '#alternative' }, result: { data: { selector: '#alternative', totalCharacters: 12 } } };
+  const preview = { candidates: [{ id: 'chosen', textSources: [] }], selections: [{ candidateId: 'chosen', includeText: true }] };
+  assert.equal(captureSourceSelectionCheck([read], preview, { steps: [{ operation: 'save_capture' }] }), undefined);
 });

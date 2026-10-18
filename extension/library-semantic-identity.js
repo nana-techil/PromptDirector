@@ -150,6 +150,9 @@ function withoutReceiverLocalFields(value, parentKey = "") {
   const result = {};
   for (const key of Object.keys(value).sort()) {
     if (RECEIVER_LOCAL_FIELDS.has(key) || key === "generationInfo") continue;
+    // Copy provenance may be added while migrating an older package. Its
+    // independent caseInstanceId owns identity; keep the stored record intact.
+    if (!parentKey && key === "copyOrigin") continue;
     const item = value[key];
     if (item === undefined || item === null) continue;
     if (parentKey === "classification" && ["reason", "classifierVersion"].includes(key)) continue;

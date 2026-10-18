@@ -353,6 +353,19 @@ test("manual DOM correction keeps verified source facts and original media quali
   assert.deepEqual(revised.region.contentTargets[1].mediaIds, ["verified-image"]);
 });
 
+test("manual range edits keep distinct same-poster videos and restore originals through actual playback variants", () => {
+  const posterUrl = "https://cdn.example.com/shared-poster.jpg";
+  const source = { title: "Two films", canonicalUrl: "https://example.com/project", media: ["one", "two"].map(id => ({
+    id, kind: "video", url: `https://cdn.example.com/${id}.mp4`, posterUrl,
+    variants: [{ url: `https://cdn.example.com/${id}.m3u8`, sourceKind: "video-element" }]
+  })) };
+  const revised = mergePageCaptureRegionEdit(source, { ...source, media: ["two", "one", "third"].map(id => ({
+    id: `dom-${id}`, kind: "video", url: `https://cdn.example.com/${id}.m3u8`, posterUrl
+  })) });
+  assert.deepEqual(revised.media.map(item => item.id), ["two", "one", "dom-third"]);
+  assert.deepEqual(revised.media.map(item => item.url), ["https://cdn.example.com/two.mp4", "https://cdn.example.com/one.mp4", "https://cdn.example.com/third.m3u8"]);
+});
+
 test("the generic capture exposes meaningful nested blocks without turning every DOM node into a choice", () => {
   const source = collectPageCaptureSnapshot.toString();
   const targets = source.slice(source.indexOf("function collectContentTargets"), source.indexOf("function collectTextBlocks"));

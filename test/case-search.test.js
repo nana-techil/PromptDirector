@@ -49,6 +49,29 @@ test('project and media restrictions run before unrelated document reads; counti
   assert.equal(result.total,2);assert.deepEqual(result.cases,[]);assert.equal(result.nextOffset,null);assert.equal(documentReads(),0);
   assert(!Object.hasOwn(result,'projects'),'count-only searches must not attach the unrelated project tree');
 });
+test('shared document originals are read once per search, including missing text, and later edits remain visible in every case', async () => {
+  const entries = ['first', 'second'].map(id => ({ id, title: id, text: '',
+    mediaAssets: [asset('shared-document', 'document')] }));
+  let derived = null;
+  const reads = [];
+  const library = createAgentLibrary({ loadState: async () => ({ entries }),
+    readDerived: async id => { reads.push(id); return derived; },
+    readDerivedMetadata: async () => new Map(), libraryUrl: 'chrome-extension://test/library.html' });
+  async function search(query, expectedIds) {
+    reads.length = 0;
+    const result = await library.search({ query });
+    assert.deepEqual(result.cases.map(item => item.caseId), expectedIds);
+    assert.deepEqual(reads, ['shared-document']);
+    return result;
+  }
+  await search('', ['first', 'second']);
+  derived = { searchText: '早期文档正文' };
+  const previous = await search('早期文档正文', ['first', 'second']);
+  derived = { searchText: '更新后的文档正文' };
+  const current = await search('更新后的文档正文', ['first', 'second']);
+  assert.notEqual(current.revision, previous.revision);
+  await search('早期文档正文', []);
+});
 test('compound search uses each matching member media and its own prompt provenance', () => {
   const {state}=fixture();
   const compound={id:'c',title:'组合',memberEntries:[state.entries[1],state.entries[2]],memberEntryIds:['i','mixed'],mediaAssets:[...state.entries[1].mediaAssets,...state.entries[2].mediaAssets]};

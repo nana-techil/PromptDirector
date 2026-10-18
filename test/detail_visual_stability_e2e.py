@@ -81,7 +81,7 @@ def main():
             panel.get_by_role("button", name="收起", exact=True).click()
             location = panel.locator("h3").evaluate("e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,height:innerHeight,scroll:document.querySelector('#detail-content').scrollTop}}")
             assert location["top"] >= 0 and location["bottom"] < location["height"], ("从底部收起须回到当前提示词标题", width, location)
-            expect(panel.locator("h3")).to_be_focused()
+            expect(panel.locator(".prompt-expand")).to_be_focused()
             assert panel.get_by_role("button", name="编辑 AI 逆推提示词", exact=True).evaluate("e=>{const r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}"), "收起后的编辑按钮不能被固定关闭按钮遮挡"
         expect(page.locator(".video-analysis-uncertainties, .prompt-route")).to_have_count(0)
         expect(page.get_by_role("button", name="添加原始提示词", exact=True)).to_have_count(0)

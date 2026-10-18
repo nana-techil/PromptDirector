@@ -23,7 +23,7 @@ export function createAgentLibrary({ loadState, readBlob, readDerived, readDeriv
   async function documents(entries) {
     const docs = new Map();
     for (const entry of entries.filter(entry => !caseFilesUnavailable(entry))) for (const asset of entryMediaAssets(entry)) {
-      if (asset.kind === "document") docs.set(asset.id, (await readDerived(asset.id))?.searchText || "");
+      if (asset.kind === "document" && !docs.has(asset.id)) docs.set(asset.id, (await readDerived(asset.id))?.searchText || "");
     }
     return docs;
   }

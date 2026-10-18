@@ -5,7 +5,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect
 
-from e2e_support import ai_configuration_fixture, base_entry, extension_session, wait_for_async_condition
+from e2e_support import copy_analysis_diagnostics, ai_configuration_fixture, base_entry, extension_session, wait_for_async_condition
 
 
 def main() -> None:
@@ -23,6 +23,7 @@ def main() -> None:
             {
                 "schemaVersion": 24,
                 "entries": [entry],
+                "organizerState": {"version": 7, "collections": [{"id": "diagnostic-project", "name": "诊断测试项目", "entryIds": [entry["id"]]}]},
                 **ai_configuration_fixture(
                     providers={"deepseek": {"apiKey": "analysis-fixture-key", "consent": True,
                         "models": {"textTags": "deepseek-v4-flash"}}},
@@ -53,19 +54,15 @@ def main() -> None:
         library.wait_for_timeout(500)
         assert not session.page_errors, f"资料库初始化失败：{session.page_errors}"
         expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
-        library.locator("#open-settings").click()
-        library.locator('[data-settings-tab="tasks"]').click()
+        menu = library.locator('.project-row[data-collection-id="diagnostic-project"] .project-menu')
+        menu.locator('summary').click()
+        menu.get_by_role('button', name='批量分析', exact=True).click()
 
-        expect(library.locator("#analysis-diagnostics")).to_be_hidden()
-        library.locator(".task-diagnostics > summary").click()
-        library.locator("#show-analysis-diagnostics").check()
-        library.locator('[data-settings-tab="tasks"]').click()
-        expect(library.locator("#analysis-diagnostics")).to_be_visible()
-
-        expect(library.locator("#analysis-runtime-version")).to_contain_text(f"PromptDirector {extension_version}")
+        expect(library.locator("#analysis-diagnostics, #show-analysis-diagnostics, .task-diagnostics")).to_have_count(0)
+        diagnostic = copy_analysis_diagnostics(library)
+        assert f"PromptDirector {extension_version}" in diagnostic
         prompt_version = library.evaluate("async () => (await import('./deepseek.js')).ANALYSIS_PROMPT_VERSION")
-        expect(library.locator("#analysis-runtime-version")).to_contain_text(f"Analysis v{prompt_version}")
-        library.locator("#preview-analysis-batch").click()
+        assert f"Analysis v{prompt_version}" in diagnostic
         library.locator("#start-analysis-batch").click()
         expect(library.locator("#promptdirector-app-dialog")).to_contain_text("API 费用")
         assert worker.evaluate("analysisFixtureCalls") == 0
@@ -76,8 +73,13 @@ def main() -> None:
           return s.analysisBatchJob?.status === 'completed' ? s : null;
         }""")
         expect(library.locator("#batch-status-badge")).to_contain_text("已完成")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("模型请求 2 次")
-        expect(library.locator("#analysis-batch-details")).to_contain_text("结构补全 1 次")
+        # Completed selection tasks may close their dialog; reopen support in its scoped context.
+        if library.locator('#text-batch-dialog').is_visible():
+            library.locator('#text-batch-close').click()
+        menu.locator('summary').click()
+        menu.get_by_role('button', name='批量分析', exact=True).click()
+        assert "模型请求 2 次" in copy_analysis_diagnostics(library)
+        assert "结构补全 1 次" in copy_analysis_diagnostics(library)
         job = result["analysisBatchJob"]
         assert job["counts"]["succeeded"] == 1 and job["counts"]["failed"] == 0
         assert job["requestAttempts"] == 1 and job["outputCorrectionRequests"] == 1
@@ -85,11 +87,12 @@ def main() -> None:
         assert worker.evaluate("analysisFixtureCalls") == 2
         # Persisted queue diagnostics survive reopening instead of relying on page-local events.
         library.reload(wait_until="networkidle")
-        library.locator("#open-settings").click()
-        library.locator('[data-settings-tab="tasks"]').click()
-        library.locator(".task-diagnostics > summary").click()
-        expect(library.locator("#show-analysis-diagnostics")).to_be_checked()
-        expect(library.locator("#analysis-batch-details")).to_contain_text("模型请求 2 次")
+        expect(library.locator("body")).to_have_attribute("data-library-state", "ready")
+        menu = library.locator('.project-row[data-collection-id="diagnostic-project"] .project-menu')
+        menu.locator('summary').click()
+        menu.get_by_role('button', name='批量分析', exact=True).click()
+        expect(library.locator("#show-analysis-diagnostics")).to_have_count(0)
+        assert "模型请求 2 次" in copy_analysis_diagnostics(library)
         assert worker.evaluate("analysisFixtureCalls") == 2
         print({"requests": 2, "diagnostics_default_hidden": True, "persisted_correction_diagnostics": True})
 

@@ -1,3 +1,4 @@
+import { COMPOSER_STATE_REVISION_KEY, COMPOSER_TOOLS_KEY, createComposerToolStorage } from './composer-tool-storage.js';
 import { assistantChatViews } from './assistant-chat-view.js';
 import { COMPOSER_DRAFTS_KEY, withComposerDrafts, withAssistantChatDrafts } from './composer-session-drafts.js';
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, updateLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
@@ -32,10 +33,16 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
   if (!["get", "set", "remove"].every(name => typeof backend?.[name] === "function") || typeof lock !== "function") {
     throw new Error("资料读写接口缺少存储或写入协调能力。");
   }
+  const toolStorage = createComposerToolStorage({ backend, revision, cleanup: async keys => {
+    if (keys.length) await backend.remove(keys).catch(error => console.warn('Tool journal cleanup deferred', error.name));
+  } });
   const withRevision = update => touchesCaseLibrary(Object.keys(update))
     ? { ...update, [CASE_LIBRARY_REVISION_KEY]: revision() } : update;
   const withSummary = async update => {
     update = withRevision(update);
+    if (Object.hasOwn(update, 'composerSessions') || Object.hasOwn(update, COMPOSER_DRAFTS_KEY)) {
+      update = { ...update, [COMPOSER_STATE_REVISION_KEY]: revision() };
+    }
     if (Object.hasOwn(update, 'composerSessions')) {
       const sessions = update.composerSessions;
       update = { ...update, composerSessions: sessions, [COMPOSER_DRAFTS_KEY]: {}, composerSessionSummaries: composerSessionSummaries(sessions), assistantChatViews: assistantChatViews(sessions) };
@@ -101,9 +108,14 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     const names = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : Object.keys(keys || {});
     const wantsSessions = keys == null || names.includes('composerSessions');
     const wantsViews = keys == null || names.includes('assistantChatViews');
-    const requested = keys == null ? keys : wantsSessions || wantsViews ? [...new Set([...names, COMPOSER_DRAFTS_KEY])] : keys;
+    const requested = keys == null ? keys : wantsSessions || wantsViews ? [...new Set([...names, COMPOSER_DRAFTS_KEY, ...(wantsSessions ? [COMPOSER_TOOLS_KEY] : [])])] : keys;
     const stored = await backend.get(requested);
-    if (wantsSessions && Object.hasOwn(stored, 'composerSessions')) stored.composerSessions = withComposerDrafts(stored.composerSessions, stored[COMPOSER_DRAFTS_KEY]);
+    if (wantsSessions && Object.hasOwn(stored, 'composerSessions')) {
+      await toolStorage.join(stored);
+      stored.composerSessions = withComposerDrafts(stored.composerSessions, stored[COMPOSER_DRAFTS_KEY]);
+    }
+    if (keys == null) toolStorage.strip(stored);
+    else if (!names.includes(COMPOSER_TOOLS_KEY)) delete stored[COMPOSER_TOOLS_KEY];
     if (wantsViews && Object.hasOwn(stored, 'assistantChatViews')) stored.assistantChatViews = withAssistantChatDrafts(stored.assistantChatViews, stored[COMPOSER_DRAFTS_KEY]);
     if (!names.includes(COMPOSER_DRAFTS_KEY)) delete stored[COMPOSER_DRAFTS_KEY];
     if (keys && !Array.isArray(keys) && typeof keys === 'object') for (const [key, value] of Object.entries(keys)) if (!Object.hasOwn(stored, key)) stored[key] = value;
@@ -379,8 +391,19 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     if (!next) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
     return next;
   }, options))[0];
+  const writeWithSummary = async values => {
+    const replacement = Object.hasOwn(values, 'composerSessions') ? await toolStorage.replacement() : null;
+    await write(await withSummary({ ...values, ...replacement?.update }));
+    if (replacement?.obsolete.length) await backend.remove(replacement.obsolete).catch(error => console.warn('Tool journal cleanup deferred', error.name));
+  };
   return Object.freeze({
     get: read,
+    prepareComposerConfirmation: () => lock(async () => { await assertWritable(backend); await toolStorage.confirmationVersion(); }),
+    getComposerToolState: id => toolStorage.get(id),
+    updateComposerToolState: (id, transform, markDirty) => lock(async () => {
+      await assertWritable(backend);
+      return toolStorage.update(id, transform, markDirty);
+    }),
     // View readers may share frozen case records; editing callers keep the mutable get contract.
     getSnapshot: keys => read(keys, true),
     getSnapshotBatches,
@@ -390,18 +413,19 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     getKeys: () => backend.getKeys(),
     set: values => lock(async () => {
       await assertWritable(backend);
-      await write(await withSummary(values));
+      await writeWithSummary(values);
     }),
     remove: keys => lock(async () => {
       await assertWritable(backend);
       const removed = typeof keys === 'string' ? [keys] : keys;
+      const toolReplacement = removed.includes('composerSessions') ? await toolStorage.replacement() : null;
       // Removing the case list removes every case record with its index.
       const caseKeys = removed.includes(ENTRIES_KEY) && typeof backend.getKeys === 'function'
         ? (await backend.getKeys()).filter(key => isCaseRecordKey(key) || isBrowseKey(key) || key === CASE_INDEX_KEY) : [];
       if (caseKeys.length) caseCache = null;
       // Invalidate derived values in the same lock. The next reader rebuilds
       // them from the retained source instead of advertising a deleted undo.
-      return backend.remove([...new Set([...removed, ...caseKeys,
+      return backend.remove([...new Set([...removed, ...caseKeys, ...(toolReplacement ? [COMPOSER_TOOLS_KEY, COMPOSER_STATE_REVISION_KEY, ...toolReplacement.obsolete] : []),
         ...(removed.some(key => LIBRARY_VIEW_SUMMARY_SOURCES.includes(key)) ? [LIBRARY_VIEW_SUMMARY_KEY] : []),
         ...(removed.includes('composerSessions') ? ['composerSessionSummaries', 'assistantChatViews', COMPOSER_DRAFTS_KEY] : []),
         ...(touchesCaseLibrary(removed) ? [CASE_LIBRARY_REVISION_KEY] : [])
@@ -413,7 +437,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
       await assertWritable(backend);
       const update = await transform(await read(keys));
       if (!update || typeof update !== "object" || Array.isArray(update)) throw new Error("资料更新内容无效。");
-      await write(await withSummary(update));
+      await writeWithSummary(update);
     }),
     subscribe: listener => {
       if (!changes) throw new Error("资料变化通知不可用。");

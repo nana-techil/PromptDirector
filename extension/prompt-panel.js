@@ -36,13 +36,17 @@ export function createPromptPanel({ key, title, text, className = "", actions = 
   body.classList.add("prompt-text", "prompt-read-body");
   const fold = document.createElement("button");
   fold.type = "button";
-  fold.className = "button-secondary prompt-expand";
+  fold.className = "button-secondary prompt-icon-action prompt-expand";
+  fold.append(createUiIcon("chevron-right"));
+  label.after(fold);
   fold.hidden = true;
   const updateFold = () => {
     if (panel.isConnected) heading.style.scrollMarginTop = `${readingInset(panel)}px`;
     const expanded = expandedPanels.has(key);
     body.classList.toggle("is-expanded", expanded);
-    fold.textContent = t(expanded ? "收起" : "展开全文");
+    const label = t(expanded ? "收起" : "展开全文");
+    fold.title = label;
+    fold.setAttribute("aria-label", label);
     fold.setAttribute("aria-expanded", String(expanded));
     fold.hidden = body.hidden || (!expanded && body.scrollHeight <= body.clientHeight + 1);
   };
@@ -53,7 +57,7 @@ export function createPromptPanel({ key, title, text, className = "", actions = 
     else expandedPanels.add(key);
     updateFold();
     restore();
-    if (collapsing) label.focus({ preventScroll: true });
+    fold.focus({ preventScroll: true });
   });
   const editor = document.createElement("textarea");
   editor.className = `prompt-text prompt-editor ${editorClass}`;
@@ -110,7 +114,7 @@ export function createPromptPanel({ key, title, text, className = "", actions = 
     finally { save.disabled = editor.value.trim() === text.trim(); cancel.disabled = false; }
   });
   editActions.append(save, cancel);
-  panel.append(heading, body, fold, editor, editActions);
+  panel.append(heading, body, editor, editActions);
   requestAnimationFrame(() => {
     if (!panel.isConnected) return;
     updateFold();

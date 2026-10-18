@@ -84,7 +84,7 @@
 .modular-library .filters-collapsed .module-active-count { position: absolute; top: 0; right: 1px; font-size: 9px; }
 .modular-library .filters-collapsed .sidebar-layout-menu { display: none; }
 .modular-library .filters-collapsed .sidebar-trash-section #open-trash { width: 36px; }
-.modular-library .gallery-shell { min-width: 0; padding-top: 8px; }
+.modular-library .gallery-shell { min-width: 0; padding-top: 0; }
 .modular-library .sidebar-resizer { display: block; }
 .modular-library .toolbar-more { position: relative; flex: 0 0 32px; }
 .modular-library .toolbar-more > summary { display: grid; place-items: center; width: 32px; height: 32px; padding: 6px; list-style: none; border: 1px solid var(--line); border-radius: var(--ui-control-radius); background: var(--raised); cursor: pointer; }
@@ -167,3 +167,5 @@
   .gallery-size-control { gap: 4px; margin: 0; }
   .modular-library .topbar .share-bar, .modular-library .topbar .project-selection-actions { overflow-x: auto; }
 }
+
+.module-chevron { transition: transform 180ms ease; }

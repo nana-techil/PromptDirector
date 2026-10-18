@@ -6,10 +6,20 @@ from e2e_support import base_entry, extension_session
 
 def main():
     original = '保留完整原词。' * 1000
+    videos = []
+    for entry_id, duration, prompt in [('prompted', 8000, '独立视频原词'),
+                                       ('unprompted', 12000, ''), ('unknown-duration', None, '')]:
+        entry = base_entry(entry_id, f'时长覆盖 {entry_id}', '', 'content:prompt:video', 2)
+        asset_id = f'{entry_id}-video'
+        entry['mediaAssets'] = [{'id': asset_id, 'kind': 'video', 'mimeType': 'video/mp4',
+                                 'storageMode': 'managed', **({'durationMs': duration} if duration else {})}]
+        if prompt:
+            entry['mediaPrompts'] = [{'assetId': asset_id, 'source': 'manual', 'text': prompt}]
+        videos.append(entry)
     with extension_session('pd-composer-worker-tools-') as run:
         page = run.open_page('collector.html')
         run.seed_storage(page, {'entries': [base_entry('bridge-case', '工具读取案例', original,
-                                                     'content:prompt:image', 1)]})
+                                                     'content:prompt:image', 1), *videos]})
         skill = page.evaluate("""async () => {
           const response = await chrome.runtime.sendMessage({type:'CREATE_CREATIVE_SKILL',
             skill:{callName:'完整方法',description:'后台工具回归',skillMarkdown:'保留完整方法正文'}});
@@ -40,6 +50,12 @@ def main():
 
         found = execute('search_cases', {'query': '工具读取案例'})
         assert any(item['caseId'] == 'bridge-case' for item in found['candidates']), found
+        for has_prompt, expected_id in [(True, 'prompted'), (False, 'unprompted')]:
+            duration_result = execute('search_cases', {'query': '时长覆盖', 'mediaKind': 'video',
+                                                      'minDurationMs': 5000, 'hasPrompt': has_prompt})
+            assert [item['caseId'] for item in duration_result['candidates']] == [expected_id], duration_result
+            coverage = duration_result['durationCoverage']
+            assert (coverage['totalMedia'], coverage['knownDurationMedia'], coverage['unknownDurationMedia']) == (3, 2, 1), duration_result
         overview = execute('read_case_details', {'caseId': 'bridge-case'})
         document = execute('read_case_details', {'caseId': 'bridge-case', 'part': 'document',
                                                'expectedRevision': overview['revision'], 'length': 12000})
@@ -64,6 +80,7 @@ def main():
         assert stored['composerSessions'][0]['toolContinuations']['other-request']['marker'] == '保留另一个任务'
         assert not run.page_errors, run.page_errors
         print(json.dumps({'workerCaseRead': True, 'workerSearch': True, 'workerSkillRead': True,
+                          'durationCoverageBeforePromptFilter': True,
                           'continuationReload': True, 'otherTaskPreserved': True, 'sharedOriginalContextReload':True}, ensure_ascii=False))
 
 

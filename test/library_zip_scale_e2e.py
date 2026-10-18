@@ -65,16 +65,14 @@ def main() -> None:
         print("Generated real ZIP32-boundary and DEFLATE fixtures", flush=True)
         page = session.open_page("library.html", wait_until="networkidle")
         expect(page.locator("body")).to_have_attribute("data-library-state", "ready")
-        page.locator("#open-settings").click()
-        page.locator('[data-settings-tab="general"]').click()
-        page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])
+        page.locator("#media-file").set_input_files([str(item["path"]) for item in sources])
         confirm = page.locator("#library-package-import-confirm")
         expect_import_ready(page)
         # Cancellation after actual preflight must leave the existing library untouched.
         page.locator("#library-package-import-cancel").click()
         state = page.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert [entry["id"] for entry in state["entries"]] == [sentinel["id"]]
-        page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])
+        page.locator("#media-file").set_input_files([str(item["path"]) for item in sources])
         expect_import_ready(page)
         confirm.click()
         expect(page.locator("#library-package-import-dialog")).to_be_hidden(timeout=300000)

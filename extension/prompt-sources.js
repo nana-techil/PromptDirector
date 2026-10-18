@@ -1,5 +1,5 @@
 import { usesArticleReader } from "./case-presentation.js";
-import { currentVideoReconstruction } from "./media.js";
+import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { validReconstructionPrompt } from "./image-prompt.js";
 
 export function detailPromptSources(entry = {}, asset = {}) {
@@ -24,6 +24,17 @@ export function originalMediaPrompts(entry = {}) {
 export function originalMediaPrompt(entry, assetId) {
   const prompts = originalMediaPrompts(entry).filter(item => item.assetId === assetId);
   return prompts.find(item => item.source === "manual") || prompts[0];
+}
+
+export function hasDistinctMediaPrompts(entry = {}) {
+  const assets = entryMediaAssets(entry).filter(asset => ['image', 'video'].includes(asset.kind) && asset.usage !== 'poster');
+  if (assets.length < 2) return false;
+  const normalize = text => String(text || '').trim().replace(/\s+/gu, ' ');
+  const prompts = assets.map(asset => normalize(originalMediaPrompt(entry, asset.id)?.text)).filter(Boolean);
+  const shared = normalize(sharedOriginalPrompt(entry)
+    || (entry.sourceFacts?.originalPromptAvailable === true && !usesArticleReader(entry) ? entry.text : ''));
+  // A captured excerpt of the case prompt does not add another reading scope.
+  return shared ? prompts.some(text => !shared.includes(text)) : new Set(prompts).size > 1;
 }
 
 export function sharedOriginalPrompt(entry = {}) {

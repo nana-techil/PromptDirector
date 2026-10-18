@@ -52,7 +52,7 @@ export function createTagEditor(options = {}) {
   add.textContent = options.addLabel || t("添加");
   row.append(input, add);
   root.append(chips, row);
-  let toggle;
+  let toggle, setOpen;
   if (options.compact) {
     root.classList.add('tag-editor-compact'); row.hidden = true;
     toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'button-secondary prompt-icon-action';
@@ -71,7 +71,7 @@ export function createTagEditor(options = {}) {
       setPosition(position) { intent++; return placePanelInViewport(row, position); },
       onEnd(position) { void savePanelPosition('tagEditor', row, position).catch(reportPositionError); }
     });
-    const open = async value => {
+    const open = setOpen = async value => {
       const currentIntent = ++intent;
       row.hidden = !value; toggle.setAttribute('aria-expanded', String(value));
       if (value) {
@@ -99,6 +99,7 @@ export function createTagEditor(options = {}) {
       text.textContent = value;
       const remove = document.createElement("button");
       remove.type = "button";
+      remove.className = "tag-remove-button";
       remove.textContent = "×";
       remove.setAttribute("aria-label", t("删除标签：{value}", { value }));
       remove.addEventListener("click", () => void applyValues(values.filter((item) => item !== value), remove));
@@ -149,6 +150,7 @@ export function createTagEditor(options = {}) {
   const commit = async () => {
     const additions = normalizeTagValues(splitTagInput(input.value));
     if (!additions.length) {
+      if (setOpen) { await setOpen(false); return true; }
       input.focus();
       return false;
     }

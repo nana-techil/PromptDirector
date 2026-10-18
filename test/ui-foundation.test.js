@@ -45,21 +45,22 @@ test("shared visual foundation owns the locked dark theme and control scale", ()
 
 test("light theme uses the calibrated neutral surfaces and semantic green hierarchy", () => {
   for (const [token, value] of Object.entries({
-    "ui-browser": "#e2e6e3",
-    "ui-page": "#edf0ed",
-    "ui-surface": "#f8f9f8",
-    "ui-raised": "#e5e9e6",
-    "ui-hover": "#dce2de",
-    "ui-text": "#121714",
-    "ui-muted": "#5b645e",
+    "ui-browser": "#e5e5e5",
+    "ui-page": "#f1f1f1",
+    "ui-surface": "#f7f7f7",
+    "ui-raised": "#e8e8e8",
+    "ui-hover": "#dedede",
+    "ui-text": "#171717",
+    "ui-muted": "#606060",
     "ui-accent": "#d1fe17"
   })) {
     assert.match(foundation, new RegExp(`--${token}:\\s*${value}`));
   }
-  assert.ok(contrast("#121714", "#edf0ed") >= 4.5);
-  assert.ok(contrast("#5b645e", "#dce2de") >= 4.5);
+  assert.ok(contrast("#171717", "#f1f1f1") >= 4.5);
+  assert.ok(contrast("#606060", "#dedede") >= 4.5);
   assert.ok(contrast("#0f1113", "#d1fe17") >= 4.5);
-  assert.ok(contrast("#121714", mix("#d1fe17", "#f8f9f8", 0.16)) >= 4.5);
+  assert.ok(contrast("#171717", "#f7f7f7") >= 3, "light-theme focus outlines remain visible without changing the brand fill");
+  assert.ok(contrast("#171717", mix("#d1fe17", "#f7f7f7", 0.16)) >= 4.5);
   assert.match(foundation, /--ui-accent-emphasis:\s*var\(--ui-accent\)/);
   assert.match(foundation, /--ui-accent-emphasis-contrast:\s*var\(--ui-accent-contrast\)/);
   assert.match(foundation, /--ui-selected-surface:\s*color-mix\(in srgb, var\(--ui-accent\) 16%, var\(--ui-surface\)\)/);
@@ -67,9 +68,9 @@ test("light theme uses the calibrated neutral surfaces and semantic green hierar
   assert.match(foundation, /--ui-content-active-surface:\s*var\(--ui-selected-surface\)/);
   assert.match(foundation, /--ui-card-border:\s*var\(--ui-border-weak\)/);
   assert.match(foundation, /--accent-ink:\s*var\(--ui-text\)/);
-  assert.match(foundation, /--ui-focus:\s*var\(--ui-accent-emphasis\)/);
-  assert.match(foundation, /--ui-primary-border:\s*transparent/);
-  assert.match(foundation, /button,\s*\.button-primary,\s*\.button-secondary\s*\{[\s\S]*?border:\s*1px solid transparent/);
+  assert.match(foundation, /--ui-focus:\s*var\(--ui-text\)/);
+  assert.match(foundation, /--ui-primary-border:\s*var\(--ui-border-strong\)/);
+  assert.match(foundation, /button,\s*\.button-primary,\s*\.button-secondary\s*\{[\s\S]*?border:\s*1px solid var\(--ui-primary-border\)/);
   assert.doesNotMatch(foundation, /#526900/i);
   assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--ui-accent-emphasis:\s*var\(--ui-accent\)/);
   assert.match(foundation, /\.quiet-danger\s*\{[\s\S]*color:\s*var\(--ui-danger\)[\s\S]*background:\s*transparent/);

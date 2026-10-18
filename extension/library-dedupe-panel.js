@@ -40,8 +40,9 @@ function comparisonText(section, fields, entry, other, names, contentLabel) {
 }
 function dateText(value) { return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString() : t('未知'); }
 
-export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, contentLabel, projectId = '', selectedIds = [], pageSize, currentState, send, thumbnailUrl, mediaUrl }) {
+export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, contentLabel, projectId = '', selectedIds = [], pageSize, currentState, send, thumbnailUrl, mediaUrl, openCase, heading }) {
   const storage = getLibraryStorage();
+  const headingParent = heading?.parentNode, headingNext = heading?.nextSibling;
   let dismissed = {}, initialized = false, initializing = false;
   const verificationErrors = new Map();
   let pendingPanel, pendingRows, pendingSummary, ignoredPanel, ignoredRows, ignoredSummary;
@@ -109,38 +110,51 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
       renderPending(); updateSelection();
     } catch (error) { say(t(error.message)); }
   }
-  let reviewCache;
+  let reviewCache, renderedReviewRows;
+  const pendingNodes = new WeakMap();
+  let comparisonView;
+  const expandedDetails = new Map();
   function currentReviews() {
     if (reviewCache?.entries !== state.entries || reviewCache?.dismissed !== dismissed || reviewCache?.scope !== scope) {
       reviewCache = { entries: state.entries, dismissed, scope, rows: unverifiedCases(scopedState().entries, dismissed) };
     }
     return reviewCache.rows;
   }
-  function renderPending() {
+  function renderPending(force = false) {
     if (closed) return;
     const rows = currentReviews();
+    if (!force && renderedReviewRows === rows) return;
+    renderedReviewRows = rows;
     for (const [panel, heading, container, ignored] of [[pendingPanel, pendingSummary, pendingRows, false], [ignoredPanel, ignoredSummary, ignoredRows, true]]) {
       const members = rows.filter(row => row.dismissed === ignored);
       heading.hidden = !members.length; panel.hidden = !members.length || !panel.open;
       heading.setAttribute('aria-expanded', String(panel.open && members.length > 0));
       heading.textContent = t(ignored ? '已略过 {count} 个案例' : '待核对 {count} 个案例', { count: members.length });
-      container.querySelectorAll("video,audio").forEach(media => media.pause());
-      container.replaceChildren();
-      if (!panel.open || !members.length) continue;
-      let shown = 0;
-      function more() {
+      const existing = new Map([...container.querySelectorAll('.dedupe-unverified-row')].map(card => [card.dataset.entryId, card]));
+      const valid = new Map(members.map(row => [row.entry.id, row.entry]));
+      for (const [id, card] of existing) if (valid.get(id) !== pendingNodes.get(card)?.entry) {
+        card.querySelectorAll('video,audio').forEach(media => media.pause()); card.remove(); existing.delete(id);
+      }
+      if (!panel.open || !members.length) {
+        container.querySelectorAll('video,audio').forEach(media => media.pause());
+        container.replaceChildren(); delete container.dataset.shown; continue;
+      }
+      let shown = Math.max(pageSize, Number(container.dataset.shown) || pageSize);
+      function more(extend = true) {
+        if (extend) shown += pageSize;
         container.querySelector('.dedupe-pending-more')?.remove();
-        for (const row of members.slice(shown, shown + pageSize)) {
+        for (const row of members.slice(0, shown)) {
+          if (existing.has(row.entry.id)) continue;
           const card = node('article', null, 'dedupe-unverified-row'); card.dataset.entryId = row.entry.id;
           const actions = node('div', null, 'dedupe-unverified-actions');
-          const reason = [...new Set(row.assets.map(asset => verificationErrors.get(JSON.stringify([row.entry.id, asset.id])) ||
+          const reason = () => [...new Set(row.assets.map(asset => verificationErrors.get(JSON.stringify([row.entry.id, asset.id])) ||
             (asset.storageMode === 'reference' ? '原件仅保留外部引用，尚未保存到本机' : '原件尚未核对')))];
           const title = button('查看案例', () => {
             const existing = card.querySelector('.dedupe-case');
             if (existing) { existing.querySelectorAll('video,audio').forEach(media => media.pause()); existing.remove(); title.setAttribute('aria-expanded', 'false'); return; }
             title.setAttribute('aria-expanded', 'true');
             const detail = node('div', null, 'dedupe-case dedupe-inspection');
-            const reasonText = node('p', reason.map(value => t(value)).join('；'), 'dedupe-inspection-reason');
+            const reasonText = node('p', reason().map(value => t(value)).join('；'), 'dedupe-inspection-reason');
             reasonText.setAttribute('role', 'status');
             const metadata = node('div', null, 'dedupe-inspection-meta');
             metadata.append(node('span', projectNames(row.entry.id)));
@@ -166,13 +180,13 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
           title.setAttribute('aria-expanded', 'false');
           actions.append(iconButton('重试核对', 'refresh-cw', () => void checkOriginals(row.entry.id)),
             iconButton(ignored ? '恢复提醒' : '不再提示', ignored ? 'arrow-left' : 'x', () => void dismissReview(row, !ignored)));
-          card.append(title, actions); container.append(card);
+          card.append(title, actions); pendingNodes.set(card, { entry: row.entry }); container.append(card); existing.set(row.entry.id, card);
         }
-        shown += pageSize;
-        if (shown < members.length) container.append(button('显示更多待核对项', more, 'button-secondary dedupe-pending-more'));
+        container.dataset.shown = String(shown);
+        if (shown < members.length) container.append(button('显示更多待核对项', () => more(true), 'button-secondary dedupe-pending-more'));
         updateSelection();
       }
-      more();
+      more(false);
     }
   }
   function renderList() {
@@ -185,7 +199,9 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
       const keep = byId().get(keepers.get(group.id)), chosen = selectedGroup(group);
       const row = node('article', null, 'dedupe-group-row'); row.dataset.groupId = group.id;
       const check = node('input'); check.type = 'checkbox'; check.setAttribute('aria-label', t('选择此组')); check.checked = chosen.size > 0; check.indeterminate = chosen.size > 0 && chosen.size < group.caseIds.length - 1;
-      check.addEventListener('change', () => { selections.set(group.id, new Set(check.checked ? group.caseIds.filter(id => id !== keep.id && (!onlyMatchingData || compareDuplicateCases(keep, byId().get(id), result.projects).exact)) : [])); invalidate(); render(); });
+      check.addEventListener('change', () => { selections.set(group.id, new Set(check.checked ? group.caseIds.filter(id => id !== keep.id && (!onlyMatchingData || compareDuplicateCases(keep, byId().get(id), result.projects).exact)) : [])); invalidate();
+        check.indeterminate = false; row.querySelector('.dedupe-group-count').textContent = t('清理 {count} 份', { count: selectedGroup(group).size });
+        updateSelection(); });
       const preview = button('查看', () => { activeId = group.id; memberPage = 0; render(); }, 'dedupe-group-preview');
       const asset = duplicateVisualAssets(keep)[0];
       if (asset) void thumbnailUrl(asset.id).then(url => { if (!url || closed || !preview.isConnected) return; const img = node('img'); img.src = url; img.alt = keep.title || ''; preview.replaceChildren(img); }).catch(() => {});
@@ -201,7 +217,7 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
   function chooseKeeper(group, id) {
     const previous = keepers.get(group.id), selected = selectedGroup(group);
     if (selected.size && previous) selected.add(previous);
-    keepers.set(group.id, id); selected.delete(id); selections.set(group.id, selected); invalidate(); render();
+    keepers.set(group.id, id); selected.delete(id); selections.set(group.id, selected); invalidate(); void renderCompare(); updateSelection();
   }
   async function renderMedia(card, entry, initialAssetId, onUnavailable) {
     const assets = (entry.mediaAssets || []).filter(a => a.usage !== 'poster');
@@ -236,8 +252,18 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
     card.append(area); if (assets.length > 1) card.append(picker); await show();
   }
   async function renderCompare() {
-    compare.querySelectorAll('video,audio').forEach(media => media.pause());
-    compare.replaceChildren(button('返回全部重复组', () => { activeId = null; render(); }));
+    const focusedCard = document.activeElement?.closest('.dedupe-case');
+    const focusedId = focusedCard && compare.contains(focusedCard) ? focusedCard.dataset.entryId : null;
+    const positions = [];
+    for (let parent = compare; parent; parent = parent.parentElement) if (parent.scrollHeight > parent.clientHeight) positions.push([parent, parent.scrollTop]);
+    const reuse = comparisonView?.groupId === activeId && comparisonView.state === state;
+    if (!reuse) {
+      compare.querySelectorAll('video,audio').forEach(media => media.pause());
+      compare.replaceChildren(); comparisonView = { groupId: activeId, state, page: -1, cards: new Map() };
+    }
+    const header = node('div'); header.append(button('返回全部重复组', () => { activeId = null; render(); }));
+    if (comparisonView.header) comparisonView.header.replaceWith(header); else compare.append(header);
+    comparisonView.header = header;
     const group = result?.groups.find(g => g.id === activeId);
     if (!group) { compare.append(node('p', scanning ? t('正在比较案例…') : t('当前范围没有这类重复'))); return; }
     const map = byId(), rows = group.caseIds.map(id => map.get(id));
@@ -249,23 +275,35 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
     const reference = map.get(keep);
     const dateChoice = chooseDuplicateKeeper(rows, rule, preferredProject, result.projects, keep);
     const batchNames = new Map([...new Set(rows.map(e => e.importBatchId).filter(Boolean))].map((id, i) => [id, i + 1]));
-    compare.append(node('h3', t('图片／视频原件完全相同')), node('p', t(ORIGINS[duplicateOrigin(rows)]), 'dedupe-origin'));
-    if (dateChoice.uncertain) compare.append(node('p', t('日期或项目无法区分优先项，可手动更换保留项。')));
-    if (rows.some(e => !compareDuplicateCases(reference, e, result.projects).sameProjects)) compare.append(node('p', t('清理跨项目副本后，该项目中将不再显示此案例。')));
-    if (!onlyMatchingData && rows.some(e => !compareDuplicateCases(reference, e, result.projects).exact)) compare.append(node('p', t('附带资料不同的副本也已选中，清理后可从回收站恢复。')));
-    const grid = node('div', null, 'dedupe-cases'); compare.append(grid);
+    header.append(node('h3', t('图片／视频原件完全相同')), node('p', t(ORIGINS[duplicateOrigin(rows)]), 'dedupe-origin'));
+    if (dateChoice.uncertain) header.append(node('p', t('日期或项目无法区分优先项，可手动更换保留项。')));
+    if (rows.some(e => !compareDuplicateCases(reference, e, result.projects).sameProjects)) header.append(node('p', t('清理跨项目副本后，该项目中将不再显示此案例。')));
+    if (!onlyMatchingData && rows.some(e => selectedGroup(group).has(e.id) && !compareDuplicateCases(reference, e, result.projects).exact)) header.append(node('p', t('附带资料不同的副本也已选中，清理后可从回收站恢复。')));
+    const grid = comparisonView.grid || node('div', null, 'dedupe-cases');
+    if (!comparisonView.grid) { comparisonView.grid = grid; compare.append(grid); }
     const others = rows.filter(e => e.id !== keep);
-    const visible = [reference, ...others.slice(memberPage, memberPage + pageSize - 1)];
+    const visible = comparisonView.page === memberPage ? comparisonView.visible.map(id => map.get(id))
+      : [reference, ...others.slice(memberPage, memberPage + pageSize - 1)];
+    comparisonView.page = memberPage; comparisonView.visible = visible.map(entry => entry.id);
+    comparisonView.paging?.remove();
     if (others.length > pageSize - 1) {
       const paging = node('div', null, 'dedupe-toolbar');
       if (memberPage) paging.append(button('上一页', () => { memberPage = Math.max(0, memberPage - pageSize + 1); void renderCompare(); }));
       if (memberPage + pageSize - 1 < others.length) paging.append(button('下一页', () => { memberPage += pageSize - 1; void renderCompare(); }));
-      compare.append(paging);
+      compare.append(paging); comparisonView.paging = paging;
     }
     for (const entry of visible) {
-      const card = node('article', null, `dedupe-case${entry.id === keep ? ' keep' : ''}`); card.dataset.entryId = entry.id; grid.append(card);
-      const heading = node('div', null, 'dedupe-case-heading'); heading.append(node('h4', entry.title || t('未命名'))); card.append(heading);
-      void renderMedia(card, entry, group.assetIds?.[entry.id]);
+      let card = comparisonView.cards.get(entry.id);
+      if (card) {
+        for (const detail of card.querySelectorAll('details')) expandedDetails.set(JSON.stringify([entry.id, detail.querySelector('summary')?.textContent]), detail.open);
+        for (const child of [...card.children]) if (!child.matches('.dedupe-preview,select')) child.remove();
+      } else {
+        card = node('article', null, 'dedupe-case'); card.dataset.entryId = entry.id;
+        comparisonView.cards.set(entry.id, card); grid.append(card);
+        void renderMedia(card, entry, group.assetIds?.[entry.id]);
+      }
+      card.classList.toggle('keep', entry.id === keep);
+      const heading = node('div', null, 'dedupe-case-heading'); heading.append(node('h4', entry.title || t('未命名'))); card.prepend(heading);
       const info = node('div', null, 'dedupe-case-info'); info.append(node('p', projectNames(entry.id)),
         node('small', `${t('入库时间')}：${dateText(entry.libraryAddedAt)}\n${t('编辑时间')}：${dateText(entry.libraryUpdatedAt)}`));
       if (entry.copyOrigin?.title) info.append(node('small', t('复制自：{title}', { title: entry.copyOrigin.title })));
@@ -304,13 +342,22 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
       if (entry.mediaPrompts?.length) full.append(node('pre', readable(entry.mediaPrompts)));
       if (entry.timeNotes?.length) full.append(node('pre', readable(entry.timeNotes)));
       card.append(full);
+      for (const detail of card.querySelectorAll('details')) detail.open = expandedDetails.get(JSON.stringify([entry.id, detail.querySelector('summary')?.textContent])) || false;
     }
+    const shown = new Set(visible.map(entry => entry.id));
+    for (const [id, card] of comparisonView.cards) if (!shown.has(id)) {
+      card.querySelectorAll('video,audio').forEach(media => media.pause()); card.remove(); comparisonView.cards.delete(id);
+    }
+    if (focusedId && !compare.contains(document.activeElement)) {
+      const card = comparisonView.cards.get(focusedId); if (card) { card.tabIndex = -1; card.focus({ preventScroll: true }); }
+    }
+    for (const [parent, top] of positions) parent.scrollTop = top;
   }
   function render() {
     if (closed) return;
     const inspecting = Boolean(activeId && result?.groups.some(g => g.id === activeId));
     list.hidden = inspecting || !result?.groups.length; compare.hidden = !inspecting;
-    if (inspecting) void renderCompare(); else { compare.querySelectorAll('video,audio').forEach(m => m.pause()); renderList(); }
+    if (inspecting) void renderCompare(); else { compare.querySelectorAll('video,audio').forEach(m => m.pause()); comparisonView = null; compare.replaceChildren(); renderList(); }
     renderPending(); updateSelection();
   }
   async function scan(fresh = true) {
@@ -368,9 +415,24 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
     } catch (error) { say(t(error.message)); }
     finally { checking = false; scopeSelect.disabled = false; checkButton.textContent = t('核对原件'); updateSelection(); }
   }
+  function renderBlocked(rows) {
+    for (const row of rows) {
+      const item = node('div', null, 'dedupe-blocked');
+      item.append(node('p', `${t('保留项')}：${row.title}`));
+      if (row.references?.length) {
+        for (const reference of row.references) {
+          const owner = node('div', null, 'dedupe-reference');
+          owner.append(node('span', `${t(reference.kind)}：${reference.title || t('未命名')}`));
+          if (reference.caseId && openCase) owner.append(button('查看案例', () => void openCase(reference.caseId)));
+          item.append(owner);
+        }
+      } else item.append(node('p', t(row.reason)));
+      review.append(item);
+    }
+  }
   async function cleanup() {
     if (applying) return; applying = true; updateSelection();
-    const controls = [...body.querySelectorAll('button, select, input')].map(el => [el, el.disabled]); controls.forEach(([el]) => { el.disabled = true; });
+    const controls = [...body.querySelectorAll('button, select, input')].filter(el => !heading?.contains(el)).map(el => [el, el.disabled]); controls.forEach(([el]) => { el.disabled = true; });
     try {
       if (!confirmation && !pendingRequest) {
         const map = byId(), groups = [];
@@ -381,27 +443,36 @@ export function mountCaseDedupePanel(body, { state: initialState, facetCatalog, 
             allowCrossProject: acrossProjects, remove: await Promise.all(ids.map(async id => ({ id, revision: await duplicateRevision(map.get(id), result.projects.get(id)) }))) });
         }
         const preview = await send({ type: 'PREVIEW_CASE_DEDUPE', groups });
-        const accepted = new Set(preview.accepted), kept = new Set(groups.filter(g => g.remove.some(r => accepted.has(r.id))).map(g => g.keepId));
-        const differences = groups.flatMap(g => g.remove.filter(r => accepted.has(r.id) && !compareDuplicateCases(map.get(g.keepId), map.get(r.id), result.projects).exact));
-        confirmation = { groups, preview }; review.replaceChildren();
-        review.append(node('strong', t('将保留 {keep} 份，清理 {remove} 份', { keep: kept.size, remove: accepted.size })), node('p', t('清理后进入回收站，可恢复。')));
-        if (differences.length) review.append(node('p', t('其中 {count} 份附带资料有差异，将随副本一起进入回收站。', { count: differences.length })));
-        const uncertain = groups.filter(g => chooseDuplicateKeeper([map.get(g.keepId), ...g.remove.map(r => map.get(r.id))], rule, preferredProject, result.projects, g.keepId).uncertain).length;
-        if (uncertain) review.append(node('p', t('{count} 组无法按日期或项目区分，沿用清单中的保留项。', { count: uncertain })));
-        if (acrossProjects) review.append(node('p', t('清理跨项目副本后，该项目中将不再显示此案例。')));
-        const details = node('details'); details.append(node('summary', t('查看保留与清理清单')));
-        details.append(node('pre', groups.map(g => `${t('保留项')}：${map.get(g.keepId).title} · ${projectNames(g.keepId)}
-${t('清理这份')}：${g.remove.filter(r => accepted.has(r.id)).map(r => `${map.get(r.id).title} · ${projectNames(r.id)}`).join('；')}`).join('\n\n'))); review.append(details);
-        for (const row of preview.skipped) review.append(node('p', `${row.title}：${t(row.reason)}`));
-        review.append(button('取消', () => { invalidate(); render(); }));
-        say(t('请确认本次批量清理数量')); execute.textContent = t('确认移入回收站');
-        if (!accepted.size) { confirmation = null; execute.textContent = t('一键清理重复'); }
+        const accepted = new Set(preview.accepted);
+        const eligibleGroups = groups.map(group => ({ ...group, remove: group.remove.filter(row => accepted.has(row.id)) })).filter(group => group.remove.length);
+        const count = new Set(result.groups.flatMap(group => group.caseIds)).size;
+        const differences = eligibleGroups.flatMap(g => g.remove.filter(r => !compareDuplicateCases(map.get(g.keepId), map.get(r.id), result.projects).exact));
+        for (const [id, selected] of selections) selections.set(id, new Set([...selected].filter(id => accepted.has(id))));
+        confirmation = accepted.size ? { groups: eligibleGroups, preview } : null;
+        review.replaceChildren();
+        if (accepted.size) {
+          review.append(node('strong', t('将保留 {keep} 份，清理 {remove} 份', { keep: count - accepted.size, remove: accepted.size })), node('p', t('清理后进入回收站，可恢复。')));
+          if (differences.length) review.append(node('p', t('其中 {count} 份附带资料有差异，将随副本一起进入回收站。', { count: differences.length })));
+          if (acrossProjects) review.append(node('p', t('清理跨项目副本后，该项目中将不再显示此案例。')));
+          const details = node('details'); details.append(node('summary', t('查看保留与清理清单')));
+          details.append(node('pre', eligibleGroups.map(g => `${t('保留项')}：${map.get(g.keepId).title} · ${projectNames(g.keepId)}
+${t('清理这份')}：${g.remove.map(r => `${map.get(r.id).title} · ${projectNames(r.id)}`).join('；')}`).join('\n\n'))); review.append(details);
+        }
+        renderBlocked(preview.skipped);
+        if (accepted.size) review.append(button('取消', () => { invalidate(); render(); }));
+        say(t(accepted.size ? '请确认本次批量清理数量' : '所选案例仍有关联引用或变化，本次未清理'));
+        execute.textContent = t(accepted.size ? '确认移入回收站' : '一键清理重复');
+        render();
+        review.scrollIntoView({ block: 'nearest' });
       } else {
         pendingRequest ||= { requestId: crypto.randomUUID(), groups: confirmation.groups };
         const outcome = await send({ type: 'APPLY_CASE_DEDUPE', input: pendingRequest });
         const moved = new Set(outcome.movedEntryIds); state = { ...state, entries: state.entries.filter(e => !moved.has(e.id)) };
         invalidate(); await scan(true);
-        say([t('{count} 个案例已移入回收站', { count: moved.size }), ...outcome.skipped.map(r => `${r.title}：${t(r.reason)}`)].join('\n'));
+        const skipped = new Set(outcome.skipped.map(row => row.id));
+        for (const [id, selected] of selections) selections.set(id, new Set([...selected].filter(id => !skipped.has(id))));
+        renderBlocked(outcome.skipped); render();
+        say(moved.size ? t('{count} 个案例已移入回收站', { count: moved.size }) : t('案例引用或内容已变化，本次未清理'));
       }
     } catch (error) { say(t(error.message)); if (pendingRequest) execute.textContent = t('重试同一清理'); }
     finally { applying = false; controls.forEach(([el, disabled]) => { el.disabled = disabled; }); updateSelection(); }
@@ -422,17 +493,18 @@ ${t('清理这份')}：${g.remove.filter(r => accepted.has(r.id)).map(r => `${ma
   const optionsPanel = node('div'); options.append(optionsTrigger, optionsPanel);
   unbindOptions = bindPopoverMenu(options, optionsPanel);
   for (const [label, change] of [['跨项目一起清理', value => { acrossProjects = value; }], ['仅清理附带资料也一致的副本', value => { onlyMatchingData = value; }]]) {
-    const wrap = node('label'), check = node('input'); check.type = 'checkbox'; check.addEventListener('change', () => { change(check.checked); activeId = null; prepare(); }); wrap.append(check, node('span', t(label))); optionsPanel.append(wrap);
+    const wrap = node('label'), check = node('input'); check.type = 'checkbox'; check.className = 'ui-switch'; check.setAttribute('role', 'switch'); check.addEventListener('change', () => { change(check.checked); activeId = null; prepare(); }); wrap.append(check, node('span', t(label))); optionsPanel.append(wrap);
   }
   projectHint = node('small'); optionsPanel.append(projectHint);
   refreshButton = iconButton('重新比较', 'refresh-cw', () => { state = currentState(); void (initialized ? scan(true) : initialize()); });
+  if (heading) toolbar.append(heading);
   toolbar.append(scopeSelect, rules, projects, options, pauseButton, checkButton, refreshButton);
   status = node('p', null, 'dedupe-status'); status.setAttribute('role', 'status'); summary = node('p', null, 'dedupe-summary');
   const main = node('div', null, 'dedupe-main'); list = node('div', null, 'dedupe-groups'); compare = node('div', null, 'dedupe-comparison'); compare.hidden = true; main.append(list, compare);
   pendingPanel = node('details', null, 'dedupe-unverified'); pendingRows = node('div');
   ignoredPanel = node('details', null, 'dedupe-unverified'); ignoredRows = node('div');
-  pendingSummary = button('', () => { pendingPanel.open = !pendingPanel.open; ignoredPanel.open = false; renderPending(); }, 'button-secondary dedupe-review-toggle');
-  ignoredSummary = button('', () => { ignoredPanel.open = !ignoredPanel.open; pendingPanel.open = false; renderPending(); }, 'button-secondary dedupe-review-toggle');
+  pendingSummary = button('', () => { pendingPanel.open = !pendingPanel.open; ignoredPanel.open = false; renderPending(true); }, 'button-secondary dedupe-review-toggle');
+  ignoredSummary = button('', () => { ignoredPanel.open = !ignoredPanel.open; pendingPanel.open = false; renderPending(true); }, 'button-secondary dedupe-review-toggle');
   pendingSummary.dataset.review = 'pending'; ignoredSummary.dataset.review = 'ignored';
   // The result row owns the disclosure controls; unopened rows load no previews.
   pendingPanel.append(node('summary'), pendingRows); ignoredPanel.append(node('summary'), ignoredRows);
@@ -442,12 +514,13 @@ ${t('清理这份')}：${g.remove.filter(r => accepted.has(r.id)).map(r => `${ma
   footer = node('div', null, 'dedupe-footer'); selectionStatus = node('span');
   execute = button('一键清理重复', () => void cleanup(), 'button-primary'); execute.disabled = true;
   footer.append(button('全选所有重复组', () => { selectAll(); render(); }), button('取消全选', () => { selections.clear(); invalidate(); render(); }), selectionStatus, execute);
-  body.append(toolbar, status, overview, main, review, footer);
+  const content = node('div', null, 'dedupe-content'); content.append(main, review);
+  body.append(toolbar, status, overview, content, footer);
 
   async function initialize() {
     if (closed || initializing) return;
     initializing = true;
-    const controls = [...body.querySelectorAll('button, select, input')];
+    const controls = [...body.querySelectorAll('button, select, input')].filter(el => !heading?.contains(el));
     controls.forEach(control => { control.disabled = true; });
     footer.hidden = true; rules.hidden = true; pauseButton.hidden = true; checkButton.hidden = true;
     say(t('正在比较案例…'));
@@ -466,6 +539,7 @@ ${t('清理这份')}：${g.remove.filter(r => accepted.has(r.id)).map(r => `${ma
   return { dispose() {
     closed = true; paused = true; unbindOptions?.();
     body.querySelectorAll('video,audio').forEach(media => { media.pause(); media.removeAttribute('src'); media.load(); });
+    if (headingParent) headingParent.insertBefore(heading, headingNext?.parentNode === headingParent ? headingNext : null);
     body.replaceChildren();
   } };
 }

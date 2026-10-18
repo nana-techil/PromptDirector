@@ -35,6 +35,20 @@ test("renamed and custom categories use their resolved purpose, not their displa
   assert.equal(usesArticleReader({ ...base, contentRole: "reference" }), true);
 });
 
+test('reference and tutorial content use the centered article reader with or without structured blocks or files', () => {
+  for (const contentRole of ['reference', 'tutorial']) {
+    for (const sourceFacts of [{}, { pageType: 'post' }]) {
+      for (const mediaAssets of [[], [{ id: 'md', kind: 'document', mimeType: 'text/markdown' }]]) {
+        const entry = { contentRole, text: '# Original document', sourceFacts, mediaAssets, primaryMediaId: 'md' };
+        const original = structuredClone(entry);
+        assert.equal(usesArticleReader(entry), true);
+        assert.equal(usesPostReader(entry), false);
+        assert.deepEqual(entry, original, 'choosing a reader must not rewrite the saved material');
+      }
+    }
+  }
+});
+
 test("media format comes from recognized file metadata, never a creator's title", () => {
   assert.equal(mediaFormatLabel({ sourceTitle: "Community post by @creator", mimeType: "video/mp4" }), "MP4");
   assert.equal(mediaFormatLabel({ sourceTitle: "Test film" }), "FILE");
@@ -46,4 +60,19 @@ test("a short document with a structured table keeps the article reader despite 
     contentRole: "image_case", sourceFacts: { pageType: "article" },
     articleDocument: { blocks: [{ id: "table", kind: "table", rows: [[{ blockIds: [] }]] }] }
   }), true);
+});
+
+test('video classifications preview a video even when capture stored an image first, without changing originals', async () => {
+  const { defaultPreviewMediaAsset } = await import('../extension/case-presentation.js');
+  const image = { id: 'image', kind: 'image' }, video = { id: 'video', kind: 'video' };
+  for (const contentRole of ['prompt_video', 'video_case']) {
+    const entry = { contentRole, mediaAssets: [image, video], primaryMediaId: image.id };
+    const before = structuredClone(entry);
+    assert.equal(defaultPreviewMediaAsset(entry).id, video.id);
+    assert.deepEqual(entry, before);
+    assert.equal(defaultPreviewMediaAsset({ ...entry, mediaAssets: [image] }).id, image.id);
+    const preferred = { id: 'preferred-video', kind: 'video' };
+    assert.equal(defaultPreviewMediaAsset({ ...entry, mediaAssets: [image, video, preferred], primaryMediaId: preferred.id }).id, preferred.id);
+  }
+  assert.equal(defaultPreviewMediaAsset({ contentRole: 'prompt_image', mediaAssets: [image, video], primaryMediaId: image.id }).id, image.id);
 });

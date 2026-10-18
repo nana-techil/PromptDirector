@@ -55,3 +55,40 @@ test('an unavailable identity prevents enqueueing and execution rather than inve
   await assert.rejects(tasks.submit('save_material', {}, 'missing'), { code: 'library_identity_invalid' });
   assert.deepEqual(run.data, {});
 });
+
+test('late progress cannot overwrite a newer phase or revive a failed task', async () => {
+  const run = fixture(); let scope, fail;
+  const tasks = createAgentTasks({ ...run, execute: async (_operation, _input, _id, value) => {
+    scope = value;
+    await new Promise((_resolve, reject) => { fail = reject; });
+  } });
+  await tasks.submit('save_capture', {}, 'failed-progress'); await turn();
+  assert.equal(scope.report({ progress: { phase: 'writing' }, sequence: 2 }), true);
+  assert.equal(scope.report({ progress: { phase: 'download', receivedBytes: 99 }, sequence: 1 }), false);
+  assert.equal((await tasks.inspect('failed-progress')).progress.phase, 'writing');
+  fail(new Error('disk unavailable'));
+  const receipt = await tasks.inspect('failed-progress', { waitMs: 1000 });
+  assert.equal(receipt.state, 'failed'); assert.equal(receipt.progress, undefined);
+  assert.equal(scope.report({ state: 'running', progress: { phase: 'download' }, sequence: 3 }), false);
+  assert.equal((await tasks.inspect('failed-progress')).state, 'failed');
+});
+
+test('completion during receipt reading cannot be overwritten by a stale interrupted snapshot', async () => {
+  const run = fixture(); let complete, returnSnapshot;
+  const tasks = createAgentTasks({ ...run, execute: async () => {
+    await new Promise(resolve => { complete = resolve; }); return { ok: true, entryId: 'saved' };
+  } });
+  await tasks.submit('save_capture', {}, 'read-race'); await turn();
+  const get = run.storage.get;
+  run.storage.get = async key => {
+    const snapshot = await get(key);
+    run.storage.get = get;
+    await new Promise(resolve => { returnSnapshot = resolve; });
+    return snapshot;
+  };
+  const reading = tasks.inspect('read-race'); await turn();
+  complete(); await turn(); returnSnapshot();
+  const receipt = await reading;
+  assert.equal(receipt.state, 'completed'); assert.equal(receipt.result.entryId, 'saved');
+  assert.equal(run.data['agentTask:read-race'].state, 'completed');
+});

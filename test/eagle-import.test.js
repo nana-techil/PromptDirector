@@ -52,3 +52,38 @@ test('Eagle 解包目录与压缩包复用同一转换，取消和歧义不会�
   await assert.rejects(readEagleDirectory(items, { signal: controller.signal }), { name: 'AbortError' });
   assert.equal(importContainerKindForFile({ name: '真实包.eaglepack', type: '' }), 'share-package');
 });
+
+test('reimporting the same multi-folder Eagle original never adds migration copies at later times', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 0, 1) });
+  const pack = { folder: { id: 'root', name: 'Root', children: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] },
+    images: [{ id: 'one', name: 'Original', ext: 'txt', folders: ['a', 'b'], modificationTime: 1700000000000, annotation: 'Exact original' }] };
+  const converted = await readEagleDirectory([
+    { relativePath: 'pack.json', file: new File([JSON.stringify(pack)], 'pack.json') },
+    { relativePath: 'one.info/one.txt', file: new File(['Full original bytes'], 'one.txt') }
+  ]);
+  let state = mergeLibraryPackage({}, converted.library).state;
+  const original = structuredClone(state);
+  assert.equal(state.entries.length, 2, 'both original project locations remain independent');
+  assert(state.entries[1].copyOrigin.copiedAt, 'copy provenance remains available');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    t.mock.timers.tick(1000);
+    const result = mergeLibraryPackage(state, converted.library);
+    assert.equal(result.importedCount, 0);
+    assert.equal(result.skippedCount, 2);
+    assert.deepEqual(result.state.entries, original.entries);
+    assert.deepEqual(result.state.organizerState.collections, original.organizerState.collections);
+    state = result.state;
+  }
+});
+
+test('adding copy provenance in a newer version does not reimport an already migrated Eagle copy', async () => {
+  const converted = await readEagleDirectory([...fixture()].map(([relativePath, blob]) => ({ relativePath,
+    file: new File([blob], relativePath.split('/').at(-1)) })));
+  const state = mergeLibraryPackage({}, converted.library).state;
+  for (const entry of state.entries) delete entry.copyOrigin;
+  const before = structuredClone(state.entries);
+  const result = mergeLibraryPackage(state, converted.library);
+  assert.equal(result.importedCount, 0);
+  assert.equal(result.skippedCount, before.length);
+  assert.deepEqual(result.state.entries, before);
+});

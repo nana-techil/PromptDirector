@@ -107,7 +107,8 @@ def main():
                 with library.expect_navigation():
                     library.evaluate("async()=>chrome.storage.local.set({uiPreferences:{locale:'en',theme:'light',motion:'reduced'}})")
                 library.locator(f'.case-card[data-entry-id="{entry["id"]}"] .case-code-title').click()
-                expect(library.get_by_text('Reconstructed preview',exact=True)).to_be_visible()
+                expect(library.locator('.code-case-source')).to_be_visible()
+                expect(library.locator('.code-case-view .code-case-frame')).to_have_attribute('data-preview-ready','true')
                 for width in [1280,390]:
                     library.set_viewport_size({'width':width,'height':844})
                     expect(library.frame_locator('.code-case-view .code-case-frame').frame_locator('#preview').get_by_role('button',name='Build')).to_be_in_viewport()

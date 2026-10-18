@@ -82,11 +82,42 @@ test('missing, compressed and inaccurate lengths never produce a false completed
 
 test('an interrupted original still fails saving after showing only the bytes actually received', async () => {
   const events = [];
-  const stream = new ReadableStream({ start(controller) { controller.enqueue(PNG); }, pull(controller) { controller.error(new Error('network interrupted')); } });
+  const cause = new Error('network interrupted https://media.example/file?signature=private-signature');
+  const stream = new ReadableStream({ start(controller) { controller.enqueue(PNG); }, pull(controller) { controller.error(cause); } });
   await assert.rejects(() => boundedMediaBlobFromResponse(new Response(stream),
-    { kind: 'image', maxBytes: 1024, onProgress: value => events.push(value) }), /network interrupted/);
+    { kind: 'image', maxBytes: 1024, onProgress: value => events.push(value) }), error => {
+      assert.match(error.message, /network interrupted/);
+      assert.doesNotMatch(error.message, /private-signature|https:/);
+      assert.equal(error.cause, cause);
+      assert.deepEqual(error.mediaDownload, { stage: 'read', receivedBytes: PNG.length });
+      return true;
+    });
   assert.equal(events.at(-1).receivedBytes, PNG.length);
   assert.equal(events.at(-1).totalBytes, null);
+});
+
+test('shared download distinguishes request permission failure from a complete-body Blob sink failure', async () => {
+  const denied = new DOMException('Permission denied', 'NotAllowedError');
+  await assert.rejects(fetchBoundedMedia('https://media.example/file', { fetchImpl: async () => { throw denied; } }), error => {
+    assert.equal(error.name, 'NotAllowedError');
+    assert.equal(error.cause, denied);
+    assert.deepEqual(error.mediaDownload, { stage: 'request', receivedBytes: 0 });
+    return true;
+  });
+  const OriginalResponse = globalThis.Response;
+  const response = new Response(PNG);
+  const disk = new DOMException('Temporary disk write failed', 'NotReadableError');
+  globalThis.Response = class extends OriginalResponse {
+    async blob() { await this.arrayBuffer(); throw disk; }
+  };
+  try {
+    await assert.rejects(fetchBoundedMedia('https://media.example/file', { kind: 'image', fetchImpl: async () => response }), error => {
+      assert.equal(error.name, 'NotReadableError');
+      assert.equal(error.cause, disk, 'outer fetch must retain the original cause, not wrap it a second time');
+      assert.deepEqual(error.mediaDownload, { stage: 'blob', receivedBytes: PNG.length });
+      return true;
+    });
+  } finally { globalThis.Response = OriginalResponse; }
 });
 
 test("bounded media trusts file signatures instead of a spoofed content type", async () => {

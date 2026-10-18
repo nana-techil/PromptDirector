@@ -98,7 +98,11 @@ test("classification manager keeps taxonomy work while settings owns AI services
   assert.match(settings, /data-settings-tab="ai"/);
   assert.match(settings, /data-settings-tab="tasks"/);
   assert.match(settings, /data-settings-panel="tasks"/);
+  assert.doesNotMatch(settings, /id="open-text-batch"/);
   assert.match(settings, /id="preview-analysis-batch"/);
+  const batch = html.slice(html.indexOf('<dialog id="text-batch-dialog"'), html.indexOf('</dialog>', html.indexOf('<dialog id="text-batch-dialog"')));
+  assert.match(batch, /id="text-batch-content"/);
+  assert.match(batch, /id="batch-scope-project"/);
   assert.match(settings, /id="preview-reanalyze"/);
   assert.match(settings, /id="ai-settings-form"/);
   assert.match(settings, /id="vision-settings-form"/);

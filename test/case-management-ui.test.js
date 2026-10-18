@@ -27,7 +27,7 @@ test("selection mode exposes all filtered results, user tags, projects, sharing,
   assert.match(bar, /id="selection-selected-actions"[^>]*hidden/);
   assert.match(bar, /id="selection-label-menu"[\s\S]*id="selection-label-input"[\s\S]*id="selection-add-labels"/);
   assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-project-target"[\s\S]*id="selection-new-project"/);
-  assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-trash"[\s\S]*id="selection-label-menu"[\s\S]*id="selection-more-menu"/);
+  assert.match(bar, /id="selection-project-menu"[\s\S]*id="selection-classification-menu"[\s\S]*id="selection-label-menu"[\s\S]*id="selection-more-menu"[\s\S]*id="selection-trash"[\s\S]*id="share-cancel"/);
   const more = bar.slice(bar.indexOf('id="selection-more-menu"'), bar.indexOf('id="selection-clear"'));
   assert.match(more, /id="share-export" class="button-primary"[\s\S]*id="selection-combine"[\s\S]*id="selection-analyze"/);
   assert.doesNotMatch(more, /id="selection-trash"|id="selection-project-menu"/);
