@@ -118,9 +118,9 @@ AI 分析按需开启，使用你自己的服务；原图只在你选中或明�
 
 资料、媒体、标签和设置默认保存在当前浏览器，不需要账号，没有广告，不收集使用统计。AI 功能由你主动开启，使用你自己的服务密钥。详见[隐私政策](store/PRIVACY_POLICY.md)。
 
-## 安装与更新
+## 安装
 
-**首次本地安装：下载 `PromptDirector-版本号.zip`，解压后在 Chrome / Edge 的扩展管理页加载。**
+**推荐：[Chrome 应用商店](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm)，之后自动更新。**
 
 <details>
 <summary>从 GitHub 安装（开发者模式）与原位更新</summary>
@@ -129,14 +129,14 @@ AI 分析按需开启，使用你自己的服务；原图只在你选中或明�
 2. 解压到固定的 `PromptDirector` 文件夹（不带版本号），确保 `manifest.json` 位于第一层。
 3. 在 Chrome 或 Edge 扩展管理页开启“开发者模式”，选择“加载已解压的扩展程序”，然后选中该文件夹。
 
-**原位更新：** 在“设置”检查更新，点击“升级本地版”。首次选择 Chrome 当前加载的安装文件夹并授权，之后复用原位置，即使文件夹带旧版本号也无需重命名、移动或重新安装。插件会自动下载、验证、写入新版并重启；重新打开设置核对版本，如显示“清理升级临时文件”则完成清理。案例和媒体继续使用原浏览器资料库。
-
-也可通过 [Chrome 应用商店](https://chromewebstore.google.com/detail/iahakaahijddcjjldidbclicedibgpjm) 安装，由商店管理后续更新。
+**原位更新：** 在“设置”检查更新，点击“升级本地版”。首次需要选择 Chrome 当前加载的安装文件夹并授权，之后会复用这个位置。插件会自动下载、验证、写入新版并重启；案例和媒体继续保存在原资料库中。
 
 </details>
 
+可选本地视频采集使用[免费源码组件](docs/VIDEO_COMPONENT.md)，无需购买开发者证书。大型视频和网站覆盖边界见[已知限制](docs/KNOWN_LIMITATIONS.md)。
+
 ## 参与与许可
 
-欢迎提交问题、改善交互、完善采集适配、补充测试与文档。[反馈问题](https://github.com/wchao6891/PromptDirector/issues)时，请说明页面类型、看到的问题和复现步骤；提供示例前请移除 API Key、私人资料和未获授权的素材。提交代码前请运行 `npm run verify`。构建说明见[开发指南](docs/DEVELOPMENT.md)；[视频组件指南](docs/VIDEO_COMPONENT.md)说明免费源码包、双平台安装验证与可选签名安装包。
+欢迎提交问题、改善交互、完善采集适配、补充测试与文档。[反馈问题](https://github.com/wchao6891/PromptDirector/issues)时，请说明页面类型、看到的问题和复现步骤；提供示例前请移除 API Key、私人资料和未获授权的素材。提交代码前请运行 `npm run verify`。构建说明见[开发指南](docs/DEVELOPMENT.md)。
 
 代码采用 [Apache License 2.0](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。代码许可不授予第三方案例素材的使用权，复用前请查看各案例的来源与授权说明。
