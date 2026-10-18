@@ -87,7 +87,8 @@ def main() -> None:
             }""", source["id"])
             assert result == {"size": source["size"], "sha256": source["sha256"]}, result
         print("Default multi-package import and stored byte hashes passed", flush=True)
-        page.locator("#settings-close").click()
+        # ZIP packages enter through the unified picker; no settings dialog is involved.
+        expect(page.locator("#settings-dialog")).to_be_hidden()
         page.locator("#select-cases").click()
         for source in sources:
             page.locator(f'.case-card[data-entry-id="{source["id"]}"]').click()

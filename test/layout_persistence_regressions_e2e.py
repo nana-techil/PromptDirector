@@ -6,6 +6,11 @@ from playwright.sync_api import expect
 from e2e_support import extension_session
 
 
+def settle_layout(page) -> None:
+    """Wait for the post-mode-change workspace arrangement to paint before sampling anchors."""
+    page.evaluate("async()=>{for(let i=0;i<2;i++)await new Promise(requestAnimationFrame)}")
+
+
 def main(mode='all'):
     with extension_session('pd-layout-regressions-', viewport={'width':1440,'height':900}) as run:
         setup = run.open_page('collector.html')
@@ -56,6 +61,8 @@ def main(mode='all'):
                 p.evaluate('async()=>{for(let i=0;i<12;i++)await new Promise(requestAnimationFrame)}')
                 p.locator('#detail-mode-toggle').click()
                 p.wait_for_function("()=>document.querySelector('#detail-drawer').dataset.detailMode==='fullscreen'")
+                # The workspace re-arrangement paints on the next frame; sample the settled layout.
+                settle_layout(p)
                 positions = p.evaluate("""async()=>{const samples=[];for(let i=0;i<60;i++){await new Promise(requestAnimationFrame);const c=document.querySelector('#detail-content'),v=c.querySelector('.detail-visual-gallery');samples.push({scroll:c.scrollTop,top:v.getBoundingClientRect().top,viewport:window.originalGalleryTop})}return samples}""")
                 bad = [s for s in positions if s['scroll']!=0 or abs(s['top']-s['viewport'])>=2]
                 assert not bad, f'Video detail returned to related cases ({motion}, scrolled={scrolled}): {bad[:5]}'
@@ -72,6 +79,10 @@ def main(mode='all'):
             p.evaluate("async()=>await chrome.runtime.sendMessage({type:'UPDATE_UI_PREFERENCES',preferences:{detailMode:'fullscreen'}})")
             p.reload(wait_until='domcontentloaded')
             p.locator('.case-card[data-entry-id=picture]').click()
+            # Capture the media anchor in this same document: earlier modes reload the page, so the old
+            # window.originalGalleryTop from the video branch is gone.
+            p.wait_for_function("()=>document.querySelector('.detail-visual-gallery')?.getBoundingClientRect().height>0")
+            p.evaluate("()=>{window.originalGalleryTop=document.querySelector('.detail-visual-gallery').getBoundingClientRect().top}")
             p.locator('.detail-discovery').scroll_into_view_if_needed()
             p.locator('#detail-mode-toggle').click()
             p.wait_for_function("()=>document.querySelector('#detail-drawer').dataset.detailMode==='sidebar'")
@@ -79,14 +90,29 @@ def main(mode='all'):
             p.locator('.detail-quick-organization').scroll_into_view_if_needed()
             p.locator('#detail-mode-toggle').click()
             p.wait_for_function("()=>document.querySelector('#detail-drawer').dataset.detailMode==='fullscreen'")
+            settle_layout(p)
             positions = p.evaluate("()=>{const c=document.querySelector('#detail-content'),v=c.querySelector('.detail-visual-gallery');return {scroll:c.scrollTop,top:v.getBoundingClientRect().top,viewport:window.originalGalleryTop}}")
             assert positions['scroll'] == 0 and abs(positions['top']-positions['viewport']) < 2, f'Full detail opened below media: {positions}'
             p.locator('#detail-close').click()
         if mode in ['all','status']:
             # Hold only the real checking response to measure its visible pending state.
             p.add_init_script("const send=chrome.runtime.sendMessage.bind(chrome.runtime);window.checkGate=new Promise(r=>window.releaseCheck=r);chrome.runtime.sendMessage=async(...args)=>{if(args[0]?.type==='PREVIEW_REANALYZE')await window.checkGate;return send(...args)}")
-            p.reload(wait_until='domcontentloaded'); p.locator('#open-settings').click(); p.locator('[data-settings-tab=tasks]').click()
+            p.reload(wait_until='domcontentloaded'); p.wait_for_function("()=>document.body.dataset.libraryState==='ready'")
+            p.locator('#open-settings').click(); p.locator('[data-settings-tab=tasks]').click()
             expect(p.locator('#reanalyze-preview')).to_have_attribute('aria-busy','true')
+            # Surrounding task cards refresh asynchronously; measure only after their layout settles,
+            # otherwise their own late update is mistaken for the reanalysis status moving the row.
+            p.evaluate("""async()=>{
+              const tops=()=>['#text-batch-card','.local-index-card','.local-index-card h3','#reanalyze-preview']
+                .map(selector=>document.querySelector(selector)?.getBoundingClientRect().top ?? 0);
+              let previous=tops(), stable=0;
+              for(let frame=0;frame<120&&stable<3;frame++){
+                await new Promise(requestAnimationFrame);
+                const current=tops();
+                stable=current.every((value,index)=>Math.abs(value-previous[index])<0.01)?stable+1:0;
+                previous=current;
+              }
+            }""")
             before = p.locator('.local-index-card h3').bounding_box()['y']
             status_before = p.locator('#reanalyze-preview').bounding_box()['y']
             p.evaluate('()=>window.releaseCheck()')

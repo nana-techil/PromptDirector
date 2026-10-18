@@ -177,12 +177,20 @@ def main():
                                 page.wait_for_function('(selector)=>{const n=document.querySelector(selector);return n.scrollLeft>=n.scrollWidth-n.clientWidth-1;}', arg=selector)
                             value=target.evaluate('''node => {
                               const isTools=node.classList.contains('detail-media-tools');
-                              if(isTools && getComputedStyle(node).scrollbarWidth!=='none')return {hit:false,unwantedActionScrollbar:true};
-                              if(!isTools && node.scrollWidth>node.clientWidth && getComputedStyle(node).scrollbarWidth==='none')return {hit:false,thumbnailScrollbarHidden:true};
-                              const navigation=node.closest('.detail-visual-gallery').querySelector('.detail-media-navigation');
+                              const scrollbar=getComputedStyle(node).scrollbarWidth;
+                              // Confirmed 2026-10-16: the action strip and the media thumbnail strip keep
+                              // wheel/touch scrolling but must not show a scrollbar track.
+                              if(scrollbar!=='none')return {hit:false,unwantedScrollbar:true,scrollbar};
+                              if(!isTools && node.scrollWidth<=node.clientWidth)return {hit:false,thumbnailStripMissingOverflow:true};
+                              const gallery=node.closest('.detail-visual-gallery');
+                              const navigation=gallery.querySelector('.detail-media-navigation');
                               if(isTools && navigation) {
-                                const caption=node.closest('.detail-visual-caption'), nav=navigation.getBoundingClientRect();
-                                if(Math.abs(nav.left-caption.getBoundingClientRect().left-parseFloat(getComputedStyle(caption).paddingLeft))>1)return {hit:false,navigationNotLeftAligned:true};
+                                const caption=node.closest('.detail-visual-caption');
+                                const leftContext=caption.querySelector('.detail-media-context');
+                                const nav=navigation.getBoundingClientRect(), context=leftContext?.getBoundingClientRect();
+                                if(!leftContext||!leftContext.contains(navigation))return {hit:false,navigationOutsideLeftGroup:true};
+                                if(nav.left<context.left-1||nav.right>context.right+1)return {hit:false,navigationOverflowingLeftGroup:true};
+                                if(nav.right>node.getBoundingClientRect().left+1)return {hit:false,navigationOverlapsActions:true};
                                 if(Math.abs(nav.top-node.querySelector('button').getBoundingClientRect().top)>1)return {hit:false,buttonsMisaligned:true};
                               }
                               const children=[...node.querySelectorAll('button')].filter(n=>n.checkVisibility());

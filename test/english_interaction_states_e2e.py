@@ -183,7 +183,8 @@ def main() -> None:
         library.locator("#add-media").click()
         expect(library.locator("#import-last-job")).to_be_hidden()
         # Completed imports disappear; failed items remain reachable in English.
-        library.evaluate("""async()=>{const {getLibraryStorage}=await import('./library-storage.js');const store=getLibraryStorage();const {importJobs}=await store.get('importJobs');const job=importJobs.items[0];job.status='failed';job.items.push({id:'failed-item',status:'failed',name:'Failed sample.png',error:'Fixture download failed'});await store.set({importJobs});}""")
+        # Import items are normalized from stagedAssetId, so the failure fixture keeps a real item shape.
+        library.evaluate("""async()=>{const {getLibraryStorage}=await import('./library-storage.js');const store=getLibraryStorage();const {importJobs}=await store.get('importJobs');const job=importJobs.items[0];job.status='failed';job.items.push({id:'failed-item',stagedAssetId:'staged:english-failed',status:'failed',error:'Fixture download failed'});await store.set({importJobs});}""")
         library.reload(wait_until="networkidle")
         if not library.locator("#add-menu > summary").is_visible(): library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click(); library.locator("#add-media").click()

@@ -130,6 +130,9 @@ def exercise_settings(page, viewport: dict) -> None:
 
 def main() -> None:
     with extension_session("prompt-settings-visual-anchor-", viewport={"width": 1280, "height": 900}) as session:
+        # Skip the first-run restore onboarding; this fixture measures the settings anchor itself.
+        setup = session.open_page("collector.html")
+        session.seed_storage(setup, {"dataSafetyOnboardingSeen": True})
         page = session.open_page("library.html", wait_until="networkidle")
         exercise_settings(page, {"width": 1280, "height": 900})
         exercise_settings(page, {"width": 390, "height": 844})

@@ -35,11 +35,17 @@ with extension_session('pd-six-surfaces-', viewport={'width':1440,'height':960})
  for width,height,locale,theme in [(1440,960,'zh-CN','dark'),(390,844,'en','light')]:
   page.set_viewport_size({'width':width,'height':height})
   page.locator('[data-settings-tab="general"]').click()
-  for selector,value in [('#ui-theme',theme),('#ui-locale',locale)]:
-   if page.locator(selector).input_value()!=value:
-    with page.expect_navigation(wait_until='networkidle'):
-     page.locator(selector).select_option(value)
-    page.locator('#open-settings').click()
+  # Theme is a switch (dark on); language stays a multi-choice select.
+  if page.locator('#ui-theme').is_checked()!=(theme=='dark'):
+   with page.expect_navigation(wait_until='networkidle'):
+    page.locator('#ui-theme').set_checked(theme=='dark')
+   page.locator('#open-settings').click()
+   page.locator('[data-settings-tab="general"]').click()
+  if page.locator('#ui-locale').input_value()!=locale:
+   with page.expect_navigation(wait_until='networkidle'):
+    page.locator('#ui-locale').select_option(locale)
+   page.locator('#open-settings').click()
+   page.locator('[data-settings-tab="general"]').click()
   for tab in ['ai','rules','tasks']:
    page.locator(f'[data-settings-tab="{tab}"]').click()
    metrics=page.locator(f'#settings-{tab}-panel').evaluate('(e)=>({width:e.clientWidth,scroll:e.scrollWidth})')

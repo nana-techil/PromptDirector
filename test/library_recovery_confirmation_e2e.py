@@ -25,8 +25,10 @@ def main():
         page=run.open_page('library.html')
         expect(page.locator('body')).to_have_attribute('data-library-state','ready')
         page.locator('#open-settings').click()
-        expect(page.locator('.share-package-import')).not_to_contain_text('撤回')
-        expect(page.locator('#restore-library-replacement-point')).to_have_count(0)
+        # The duplicate settings ZIP/undo entry was retired; import lives in the unified picker.
+        expect(page.locator('#settings-dialog .share-package-import')).to_have_count(0)
+        expect(page.locator('#settings-dialog #restore-library-replacement-point')).to_have_count(0)
+        expect(page.locator('#media-file')).to_have_count(1)
 
         def preview():
             page.locator('#restore-folder-backup').click()

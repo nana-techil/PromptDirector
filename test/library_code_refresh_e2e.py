@@ -18,7 +18,7 @@ def main():
     with extension_session('pd-code-refresh-', show_scrollbars=True) as run:
         setup = run.open_page('collector.html', wait_until='networkidle')
         run.seed_storage(setup, {'entries': entries, 'dataSafetyOnboardingSeen': True,
-            'uiPreferences': {'theme': 'dark', 'locale': 'zh-CN'},
+            'uiPreferences': {'theme': 'dark', 'locale': 'zh-CN', 'motion': 'reduced'},
             **ai_configuration_fixture(providers={'deepseek': {'apiKey': 'test-fixture-key', 'consent': True,
                 'models': {'textTags': 'deepseek-v4-flash'}}}, assignments={'textTags': {'providerId': 'deepseek', 'model': 'deepseek-v4-flash'}})})
         p = run.open_page('library.html', wait_until='networkidle')
