@@ -114,6 +114,9 @@ const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptu
   getBatchEditVersion: () => capturePreviewEditVersion,
   getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
   changeProject: (...args) => updateCaptureMetadata(...args),
+  // A durable page-capture save task restored after reopening the sidebar keeps
+  // its own preview until the user continues, cancels or completes it.
+  preserveBatch: () => Boolean(pageCaptureBatch && captureSaveTask?.input?.type === 'COMMIT_PAGE_CAPTURE'),
   switchBatch: batch => {
     pageCaptureAppendBase = null; pageCaptureDetailsBase = null; genericGroupingBase = null;
     pageCaptureMediaView = null; pageCaptureEditHistory = []; pageCaptureDraftIds = new Set(); manuallyPickedBatchId = '';

@@ -69,3 +69,17 @@ test("restoring an overwritten screenshot marks that existing media id dirty", a
   const undo = source.slice(start, end);
   assert.match(undo, /dirtyAssetIds:\s*\[current\.id\]/);
 });
+
+test("a recovered page-capture save preview is not replaced by an older assistant batch", async () => {
+  const assistant = await readFile(new URL("../extension/collector-capture-assistant.js", import.meta.url), "utf8");
+  const collector = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
+  // The assistant must not re-apply a batch that belongs to the durable save task,
+  // and must leave a recovered preview alone while that task still exists.
+  assert.match(assistant, /preserveBatch = \(\) => false/);
+  assert.match(assistant, /function assistantPendingBatch\(value\)/);
+  assert.match(assistant, /value && value\.status !== 'saving' \? value : null/);
+  assert.match(assistant, /if \(!preserveBatch\(\)\) \{/);
+  assert.match(assistant, /state\.pendingBatch = assistantPendingBatch\(baseBatch\)/);
+  assert.match(collector, /preserveBatch: \(\) => Boolean\(pageCaptureBatch && captureSaveTask\?\.input\?\.type === 'COMMIT_PAGE_CAPTURE'\)/);
+});
+

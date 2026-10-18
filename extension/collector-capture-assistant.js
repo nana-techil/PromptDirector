@@ -19,7 +19,7 @@ import { captureReceiptText } from './assistant-chat-session.js';
 const storage = getLibraryStorage();
 const stateKey = 'captureAssistantDialog';
 
-export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = applyBatch, isBusy, isAutomaticCapturing = () => false, getBatchEditVersion = () => 0, getDraft, getMetadata, changeProject }) {
+export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = applyBatch, isBusy, isAutomaticCapturing = () => false, getBatchEditVersion = () => 0, getDraft, getMetadata, changeProject, preserveBatch = () => false }) {
   const panel = node('section', 'capture-assistant-panel'); panel.id = 'capture-assistant-panel'; panel.hidden = true;
   panel.setAttribute('aria-label', t('采集助手'));
   const contextRow = node('div', 'capture-assistant-context-row');
@@ -143,6 +143,12 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
     return { collectionId: draft.collectionId || '', newCollectionName: draft.newCollectionName || '',
       contentTypeId: draft.contentTypeId || '', contentTypeExplicit: Boolean(draft.contentTypeExplicit) };
   }
+  // A batch in the "saving" state belongs to the durable page-capture save task.
+  // Re-applying it from a saved conversation would leave the preview stuck behind
+  // a disabled save button after the real task was cancelled or interrupted.
+  function assistantPendingBatch(value) {
+    return value && value.status !== 'saving' ? value : null;
+  }
   function syncPage() {
     syncTail = syncTail.catch(() => {}).then(async () => {
       await loadSessions();
@@ -153,23 +159,30 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       const batch = getBatch();
       if (state.id) {
         state.projectDraft = organizationDraft();
-        if (!batch || batch.sourceUrl === state.sourceUrl) state.pendingBatch = batch;
+        if (!batch || batch.sourceUrl === state.sourceUrl) state.pendingBatch = assistantPendingBatch(batch);
       }
       if (batch && batch.sourceUrl !== tab?.url) sessions.pages[batch.sourceUrl] = {
-        ...sessions.pages[batch.sourceUrl], sourceUrl: batch.sourceUrl, tabId: batch.tabId, pendingBatch: batch,
+        ...sessions.pages[batch.sourceUrl], sourceUrl: batch.sourceUrl, tabId: batch.tabId, pendingBatch: assistantPendingBatch(batch),
         projectDraft: organizationDraft()
       };
       const previousUrl = state.sourceUrl, previousId = state.id;
       state = captureSessionForPage(sessions, tab);
       // Browsing cannot retarget a request which is still executing.
       if (!state.requestId && (previousUrl !== state.sourceUrl || previousId !== state.id)) {
-        const next = state.pendingBatch || (batch?.sourceUrl === tab?.url ? batch : null);
+        const next = assistantPendingBatch(state.pendingBatch) || (batch?.sourceUrl === tab?.url ? assistantPendingBatch(batch) : null);
         switching = true;
         try {
-          if (state.projectDraft) await changeProject(state.projectDraft);
-          switchBatch(next ? { ...next, tabId: tab?.id } : null);
+          // A restored page-capture save task owns the pending preview until the
+          // user retries, discards or completes it. An assistant conversation
+          // saved earlier for this page must not replace that recoverable work.
+          if (!preserveBatch()) {
+            if (state.projectDraft) await changeProject(state.projectDraft);
+            switchBatch(next ? { ...next, tabId: tab?.id } : null);
+            baseBatch = getBatch(); state.pendingBatch = assistantPendingBatch(baseBatch);
+          } else {
+            baseBatch = getBatch();
+          }
         } finally { switching = false; }
-        baseBatch = getBatch(); state.pendingBatch = baseBatch;
         field.value = state.draft || ''; feedback(state.lastError || '', Boolean(state.lastError));
       }
       if (previousUrl !== state.sourceUrl || previousId !== state.id) await persist({saveChat:false});
@@ -544,7 +557,7 @@ export function installCaptureAssistant({ getBatch, applyBatch, switchBatch = ap
       if (!switching && (deferredPage && !isBusy() || getBatch() && state.sourceUrl && getBatch().sourceUrl !== state.sourceUrl)) { pageChanged(); return; }
       if (!switching && !state.requestId && !state.pendingRevision && getBatch() !== baseBatch) {
         state.captureId = ''; baseBatch = getBatch();
-        if (loaded && state.sourceUrl && (!baseBatch || baseBatch.sourceUrl === state.sourceUrl)) { state.pendingBatch = baseBatch; void persist({saveChat:false}); }
+        if (loaded && state.sourceUrl && (!baseBatch || baseBatch.sourceUrl === state.sourceUrl)) { state.pendingBatch = assistantPendingBatch(baseBatch); void persist({saveChat:false}); }
       }
       render();
     } };
