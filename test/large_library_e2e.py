@@ -262,11 +262,14 @@ def main() -> None:
                     assert_columns_fill_width(library)
                 library.set_viewport_size({"width": 1666, "height": 900})
                 settle_layout(library)
-                before_toggle = library.evaluate("document.querySelectorAll('.case-card').length")
+                before_toggle = library.locator('#result-count').inner_text()
                 library.locator("#toggle-filters").click()
                 library.wait_for_timeout(260)
                 assert_columns_fill_width(library)
-                assert library.evaluate("document.querySelectorAll('.case-card').length") >= before_toggle
+                # Hiding the filter sidebar widens the gallery, so the number of cards
+                # mounted for the viewport may change; the matched case set must not.
+                assert library.locator('#result-count').inner_text() == before_toggle, 'toggling filters must not change the matched case set'
+                assert library.evaluate("document.querySelectorAll('.case-card').length") >= 1, 'the gallery must keep rendering cases'
 
                 stable_positions = library.evaluate(
                     """() => Object.fromEntries([...document.querySelectorAll('.case-card')].slice(0, 12).map((card) => {

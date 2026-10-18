@@ -31,8 +31,8 @@ def main():
             assert p.locator('.local-discovery-item').count()==hidden_count, 'Changing modes must not append unseen recommendations'
         p.locator('#detail-mode-toggle').click()
         # Revealing recommendations again must resume real scrolling, without a hidden backlog.
-        p.locator('#detail-content').evaluate('e=>e.scrollTop=1500')
-        p.wait_for_function('(count)=>document.querySelectorAll(".local-discovery-item").length>count',arg=hidden_count)
+        p.locator('#detail-content').evaluate('e=>e.scrollTop=e.scrollHeight')
+        p.wait_for_function('(count)=>document.querySelectorAll(".local-discovery-item").length>count',arg=hidden_count,timeout=15000)
         p.locator('#detail-content').evaluate('e=>e.scrollTop=0')
         # Different aspect ratios and prompt updates keep the page header in view.
         for index in [1,2,0,2,1,0]:

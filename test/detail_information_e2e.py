@@ -69,14 +69,16 @@ def main():
   tab=p.get_by_role('tab',name='原始提示词',exact=True);tab.focus();tab.press('End');expect(p.get_by_role('tab',name='当前媒体',exact=True)).to_be_focused()
   p.get_by_role('tab',name='当前媒体',exact=True).press('Home');expect(tab).to_be_focused()
   def measure():
-   return p.evaluate('''()=>{const bar=document.querySelector('.detail-visual-caption'), nav=bar.querySelector('.detail-media-navigation'), cluster=nav.parentElement;const r=e=>e.getBoundingClientRect();const footer=document.querySelector('.detail-workspace-footer'), create=footer?.querySelector(':scope > .detail-core-actions'), prior=create?[...footer.children][[...footer.children].indexOf(create)-1]:null;const buttons=[...bar.querySelectorAll('button')];return{center:r(nav).x+r(nav).width/2,offset:r(nav).x-r(cluster).x,clusterLeft:r(cluster).x,barLeft:r(bar).x,barCenter:r(bar).x+r(bar).width/2,gap:prior?r(create).top-r(prior).bottom:null,height:r(bar).height,rows:[...new Set(buttons.map(e=>Math.round(r(e).top)))],stage:r(document.querySelector('.detail-visual-stage')).height}}''')
+   return p.evaluate('''()=>{const bar=document.querySelector('.detail-visual-caption'), nav=bar.querySelector('.detail-media-navigation'), cluster=nav.parentElement, label=cluster.querySelector(':scope > span');const r=e=>e.getBoundingClientRect();const labelVisible=label&&label.getClientRects().length;const footer=document.querySelector('.detail-workspace-footer'), create=footer?.querySelector(':scope > .detail-core-actions'), prior=create?[...footer.children][[...footer.children].indexOf(create)-1]:null;const buttons=[...bar.querySelectorAll('button')];return{center:r(nav).x+r(nav).width/2,navLeft:r(nav).x,labelRight:labelVisible?r(label).right:r(cluster).x,clusterLeft:r(cluster).x,barLeft:r(bar).x,barCenter:r(bar).x+r(bar).width/2,gap:prior?r(create).top-r(prior).bottom:null,height:r(bar).height,rows:[...new Set(buttons.map(e=>Math.round(r(e).top)))],stage:r(document.querySelector('.detail-visual-stage')).height}}''')
   result=[]
   for width in [1440,900,390]:
    p.set_viewport_size({'width':width,'height':900});p.get_by_role('button',name='上一项媒体',exact=True).click() if p.get_by_role('button',name='上一项媒体',exact=True).is_enabled() else None
    expect(p.locator('.detail-video')).to_be_visible();a=measure()
    p.get_by_role('button',name='下一项媒体',exact=True).click();expect(p.locator('.detail-image')).to_be_visible();b=measure()
-   # Media switching stays put: navigation keeps its place in the leading media-label cluster.
-   assert abs(a['offset']-b['offset'])<1 and abs(a['center']-b['center'])<5,(width,a,b)
+   # Media switching stays put: the navigation keeps its fixed 6px gap after the
+   # format label and stays in the leading media-label cluster. The label text itself
+   # (MP4/PNG) changes width slightly with the platform font, so compare the gap.
+   assert abs((a['navLeft']-a['labelRight'])-(b['navLeft']-b['labelRight']))<0.6 and abs(a['center']-b['center'])<5,(width,a,b)
    # Navigation is anchored at the caption's leading edge, leaving the remaining width to tools.
    assert a['clusterLeft']-a['barLeft']<=14 and a['center']<a['barCenter'],(width,a,b)
    assert abs(a['gap']-b['gap'])<1 and a['gap'] is not None and a['height']==b['height'] and abs(a['stage']-b['stage'])<1,(width,a,b)
