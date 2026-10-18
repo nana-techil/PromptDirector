@@ -6,9 +6,38 @@ const CRYPTO_KEY = "crypto-key";
 
 let databasePromise;
 
-export async function saveSyncDirectoryHandle(handle) {
+export async function stageSyncDirectoryHandle(handle) {
   if (!handle || handle.kind !== "directory") throw new Error("没有选择有效的同步文件夹");
-  await putValue(DIRECTORY_KEY, handle);
+  const id = crypto.randomUUID();
+  await putValue(`candidate:${id}`, handle);
+  return id;
+}
+
+export async function getStagedSyncDirectoryHandle(id) {
+  if (!id) return null;
+  const value = await getValue(`candidate:${id}`);
+  return value?.kind === "directory" ? value : null;
+}
+
+export async function clearStagedSyncDirectoryHandle(id) {
+  if (!id) return;
+  const transaction = (await openDatabase()).transaction(STORE_NAME, "readwrite");
+  const complete = transactionAsPromise(transaction);
+  transaction.objectStore(STORE_NAME).delete(`candidate:${id}`);
+  await complete;
+}
+
+export async function saveSyncConnection({ directory, key }) {
+  if (directory && directory.kind !== "directory") throw new Error("没有选择有效的同步文件夹");
+  if (key && (key.type !== "secret" || key.extractable)) throw new Error("同步密钥必须是不可导出的浏览器密钥");
+  const transaction = (await openDatabase()).transaction(STORE_NAME, "readwrite");
+  const complete = transactionAsPromise(transaction);
+  const store = transaction.objectStore(STORE_NAME);
+  if (directory) store.put(directory, DIRECTORY_KEY);
+  else store.delete(DIRECTORY_KEY);
+  if (key) store.put(key, CRYPTO_KEY);
+  else store.delete(CRYPTO_KEY);
+  await complete;
 }
 
 export async function getSyncDirectoryHandle() {

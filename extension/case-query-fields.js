@@ -150,5 +150,5 @@ export function describeCaseQuery(entries, options = {}) {
       sourceScope: '顶层provider/authorHandle限定参与字段条件/来源选列/互动排序的成员；逻辑案例数量字段仍计全部成员素材。where存在性条件不另外缩减返回字段值，需同记录关联时用scope。',
       grouping: '同source/media/label/project/classification字段按同一关系记录成组，不拼造作者平台/标签来源/项目名称配对；不同关系域做值组合。每组案例去重，缺失为null组。同域统计限定该组关系记录；统计基于全匹配集，与case分页无关。',
       text: 'select完整字段；默认候选只有摘要；超过消息预算明确报错并指导read_case分页，原文保留',
-      similarity: '同媒体域比较，本地文字/标签/色卡证据，非图像视觉理解；coverage保留未知，无可比证据不入相似结果' } };
+      similarity: '跨案例类型比较，显式mediaKind限定媒体范围；本地文字/标签/色卡证据，非图像视觉理解；coverage保留未知，无可比证据不入相似结果' } };
 }

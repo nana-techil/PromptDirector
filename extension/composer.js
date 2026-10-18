@@ -22,6 +22,7 @@ import {
   resetAgentTaskMethod,
   taskKeyForRoute,
   taskMethodFor,
+  agentInstructionFor,
   updateAgentInstruction,
   updateAgentTaskMethod
 } from "./composer-agent.js";
@@ -453,6 +454,9 @@ export function createComposerSession(input = {}) {
     referenceSnapshots: snapshots,
     appliedSkills: normalizeAppliedSkillSnapshots(input.appliedSkills),
     messages: normalizeMessages(input.messages),
+    chatRevision: Number.isInteger(input.chatRevision) && input.chatRevision >= 0 ? input.chatRevision : 0,
+    ...(input.assistantState && typeof input.assistantState === 'object' ? { assistantState: structuredClone(input.assistantState) } : {}),
+    toolContext: Array.isArray(input.toolContext) ? structuredClone(input.toolContext) : [],
     toolContinuations: Object.fromEntries(Object.entries(input.toolContinuations || {}).filter(([id, value]) => id && value?.body && ['chat_completions', 'responses'].includes(value.protocol))
       .map(([id, value]) => [id, structuredClone(value)])),
     toolSkillVersionIds: uniqueStrings(input.toolSkillVersionIds),
@@ -697,7 +701,7 @@ export function normalizeComposerSessions(values = []) {
 export function isMeaningfulComposerSession(sessionValue = {}) {
   const session = createComposerSession(sessionValue);
   return Boolean(
-    session.messages.length
+    session.assistantState?.userCreated || session.currentInstruction.trim() || session.messages.length
     || session.promptVersions.length
     || session.referenceSnapshots.length
     || session.appliedSkills.length
@@ -801,7 +805,7 @@ export function createInstructionSnapshot(settingsValue, route, targetType, outp
     agentVersion: settings.agentVersion,
     route: normalizedRoute,
     routeSource,
-    agentInstruction: settings.agentInstruction.text,
+    agentInstruction: agentInstructionFor(settings, locale),
     taskMethod: taskMethodFor(settings, normalizedRoute, targetType, locale),
     instruction: String(instruction ?? "").trim(),
     outputLanguage: locale
@@ -990,6 +994,8 @@ function normalizeMessages(values) {
       route: AGENT_ROUTES.includes(item.route) ? item.route : "",
       routeSource: item.routeSource === "manual" ? "manual" : item.routeSource === "auto" ? "auto" : "",
       artifact: normalizeMessageArtifact(item.artifact),
+      ...(item.captureReceipt ? { captureReceipt: structuredClone(item.captureReceipt) } : {}),
+      ...(item.attachments?.length ? { attachments: structuredClone(item.attachments) } : {}),
       instructionSnapshot: normalizeInstructionSnapshot(item.instructionSnapshot),
       recommendedAnswer: String(item.recommendedAnswer ?? "").trim(),
       options: uniqueStrings(item.options).slice(0, 3),

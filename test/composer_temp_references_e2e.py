@@ -216,7 +216,9 @@ def main() -> None:
             composer.screenshot(path=str(Path(artifact_dir) / "composer-original-image-response.png"), full_page=True)
         assert len(composer_requests) == 1, composer_requests
         assert len(vision_requests) == 0, vision_requests
-        images = [part for row in composer_requests[0]["input"] for part in row.get("content", []) if part.get("type") == "input_image"]
+        # Runtime context travels as a text row; the picture turn keeps the multimodal parts list.
+        images = [part for row in composer_requests[0]["input"] if isinstance(row.get("content"), list)
+                  for part in row["content"] if part.get("type") == "input_image"]
         assert len(images) == 2, composer_requests[0]
         assert all(part["image_url"].startswith("data:image/png;base64,") for part in images)
         expect(composer.locator("#composer-library-search")).to_have_attribute("aria-pressed", "true")

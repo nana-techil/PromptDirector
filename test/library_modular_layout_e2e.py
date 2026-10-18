@@ -36,10 +36,12 @@ def main():
         assert all(r['width']==12 for r in arrows), arrows
         controls=page.locator('#create-collection,#collapse-projects,#manage-facets').evaluate_all('els=>els.map(e=>({w:e.getBoundingClientRect().width,h:e.getBoundingClientRect().height,border:getComputedStyle(e).borderTopWidth}))')
         assert all(r=={'w':28,'h':28,'border':'0px'} for r in controls), controls
-        page.locator('[data-sidebar-module="projects"] .module-chevron').click()
+        # The disclosure icon now lives inside the module toggle button; the button is the
+        # interactive target (a bare SVG icon is not reliably hit-testable at its centre).
+        page.locator('[data-sidebar-module="projects"] .sidebar-module-toggle').click()
         expect(page.locator('#sidebar-projects-body')).to_be_hidden()
         page.locator('#filter-sidebar').screenshot(path=str(OUT/'module-headers.png'))
-        page.locator('[data-sidebar-module="projects"] .module-chevron').click()
+        page.locator('[data-sidebar-module="projects"] .sidebar-module-toggle').click()
         expect(page.locator('#sidebar-projects-body')).to_be_visible()
         # Module switching cannot resize the canvas; project viewport scrolls separately.
         before = page.locator('.gallery-shell').bounding_box()
@@ -67,7 +69,14 @@ def main():
         grip=page.locator('[data-sidebar-module="types"] .module-grip')
         grip.focus(); page.keyboard.press('ArrowUp')
         wait_for_async_condition(page,"async()=> (await chrome.storage.local.get('uiPreferences')).uiPreferences.sidebarLayout.order[0]==='types'")
-        page.locator('[data-sidebar-module="tags"] .module-grip').drag_to(page.locator('[data-sidebar-module="projects"] .filter-heading'))
+        # Drag reorder with real pointer steps: a single synthetic jump can miss the
+        # dragover/drop pair on headless Chromium.
+        drag_source=page.locator('[data-sidebar-module="tags"] .module-grip')
+        drag_target=page.locator('[data-sidebar-module="projects"] .filter-heading')
+        drag_source.hover();page.mouse.down()
+        target_box=drag_target.bounding_box()
+        page.mouse.move(target_box['x']+target_box['width']/2,target_box['y']+target_box['height']/2,steps=8)
+        page.mouse.up()
         wait_for_async_condition(page,"async()=> (await chrome.storage.local.get('uiPreferences')).uiPreferences.sidebarLayout.order.join(',')==='types,tags,projects'")
         page.reload(wait_until='networkidle')
         assert page.locator('#sidebar-modules > section').first.get_attribute('data-sidebar-module')=='types'

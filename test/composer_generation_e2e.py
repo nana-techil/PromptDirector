@@ -69,12 +69,6 @@ class CreativeServiceHandler(BaseHTTPRequestHandler):
         return
 
 
-def select_composer_setting(page, selector: str, value: str) -> None:
-    page.locator("#composer-options summary").click()
-    page.locator(selector).select_option(value)
-    page.locator("#composer-options summary").click()
-
-
 def current_session(page) -> dict:
     return page.evaluate(
         """async () => {
@@ -119,7 +113,7 @@ def main() -> None:
             setup,
             {
                 "schemaVersion": 24,
-                "uiPreferences": {"locale": "zh-CN"},
+                "uiPreferences": {"locale": "zh-CN", "diagnosticsEnabled": True},
                 "entries": [entry, jimeng_character, retrieved_case, retrieved_guide, text_scene, text_character],
                 **ai_configuration_fixture(
                     providers={
@@ -200,7 +194,7 @@ def main() -> None:
                 return
             if payload.get("stream"):
                 execution_payload = composer_request_payload(payload)
-                execution_route = execution_payload.get("route", "compose")
+                execution_route = execution_payload.get("route", "auto")
                 user_text = json.dumps(execution_payload.get("messages", []), ensure_ascii=False)
                 latest_user_text = next(
                     (item.get("content", "") for item in reversed(execution_payload.get("messages", [])) if item.get("role") == "user"),
@@ -219,7 +213,7 @@ def main() -> None:
                         route.fulfill(status=200, content_type="text/event-stream", body="data: " + json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"tool_calls": calls}, "finish_reason": "tool_calls"}]}) + "\n\ndata: [DONE]\n\n")
                         return
                 if execution_route == "auto":
-                    resolved_route = "analyze_materials" if "分析资料" in user_text else "compose"
+                    resolved_route = "analyze_materials" if "分析资料" in latest_user_text else "chat" if "解释这个概念" in latest_user_text else "compose"
                 else:
                     resolved_route = execution_route
                 if "角色应该是什么气质" in latest_user_text:
@@ -377,7 +371,6 @@ def main() -> None:
         assert composer.locator(".composer-message.user", has_text="流式中断后复用规划").count() == 1
 
         composer.locator("#composer-new").click()
-        select_composer_setting(composer, "#composer-route", "auto")
         composer.locator("#composer-instruction").fill("分析资料中的光线差异")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.analysis .composer-message-text")).to_contain_text("资料分析结果")
@@ -386,9 +379,38 @@ def main() -> None:
         assert composer.locator(".composer-message.prompt").count() == 0
 
         composer.locator("#composer-new").click()
-        select_composer_setting(composer, "#composer-route", "chat")
         composer.locator("#composer-options summary").click()
-        expect(composer.locator("#composer-production-review")).to_be_disabled()
+        # New composer sessions use automatic routing (the only non-chat route reachable from this page),
+        # so the review preference stays editable and defaults to on; the saved preference must follow it.
+        review = composer.locator("#composer-production-review")
+        expect(review).to_be_enabled()
+        expect(review).to_be_checked()
+        review.uncheck()
+        expect(review).not_to_be_checked()
+        composer.wait_for_function(
+            """async () => {
+              const sessionId = new URL(location.href).searchParams.get('session');
+              const [session, stored] = await Promise.all([
+                chrome.runtime.sendMessage({type: 'GET_COMPOSER_SESSION', sessionId}),
+                chrome.storage.local.get('composerSettings'),
+              ]);
+              return session?.session?.productionReviewEnabled === false
+                && stored.composerSettings?.productionReviewEnabled === false;
+            }"""
+        )
+        review.check()
+        expect(review).to_be_checked()
+        composer.wait_for_function(
+            """async () => {
+              const sessionId = new URL(location.href).searchParams.get('session');
+              const [session, stored] = await Promise.all([
+                chrome.runtime.sendMessage({type: 'GET_COMPOSER_SESSION', sessionId}),
+                chrome.storage.local.get('composerSettings'),
+              ]);
+              return session?.session?.productionReviewEnabled === true
+                && stored.composerSettings?.productionReviewEnabled === true;
+            }"""
+        )
         composer.locator("#composer-options summary").click()
         composer.locator("#composer-instruction").fill("解释这个概念")
         composer.locator("#composer-action").click()
@@ -399,25 +421,23 @@ def main() -> None:
         assert composer.locator(".composer-message.plan").count() == 0
 
         composer.locator("#composer-new").click()
-        select_composer_setting(composer, "#composer-route", "compose")
-        select_composer_setting(composer, "#composer-output-language", "en")
-        composer.locator("#composer-instruction").fill("生成东方庭院")
+        # Output language now follows the request automatically; an English request must stay English.
+        composer.locator("#composer-instruction").fill("Create an eastern courtyard in soft backlight")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_have_text("An eastern courtyard in soft backlight.")
+        assert composer_request_payload(requests[-1])["outputLanguage"] == "en"
 
         composer.locator("#composer-new").click()
         set_composer_direction(composer, "video")
-        select_composer_setting(composer, "#composer-route", "compose")
-        select_composer_setting(composer, "#composer-output-language", "zh-CN")
         composer.locator("#composer-instruction").fill("生成庭院人物行走视频")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.prompt .composer-message-text")).to_contain_text("镜头跟随")
         video_execution = composer_request_payload(requests[-1])
         assert video_execution["instruction"] == "生成庭院人物行走视频"
+        assert video_execution["outputLanguage"] == "zh-CN"
 
         composer.locator("#composer-new").click()
         set_composer_direction(composer, "image")
-        select_composer_setting(composer, "#composer-route", "auto")
         composer.locator("#composer-instruction").fill("角色应该是什么气质")
         question_requests_before = len(requests)
         composer.locator("#composer-action").click()
@@ -641,8 +661,10 @@ def main() -> None:
             expect(composer.locator(".composer-session-running")).to_be_visible()
             running_row = composer.locator(".composer-session-item:has(.composer-session-running)")
             running_row.hover()
-            running_row.locator(".composer-session-menu > summary").click()
-            expect(running_row.get_by_role("menuitem", name="删除", exact=True)).to_be_disabled()
+            # The row exposes one delete icon button; a running session must not be deletable.
+            delete_running = running_row.locator(".composer-session-delete")
+            expect(delete_running).to_be_disabled()
+            assert "删除" in (delete_running.get_attribute("aria-label") or ""), delete_running.get_attribute("aria-label")
         except AssertionError:
             diagnostic = composer.evaluate(
                 """async () => ({
@@ -792,8 +814,8 @@ def main() -> None:
             "stop": True,
             "stream_retry_reused_instruction": True,
             "assembly_layers": 7,
-            "auto_route": "analyze_materials",
-            "manual_route": "chat",
+            "auto_route_analyze_materials": True,
+            "auto_route_chat": True,
             "markdown_rendered": True,
             "english_output": True,
             "video_instruction": True,

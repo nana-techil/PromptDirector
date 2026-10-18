@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { load } from "cheerio";
 
 const source = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
 const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
@@ -109,7 +110,10 @@ test("one top search surface keeps only a concise placeholder hint", () => {
   const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
   assert.equal((header.match(/type="search"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /id="project-search"/);
-  assert.match(html, /placeholder="[^"]*type:video[^"]*"/);
+  const search = load(header)('input[type="search"]');
+  assert.equal(search.attr('id'), 'search-input');
+  assert.equal(search.attr('placeholder'), '搜索');
+  assert.equal(search.attr('data-i18n-placeholder'), '搜索');
   assert.doesNotMatch(html, /id="search-help"|source:x\.com.*tag:电影感.*has:video/);
 });
 
@@ -215,7 +219,21 @@ test("prompt text supports explicit editing and revision-safe saving", () => {
 
 test("image details size the stage from the active media ratio", () => {
   const gallery = source.slice(source.indexOf("async function createDetailMediaGallery"), source.indexOf("async function createMediaViewer"));
-  assert.match(gallery, /syncImageStageSize/);
+  assert.match(gallery, /syncMediaStageSize\(asset\)/);
+  const sizing = gallery.slice(gallery.indexOf('function syncMediaStageSize'), gallery.indexOf('function captureDetailScrollAnchor'));
+  const heights = [], media = { naturalWidth: 1200, naturalHeight: 600 };
+  const mobileLayout = { matches: false };
+  const sync = new Function('stage', 'gallery', 'elements', 'immersive', 'mobileLayout', 'rail', 'innerHeight', 'getComputedStyle',
+    sizing + '; return syncMediaStageSize;')(
+    { querySelector: selector => selector === '.detail-image, video' ? media : { offsetHeight: 60 } },
+    { clientWidth: 600, parentElement: { querySelector: () => ({ getBoundingClientRect: () => ({ height: 100 }) }) },
+      style: { setProperty: (name, value) => { assert.equal(name, '--detail-stage-height'); heights.push(value); } } },
+    { detailDrawer: { classList: { contains: () => false } } }, true, mobileLayout, { isConnected: true, offsetHeight: 40 }, 800, () => ({ maxHeight: '420px' }));
+  sync({}); assert.equal(heights.at(-1), '360px', 'landscape uses the actual media aspect ratio plus its controls');
+  media.naturalHeight = 2400;
+  sync({}); assert.equal(heights.at(-1), '660px', 'portrait fits the viewport without displacing controls');
+  mobileLayout.matches = true;
+  sync({}); assert.equal(heights.at(-1), '380px', 'a narrow-screen stage respects its CSS height budget');
   assert.match(gallery, /ResizeObserver/);
   assert.match(css, /\.detail-visual-gallery\.is-image-detail/);
 });
@@ -228,13 +246,13 @@ test("primary image and search-tag analysis are direct actions without a seconda
   assert.doesNotMatch(gallery, /vision-analyze-button|分析主图|重新分析主图/);
   assert.match(prompt, /createPromptCopyAction/);
   assert.match(prompt, /分析图片/);
-  assert.match(prompt, /分析文字标签/);
+  assert.match(prompt, /createTextAnalysisAction\(entry, asset\.id\)/);
   assert.match(prompt, /analyzeEntryVision\(entry,\s*analyze,\s*asset\)/);
   assert.match(prompt, /actions = \[createPromptCopyAction\(text\), createPromptRulesAction\("text"\)\]/);
   assert.doesNotMatch(prompt, /detail-analysis-menu/);
   assert.doesNotMatch(prompt, /完善分析/);
   assert.doesNotMatch(prompt, /detail-analysis-actions/);
-  assert.match(prompt, /toolbar\.append\(analyzeText\)/);
+  assert.match(prompt, /aiToolbar\.append\(analyzeText\)/);
   assert.match(prompt, /detail-core-actions/);
   assert.match(prompt, /createComposerAction\(entry\)/);
 });

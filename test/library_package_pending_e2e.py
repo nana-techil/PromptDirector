@@ -23,8 +23,6 @@ def main():
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("library.json", library)
             archive.writestr(asset_path, original)
-        page.locator("#open-settings").click()
-        page.locator('[data-settings-tab="general"]').click()
         page.evaluate("""() => {
           const send = chrome.runtime.sendMessage.bind(chrome.runtime);
           const estimate = navigator.storage.estimate.bind(navigator.storage);
@@ -47,7 +45,7 @@ def main():
         confirm = page.locator("#library-package-import-confirm")
         feedback = page.locator("#library-package-import-feedback")
         rows = page.locator(".library-package-import-status")
-        page.locator("#library-package-file").set_input_files(str(path))
+        page.locator("#media-file").set_input_files(str(path))
         page.wait_for_function("() => planGates.length === 1")
         expect(confirm).to_be_disabled()
         expect(feedback).to_have_text("正在核对案例…")
@@ -63,7 +61,7 @@ def main():
         expect(feedback).not_to_contain_text("stale")
         expect(confirm).to_be_disabled()
         page.locator("#library-package-import-cancel").click()
-        page.locator("#library-package-file").set_input_files(str(path))
+        page.locator("#media-file").set_input_files(str(path))
         page.wait_for_function("() => planGates.length === 2")
         page.evaluate("() => planGates[1]()")
         page.wait_for_function("() => capacityGates.length === 2")
@@ -72,7 +70,7 @@ def main():
         expect(rows).to_have_text("检查失败")
         expect(confirm).to_be_disabled()
         page.locator("#library-package-import-cancel").click()
-        page.locator("#library-package-file").set_input_files(str(path))
+        page.locator("#media-file").set_input_files(str(path))
         page.wait_for_function("() => planGates.length === 3")
         page.evaluate("() => planGates[2]()")
         page.wait_for_function("() => capacityGates.length === 3")

@@ -8,7 +8,7 @@ from e2e_support import extension_session
 def main():
     with extension_session('capture-classification-detail-', viewport={'width':1280,'height':844}) as run:
         page=run.open_page('collector.html')
-        run.seed_storage(page, {'entries': [], 'uiPreferences': {'locale':'zh-CN','motion':'reduced'}})
+        run.seed_storage(page, {'entries': [], 'uiPreferences': {'locale':'zh-CN','motion':'reduced','videoOnlineOnly':True}})
         results=page.evaluate('''async()=>{
           const {saveScreenshotBlob}=await import('./image-store.js');
           const {normalizePageCaptureBatch,applyPageCaptureSelections}=await import('./page-capture.js');
@@ -67,8 +67,12 @@ def main():
         media_before=gallery.bounding_box()
         expand=body.get_by_role('button',name='展开全文',exact=True)
         if expand.count(): expand.first.click()
-        body.evaluate('e=>e.scrollTop=e.scrollHeight')
-        assert body.evaluate('e=>e.scrollTop>0 && e.clientHeight<=innerHeight'), 'long prompt must scroll within viewport'
+        # The workspace keeps the whole detail pane within the viewport and lets
+        # the reading column scroll internally instead of growing the page.
+        reading=body.locator(':scope > .detail-reading')
+        assert reading.count()==1, 'detail workspace must expose an internal reading scroller'
+        reading.evaluate('e=>e.scrollTop=e.scrollHeight')
+        assert reading.evaluate('e=>e.scrollTop>0 && e.clientHeight<=innerHeight'), 'long prompt must scroll within viewport'
         assert abs(gallery.bounding_box()['y']-media_before['y'])<1
         saved_width=body.bounding_box()['width']
         page.get_by_role('button',name='关闭详情',exact=True).click()

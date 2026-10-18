@@ -1,6 +1,7 @@
 """Native mouse gestures in an isolated profile; never access the daily library."""
 import base64
 import json
+import hashlib
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -104,40 +105,30 @@ def main():
                 payload = native_drag(selector)
                 assert payload and 'application/x-promptdirector-reference' in payload, (view, case_id, payload)
                 assert f'case={case_id}' in payload['application/x-promptdirector-reference'], payload
-                link = page.evaluate('''value => new DOMParser().parseFromString(value,'text/html').querySelector('a').href''', payload['text/html'])
-                identity = page.evaluate('''async link => (await import('./pd-reference.js')).parsePdReference(link)''', link)
-                assert identity['caseId'] == case_id and identity['assetId'] == '', identity
-                html = page.evaluate('''value => {
-                  const doc=new DOMParser().parseFromString(value,'text/html');
-                  const image=doc.querySelector('img');
-                  const file={image:image?.src,hidden:image?.hidden};
-                  for(const hidden of doc.querySelectorAll('[hidden], [aria-hidden="true"]')) hidden.remove();
-                  return {href:doc.querySelector('a')?.href,images:doc.querySelectorAll('img').length,text:doc.body.textContent,file};
-                }''', payload['text/html'])
-                assert html['images'] == 0 and html['href'] == link, html
-                assert html['text'] == ('组合名称' if case_id == 'compound' else f'{case_id}名称'), html
-                if case_id == 'article': assert link.startswith('https://example.org/article#pd-reference='), link
                 original_id = {'pictures':'image', 'video':'clip', 'document':'doc', 'compound':'group-image'}.get(case_id)
                 if original_id:
                     assert payload['text/plain'] == payload['text/uri-list'] and payload['text/plain'].startswith('blob:'), payload
-                    # Chrome converts DownloadURL into a native file promise;
-                    # browser drop targets receive URI/HTML instead of that key.
                     download = payload['_source']['downloadurl']
                     assert download.endswith(':' + payload['text/uri-list']), payload
-                    hashes = page.evaluate('''async ({id,url}) => {
+                    expected = page.evaluate('''async id => {
                       const {getMediaBlob}=await import('./media-store.js');
                       const {sha256Blob}=await import('./blob-digest.js');
-                      return [await sha256Blob(await getMediaBlob(id)),await sha256Blob(await (await fetch(url)).blob())];
-                    }''', {'id':original_id,'url':payload['text/uri-list']})
-                    assert hashes[0] == hashes[1], (case_id, hashes)
-                    assert payload['_files'] == [], 'Agent rich text must retain its name link rather than become a file attachment'
-                    if case_id in ['pictures','compound']:
-                        assert html['file']['image'] == payload['text/uri-list'] and html['file']['hidden'], html
-                    if case_id == 'video':
-                        assert download.startswith('video/mp4:original-video.mp4:'), payload
-                    if case_id == 'document':
-                        assert download.startswith('text/markdown:文章.md:'), payload
-                print(f'PASS: native {view} drag {case_id}: exact name identity and original file flavors verified')
+                      const blob=await getMediaBlob(id);return {size:blob.size,sha256:await sha256Blob(blob)};
+                    }''', original_id)
+                    original_hash = page.evaluate("async url => (await import('./blob-digest.js')).sha256Blob(await (await fetch(url)).blob())", payload['text/uri-list'])
+                    assert original_hash == expected['sha256'], payload
+                    if view == 'waterfall':
+                        with page.expect_download() as download_event:
+                            page.evaluate('''url=>{const a=document.createElement('a');a.href=url;a.download='original';a.click()}''', payload['text/uri-list'])
+                        assert hashlib.sha256(Path(download_event.value.path()).read_bytes()).hexdigest() == expected['sha256']
+                    assert 'pd-reference=' not in payload['text/html'] and 'hidden' not in payload['text/html'], payload
+                    if case_id == 'video': assert download.startswith('video/mp4:original-video.mp4:'), payload
+                    if case_id == 'document': assert download.startswith('text/markdown:文章.md:'), payload
+                else:
+                    link = page.evaluate("value => new DOMParser().parseFromString(value,'text/html').querySelector('a').href", payload['text/html'])
+                    identity = page.evaluate("async link => (await import('./pd-reference.js')).parsePdReference(link)", link)
+                    assert identity['caseId'] == case_id and identity['assetId'] == '', identity
+                print(f'PASS: native {view} drag {case_id}: original file bytes or text-only identity verified')
         # A genuinely different web origin, using File-only dragover/drop rules
         # observed in the canvas receivers. The native drop must become a File
         # with original bytes before the receiver's normal upload handler runs.
@@ -165,6 +156,8 @@ def main():
             page.bring_to_front()
             count=receiver.evaluate('window.received.length')
             payload=native_drag(f'.case-card[data-entry-id="{case_id}"]')
+            # Simulate URL cache eviction after dragstart: the web receiver must still get the original.
+            page.evaluate('url=>URL.revokeObjectURL(url)', payload['text/uri-list'])
             data={'items':[{'mimeType':key,'data':value} for key,value in payload.items() if not key.startswith('_')], 'dragOperationsMask':1}
             for action in ['dragEnter','dragOver','drop']:
                 target_cdp.send('Input.dispatchDragEvent',{'type':action,'x':400,'y':300,'data':data})

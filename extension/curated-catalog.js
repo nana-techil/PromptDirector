@@ -334,6 +334,10 @@ export function isTrustedCuratedResponseUrl(value) {
   return Boolean(url && (DOWNLOAD_HOSTS.has(url.hostname) || COVER_HOSTS.has(url.hostname)));
 }
 
+export function curatedPackTitle(item, locale) {
+  return locale === "en" ? item.titleEn || item.title : item.title;
+}
+
 function normalizeItem(value = {}) {
   const id = clean(value.id);
   const title = clean(value.title);
@@ -357,6 +361,7 @@ function normalizeItem(value = {}) {
   return {
     id,
     title,
+    ...(clean(value.titleEn) ? { titleEn: clean(value.titleEn) } : {}),
     type,
     packageId,
     packageVersion,

@@ -1,6 +1,6 @@
 // Keep reference drafts in the composer model; mount only the visible grid and
 // one viewport on either side. Geometry comes from the existing responsive CSS.
-export function createReferenceWindow(container, { createCard, releaseCard }) {
+export function createReferenceWindow(container, { createCard, releaseCard, scrollContainer }) {
   let items = [], mounted = new Map(), columns = 0, gap = 0, estimate = 0;
   let heights = new Map(), offsets = [], frame = 0, suspended = true;
   let previousRoot = null, previousViewportHeight = 0, previouslyAtEnd = false;
@@ -18,6 +18,7 @@ export function createReferenceWindow(container, { createCard, releaseCard }) {
   container.addEventListener('focusout', schedule);
 
   function scrollRoot() {
+    if (scrollContainer) return scrollContainer;
     return getComputedStyle(picker).overflowY === 'visible' ? body : picker;
   }
   function schedule() {

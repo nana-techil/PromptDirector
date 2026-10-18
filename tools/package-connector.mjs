@@ -8,9 +8,9 @@ const manifest = JSON.parse(await readFile(join(root, 'extension/manifest.json')
 // Ship reviewable source and pinned dependencies, never a maintainer's runtime
 // directory, pairing records, downloaded originals or node_modules.
 const names = (await readdir(join(root, 'connector'), { withFileTypes: true }))
-  .filter(item => item.isFile() && (item.name.endsWith('.mjs') || ['README.md', 'INSTALL.md', 'SKILL.md', 'package.json', 'package-lock.json'].includes(item.name)))
+  .filter(item => item.isFile() && (item.name.endsWith('.mjs') && !['register-video.mjs', 'video-host.mjs', 'video-service.mjs', 'video-tools.mjs'].includes(item.name) || ['README.md', 'INSTALL.md', 'INSTALL.en.md', 'SKILL.md', 'package.json', 'package-lock.json'].includes(item.name)))
   .map(item => `connector/${item.name}`);
-names.push('extension/manifest.json', 'extension/workspace-operation-specs.js', 'extension/workspace-screenshot-specs.js', 'extension/agent-case-action-specs.js', 'extension/case-query-specs.js', 'extension/case-operation-specs.js', 'extension/project-operation-specs.js', 'extension/skill-operation-specs.js', 'extension/analysis-batch-specs.js', 'extension/visual-result-schema.js', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md');
+names.push('extension/manifest.json', 'extension/resource-policy.js', 'extension/agent-protocol.js', 'extension/capture-operation-specs.js', 'extension/workspace-operation-specs.js', 'extension/workspace-screenshot-specs.js', 'extension/agent-case-action-specs.js', 'extension/case-query-specs.js', 'extension/case-operation-specs.js', 'extension/project-operation-specs.js', 'extension/skill-operation-specs.js', 'extension/analysis-batch-specs.js', 'extension/visual-result-schema.js', 'docs/VIDEO_COMPONENT.md', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md');
 const files = await Promise.all(names.sort().map(async name => ({ name, data: await readFile(join(root, name)) })));
 const archive = await createZipBlob(files);
 await mkdir(join(root, 'dist'), { recursive: true });

@@ -35,16 +35,22 @@ with extension_session('pd-six-surfaces-', viewport={'width':1440,'height':960})
  for width,height,locale,theme in [(1440,960,'zh-CN','dark'),(390,844,'en','light')]:
   page.set_viewport_size({'width':width,'height':height})
   page.locator('[data-settings-tab="general"]').click()
-  for selector,value in [('#ui-theme',theme),('#ui-locale',locale)]:
-   if page.locator(selector).input_value()!=value:
-    with page.expect_navigation(wait_until='networkidle'):
-     page.locator(selector).select_option(value)
-    page.locator('#open-settings').click()
+  # Theme is a switch (dark on); language stays a multi-choice select.
+  if page.locator('#ui-theme').is_checked()!=(theme=='dark'):
+   with page.expect_navigation(wait_until='networkidle'):
+    page.locator('#ui-theme').set_checked(theme=='dark')
+   page.locator('#open-settings').click()
+   page.locator('[data-settings-tab="general"]').click()
+  if page.locator('#ui-locale').input_value()!=locale:
+   with page.expect_navigation(wait_until='networkidle'):
+    page.locator('#ui-locale').select_option(locale)
+   page.locator('#open-settings').click()
+   page.locator('[data-settings-tab="general"]').click()
   for tab in ['ai','rules','tasks']:
    page.locator(f'[data-settings-tab="{tab}"]').click()
    metrics=page.locator(f'#settings-{tab}-panel').evaluate('(e)=>({width:e.clientWidth,scroll:e.scrollWidth})')
    assert metrics['scroll']<=metrics['width']+1,(tab,metrics)
-  centers=page.evaluate("""()=>{const a=document.querySelector('#text-batch-card h3').getBoundingClientRect(),b=document.querySelector('#preview-analysis-batch').getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)}""")
+  centers=page.evaluate("""()=>{const b=document.querySelector('#preview-analysis-batch').getBoundingClientRect(),a=document.querySelector('#preview-analysis-batch').closest('.batch-card-heading').querySelector('h3').getBoundingClientRect();return Math.abs(a.top+a.height/2-b.top-b.height/2)}""")
   if width >= 600: assert centers<=1,centers
   expect(page.locator("#batch-status-badge")).to_be_hidden()
  page.set_viewport_size({'width':1440,'height':960});page.locator('#settings-close').click()

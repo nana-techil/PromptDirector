@@ -6,12 +6,19 @@ import { t } from './i18n.js';
 
 // The collector places a draft in one project; the library keeps its own
 // multi-project membership rules while sharing the same tree and appearance.
-export function createCaptureProjectMenu({ menu, getCollections, getDraft, onChange, onError }) {
+export function createCaptureProjectMenu({ menu, getCollections, getDraft, onChange, onError, getContentTypes, getSuggestedType }) {
   const summary = document.createElement('summary');
   const text = document.createElement('span'); text.className = 'detail-project-summary-text';
   summary.title = t('项目'); summary.append(createUiIcon('folder'), text, createUiIcon('chevron-down'));
   const popover = document.createElement('div'); popover.className = 'detail-project-popover';
   popover.dataset.menuInteractive = 'true';
+  const contentType = getContentTypes ? document.createElement('select') : null;
+  if (contentType) {
+    contentType.id = 'capture-assistant-content-type'; contentType.setAttribute('aria-label', t('内容类型'));
+    const label = document.createElement('label'); label.textContent = t('内容类型'); label.htmlFor = contentType.id;
+    contentType.addEventListener('change', () => { void onChange({ contentTypeId: contentType.value, contentTypeExplicit: Boolean(contentType.value) }).catch(onError); });
+    popover.append(label, contentType);
+  }
   let unavailable = false;
   let nameDirty = false;
   const state = () => ({ collections: getCollections() });
@@ -71,6 +78,14 @@ export function createCaptureProjectMenu({ menu, getCollections, getDraft, onCha
     text.title = text.textContent;
     summary.setAttribute('aria-disabled', String(disabled));
     name.disabled = add.disabled = disabled;
+    if (contentType) {
+      const selected = draft?.contentTypeExplicit ? draft.contentTypeId : getSuggestedType?.() || '';
+      const options = [{ id: '', name: t('自动识别'), customized: true }, ...getContentTypes()];
+      contentType.replaceChildren(...options.map(item => {
+        const option = document.createElement('option'); option.value = item.id; option.textContent = item.customized ? item.name : t(item.name); return option;
+      }));
+      contentType.value = selected; contentType.disabled = disabled;
+    }
     if (document.activeElement !== name && !nameDirty) name.value = draft?.newCollectionName || '';
     if (disabled) menu.open = false;
     if (menu.open) selector.render();

@@ -31,7 +31,7 @@ test('a task-specific technique filter excludes a same-film different-technique 
   assert.deepEqual(f.state.entries, before);
 });
 
-test('Agent video prompt search reaches pure videos from a mixed reference without changing exploratory library similarity', async () => {
+test('Agent media filters stay explicit while exploratory recommendations include mixed and single cases', async () => {
   const mixed = entry('mixed', { text: 'webpage introduction', mediaAssets: [
     { id: 'v', kind: 'video' }, { id: 'i', kind: 'image' }
   ], mediaPrompts: [
@@ -54,8 +54,8 @@ test('Agent video prompt search reaches pure videos from a mixed reference witho
   const next = await f.external.search({ ...input, offset: found.nextOffset, expectedRevision: found.revision });
   assert.equal(next.cases[0].similarity.score, 0);
   assert.deepEqual((await f.internal.execute('search_cases', input, { callId: 'prompt' })).data.candidates.map(row => row.similarity), found.cases.map(row => row.similarity));
-  assert.deepEqual(rankSimilarEntries(createSimilarityIndex([mixed, video, other, missing]), 'mixed'), []);
-  assert.equal((await f.external.search({ ...input, similarTo: { caseId: 'mixed', method: 'local' } })).total, 0);
+  assert.deepEqual(new Set(rankSimilarEntries(createSimilarityIndex([mixed, video, other, missing]), 'mixed').map(item=>item.entry.id)), new Set(['video', 'other']));
+  assert.equal((await f.external.search({ ...input, similarTo: { caseId: 'mixed', method: 'local' } })).total, 2);
 });
 
 test('missing-prompt expansion distinguishes saved AI from originals and does not borrow image or poster prompts for video', async () => {
@@ -219,8 +219,11 @@ test('similarity is reference-specific, known zero stays zero and unknown eviden
   const a = image('a', 'robot city', '#223344'), b = image('b', 'ocean coral', '#233445'), c = image('c', 'robot city', undefined), d = entry('d');
   const f = fixture([a, b, c, d]);
   const input = { similarTo: { caseId: 'a', method: 'prompt' }, select: ['title', 'similarity.score', 'similarity.palette'], limit: 1 };
-  const result = await f.external.search(input); assert.deepEqual(ids(result), ['c']); assert.equal(result.cases[0]['similarity.palette'], null); assert.equal(result.similarityCoverage.differentDomainCases, 1);
-  const next = await f.external.search({ ...input, offset: 1, expectedRevision: result.revision }); assert.equal(next.cases[0]['similarity.score'], 0);
+  const result = await f.external.search(input); assert.deepEqual(ids(result), ['c']); assert.equal(result.cases[0]['similarity.palette'], null); assert.equal(result.similarityCoverage.differentDomainCases, 0);
+  const next = await f.external.search({ ...input, offset: 1, expectedRevision: result.revision });
+  assert.deepEqual(ids(next), ['d']); assert.equal(next.cases[0]['similarity.score'], 1);
+  const zero = await f.external.search({ ...input, offset: 2, expectedRevision: result.revision });
+  assert.deepEqual(ids(zero), ['b']); assert.equal(zero.cases[0]['similarity.score'], 0);
   const local = await f.external.search({ similarTo: { caseId: 'a', method: 'local' } }); assert.ok(local.cases.every(row => row.similarity.reason));
   a.text = 'ocean coral'; await assert.rejects(f.external.search({ ...input, offset: 1, expectedRevision: result.revision }), { code: 'search_changed' });
   await assert.rejects(f.external.search({ select: ['similarity.score'] }), /similarTo/);
@@ -332,4 +335,19 @@ test('unsaved reference uses the full text, compares available original and AI e
   assert.equal(all.cases.some(item=>item.caseId==='plain'),true);
   assert.deepEqual(all.cases.find(item=>item.caseId==='ai').similarity.promptEvidence.sources,['ai']);
   await assert.rejects(f.external.search({...query,similarText:text+' new source',offset:1,expectedRevision:found.revision}),e=>e.code==='search_changed');
+});
+
+ test('cross-type similarity preserves an explicitly requested Agent media filter and its coverage', async()=>{
+ const mixed=entry('mixed',{text:'robot city',mediaAssets:[{id:'mv',kind:'video'},{id:'mi',kind:'image'}]});
+ const video=entry('video',{text:'robot city'});
+ const image=entry('image',{text:'robot city',mediaAssets:[{id:'i',kind:'image'}]});
+ const f=fixture([mixed,video,image]);
+ const all=await f.external.search({similarTo:{caseId:'mixed',method:'local'}});
+ assert.deepEqual(new Set(ids(all)),new Set(['video','image']));
+ for(const method of ['local','prompt']) {
+  const videos=await f.external.search({similarTo:{caseId:'mixed',method},mediaKind:'video'});
+  assert.deepEqual(ids(videos),['video']);
+  assert.equal(videos.similarityCoverage.sameDomainCases,1);
+  assert.equal(videos.similarityCoverage.differentDomainCases,1);
+ }
 });

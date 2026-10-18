@@ -1,0 +1,49 @@
+import { createComposerSession } from './composer.js';
+
+// Sidebar and studio share canonical messages and tool progress. Only sidebar
+// view/task metadata is additional; page previews remain in the capture store.
+export function assistantChatSession(chat, previous) {
+  const { messages = [], pendingBatch, aiProfile, draft, id, chatRevision, ...view } = chat;
+  const turns = new Map((previous?.assistantState?.turns || []).map(turn => [turn.requestId || turn, turn]));
+  for (const turn of view.turns || []) turns.set(turn.requestId || turn, turn);
+  if (turns.size) view.turns = [...turns.values()];
+  const firstRequest = messages.find(message => message.role === 'user')?.content?.trim();
+  const receiptTitle = messages.filter(message => message.role === 'result')
+    .flatMap(message => message.result?.results || []).filter(item => item.status === 'saved').at(-1)?.title;
+  const automaticTitle = receiptTitle || firstRequest || '新对话';
+  const oldTitle = previous?.title;
+  const generated = !oldTitle || oldTitle === '新对话' || oldTitle === 'New chat'
+    || oldTitle === previous?.assistantState?.automaticTitle
+    || (previous?.assistantState && (oldTitle.length === 1 || firstRequest?.startsWith(oldTitle)
+      || previous.currentInstruction?.startsWith(oldTitle)));
+  return createComposerSession({ ...previous, id, aiProfile: aiProfile || previous?.aiProfile,
+    chatRevision: chatRevision ?? previous?.chatRevision ?? 0, routeMode: 'chat',
+    title: generated ? automaticTitle : oldTitle,
+    currentInstruction: draft || '', assistantState: { ...view, automaticTitle },
+    referenceSnapshots: [ ...(previous?.referenceSnapshots || []),
+      ...[...(chat.attachments || []), ...messages.flatMap(message => message.attachments || [])]
+        .filter((asset, index, list) => asset.assetId && list.findIndex(item => item.assetId === asset.assetId) === index
+          && !previous?.referenceSnapshots?.some(reference => reference.assetRefs?.some(item => item.assetId === asset.assetId)))
+        .map(asset => ({entryId:asset.transferId,referenceId:asset.transferId,alias:asset.name,title:asset.name,
+          sourceType:'temporary',referenceKind:asset.kind === 'image' ? 'reference' : 'prompt',
+          assetRefs:[{assetId:asset.assetId,kind:asset.kind,mimeType:asset.mimeType,name:asset.name,byteSize:asset.byteSize || 0}],
+          imageRefs:asset.kind === 'image' ? [{visualId:asset.assetId,mimeType:asset.mimeType}] : []})) ],
+    messages: messages.map(message => message.role === 'result'
+      ? { ...previous?.messages?.find(item => item.id === message.id), ...message, role: 'assistant', type: 'status', content: captureReceiptText(message.result), captureReceipt: message.result }
+      : { ...previous?.messages?.find(item => item.id === message.id), ...message, type: message.role === 'assistant' ? 'chat' : 'request' }),
+    updatedAt: new Date().toISOString() });
+}
+export { assistantChatView, assistantChatViews } from './assistant-chat-view.js';
+
+export function assistantChatContent(session) {
+  return JSON.stringify([session.messages,session.currentInstruction,session.title,session.aiProfile,
+    session.referenceSnapshots,session.promptVersions,session.appliedSkills]);
+}
+
+export function captureReceiptText(result) {
+  const receipts = result?.results || [];
+  if (receipts.length && receipts.every(item => item.status === 'saved' && item.entryId)) return '已保存。';
+  if (receipts.length && receipts.every(item => item.status === 'duplicate' && item.entryId)) return '已有案例，未新增采集内容。';
+  if (receipts.some(item => item.entryId)) return '已部分保存，请查看缺失原因。';
+  return '未保存，已有内容保留';
+}

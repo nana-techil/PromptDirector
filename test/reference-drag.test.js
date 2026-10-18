@@ -26,26 +26,18 @@ test('specific image drag retains original canvas/file payload while exposing th
   assert.equal(value.data.get('DownloadURL'), `image/png:角色 [修订].png:${url}`);
   assert.deepEqual(JSON.parse(value.data.get('application/x-promptdirector-file')), { url, mimeType: 'image/png', name: '角色 [修订].png' });
   assert(value.data.get('text/html').includes('<img src="blob:original-image"'), 'canvas receivers need the original image HTML flavor');
-  assert(value.data.get('text/html').includes('hidden'), 'rich-text hosts should omit the file carrier from visible name content');
+  assert(!value.data.get('text/html').includes('hidden'), 'image receivers must receive visible original media');
+  assert(!value.data.get('text/html').includes('promptdirector://'), 'media drags must not insert Agent reference links');
   assert(!value.data.get('text/plain').includes('对应画面'));
 });
-test('HTTP name links survive protocol filtering and resolve without visiting the source website', () => {
+test('text-only case name links still survive protocol filtering', () => {
   const value = transfer();
-  const reference = setPdReferenceDragData(value, { libraryId: 'library', caseId: 'compound', assetId: 'image', name: '组合案例',
-    linkBase: 'https://example.org/source(draft)?original=1#old-position',
-    file: { kind: 'image', url: 'blob:original', mimeType: 'image/png', name: 'image.png' } });
-  const html = value.data.get('text/html');
-  const href = html.match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&');
-  assert.equal(new URL(href).protocol, 'https:');
-  assert.equal(new URL(href).search, '?original=1');
-  assert.equal(new URL(href).pathname, '/source%28draft%29', 'source parentheses must not break the plain-text Markdown link');
+  const reference = setPdReferenceDragData(value, { libraryId: 'library', caseId: 'article', name: '文章',
+    linkBase: 'https://example.org/source(draft)?original=1#old-position' });
+  const href = value.data.get('text/html').match(/href="([^"]+)"/)[1].replaceAll('&amp;', '&');
+  assert.equal(new URL(href).pathname, '/source%28draft%29');
   assert.deepEqual(parsePdReference(href), parsePdReference(reference));
-  assert.equal(value.data.get('application/x-promptdirector-reference'), reference);
-  assert.equal(value.data.get('text/plain'), 'blob:original');
-  assert.equal(value.data.get('text/uri-list'), 'blob:original');
-  assert.equal(value.data.get('DownloadURL'), 'image/png:image.png:blob:original');
-  assert(html.startsWith(`<a href="${href.replaceAll('&', '&amp;')}">组合案例</a>`));
-  assert(html.includes('<img src="blob:original" hidden'));
+  assert(!value.data.has('DownloadURL'));
 });
 test('name-link wrappers reject ambiguous or unsafe references', () => {
   const ref = 'promptdirector://reference?v=1&library=library&case=case';

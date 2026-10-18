@@ -4,6 +4,7 @@ import { createLibraryViewReader } from './library-view-state.js';
 import { getLibraryStorage } from './library-storage.js';
 import {
   curatedSourceKey,
+  curatedPackTitle,
   isTrustedCuratedResponseUrl,
   normalizeCuratedCatalog,
   normalizeCuratedMetrics,
@@ -17,10 +18,10 @@ import {
 import {
   CURATED_CATALOG_URL,
   CURATED_METRICS_URL,
-  CURATED_PUBLIC_SITE_URL
+  curatedPublicUrl
 } from "./curated-config.js";
 import { fetchCuratedPackage, readResponseBlobWithProgress } from "./curated-download.js";
-import { initializeUi, t, translateUiMessage } from "./i18n.js";
+import { currentLocale, initializeUi, t, translateUiMessage } from "./i18n.js";
 import { parseLibraryPackage } from "./library-package.js";
 import { saveMediaBlob } from "./media-store.js";
 import { createStableMasonry } from "./stable-masonry.js";
@@ -239,7 +240,7 @@ function visibleItems() {
 
 function searchableText(item) {
   const preview = state.previews.get(item.id);
-  return [item.title, item.author, ...(preview?.entries ?? []).flatMap((entry) => [entry.title, entry.author, entry.text])]
+  return [item.title, item.titleEn, item.author, ...(preview?.entries ?? []).flatMap((entry) => [entry.title, entry.author, entry.text])]
     .join(" ")
     .toLocaleLowerCase();
 }
@@ -248,7 +249,7 @@ function createPackCard(item) {
   const card = element("article", "pack-card");
   card.dataset.packId = item.id;
   card.tabIndex = 0;
-  card.setAttribute("aria-label", t("打开 {title}", { title: item.title }));
+  card.setAttribute("aria-label", t("打开 {title}", { title: curatedPackTitle(item, currentLocale()) }));
   const cover = element("span", "pack-cover");
   const image = element("img");
   image.src = item.coverUrl;
@@ -256,7 +257,7 @@ function createPackCard(item) {
   image.loading = "lazy";
   cover.append(image);
   const copy = element("div", "pack-copy");
-  copy.append(element("h2", "", item.title));
+  copy.append(element("h2", "", curatedPackTitle(item, currentLocale())));
   const meta = element("div", "pack-meta");
   meta.append(element("span", "", item.author), element("span", "", `${item.caseCount} ${t("个案例")}`));
   copy.append(meta);
@@ -322,7 +323,7 @@ function renderDetail(item, preview, failed = false) {
   coverImage.alt = "";
   cover.append(coverImage);
   const info = element("div", "detail-info");
-  info.append(element("h1", "", item.title));
+  info.append(element("h1", "", curatedPackTitle(item, currentLocale())));
   const meta = element("div", "detail-meta");
   meta.append(element("span", "", item.author), element("span", "", `${item.caseCount} ${t("个案例")}`), element("span", "", rightsLabel(item)));
   info.append(meta);
@@ -733,7 +734,7 @@ function openSavedProject(projectId) {
 
 function confirmPackSave(item) {
   const dialog = document.querySelector("#pack-save-dialog");
-  dialog.querySelector("h2").textContent = item.title;
+  dialog.querySelector("h2").textContent = curatedPackTitle(item, currentLocale());
   dialog.querySelector(".pack-save-meta").textContent = `${item.caseCount} ${t("个案例")} · ${formatBytes(item.archiveBytes)}`;
   dialog.querySelector(".pack-save-confirm").textContent = t("保存整包");
   dialog.querySelector(".pack-save-cancel").textContent = t("取消");
@@ -952,9 +953,7 @@ function selectedItem() {
 }
 
 function publicPackUrl(id) {
-  const url = new URL(CURATED_PUBLIC_SITE_URL);
-  url.searchParams.set("pack", id);
-  return url.href;
+  return curatedPublicUrl(currentLocale(), "", { pack: id });
 }
 
 function rightsLabel(item, entryRights = "") {

@@ -1,5 +1,14 @@
 export const ARTICLE_DOCUMENT_VERSION = 1;
 
+// A reading projection only: opening a text/file case never writes article blocks.
+export function articleDocumentForReading(entry = {}) {
+  if (entry.articleDocument?.blocks?.length) return entry.articleDocument;
+  const primary = entry.mediaAssets?.find(asset => asset.id === entry.primaryMediaId);
+  const markdown = entry.contentFormat === "markdown" || primary?.extractedTextFormat === "markdown"
+    || primary?.mimeType === "text/markdown" || primary?.sourceFormat === "md";
+  return { version: ARTICLE_DOCUMENT_VERSION, blocks: [{ id: "body", kind: "paragraph", text: String(entry.text ?? ""), mimeType: markdown ? "text/markdown" : "text/plain" }] };
+}
+
 const TEXT_BLOCK_KINDS = new Set(["heading", "paragraph", "list", "quote", "code", "table"]);
 const ASSET_BLOCK_KINDS = new Set(["image", "video", "document", "attachment"]);
 const BLOCK_KINDS = new Set([...TEXT_BLOCK_KINDS, ...ASSET_BLOCK_KINDS, "link"]);

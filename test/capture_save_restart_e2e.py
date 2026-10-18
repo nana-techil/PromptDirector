@@ -3,10 +3,11 @@ import hashlib
 import json
 from playwright.sync_api import expect
 from e2e_support import wait_for_async_condition
-from capture_organization_progress_e2e import main as with_download
+from capture_organization_progress_e2e import emulate_capture_page_window, main as with_download
 
 
 def scenario(run,page,worker,out,video):
+    emulate_capture_page_window(run)
     worker.evaluate('()=>captureFixture.gates.get("video")()')
     wait_for_async_condition(page, "async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task?.status==='committing'", timeout=30000)
     task=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task")

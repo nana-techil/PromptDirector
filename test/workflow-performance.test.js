@@ -39,7 +39,7 @@ test('looking up one project returns only exact matches and never the unrelated 
   f.state.organizerState.collections.push({ id: 'other', name: '项目148', parentId: 'p0', entryIds: [] });
   assert.equal((await f.projects.read({ name: '项目148' })).total, 2, 'Same names must remain ambiguous');
   assert.equal(JSON.parse((await f.projects.read({ path: ['项目0', '项目148'] })).content)[0].id, 'other');
-  await assert.rejects(f.projects.read({ name: '项目148', path: ['项目0', '项目148'] }), /名称|路径/);
+  await assert.rejects(f.projects.read({ name: '项目148', path: ['项目0', '项目148'] }), { code: 'invalid_input' });
 });
 
 test('selection revision tracks source organization and dimensions; unknown dimensions stay unknown', async () => {

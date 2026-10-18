@@ -11,9 +11,9 @@
 .composer-new { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 42px; justify-content: flex-start; border: 1px solid color-mix(in srgb, var(--ink) 18%, var(--line)); border-radius: 10px; padding: 9px 12px; color: var(--ink); background: var(--card); }
 .composer-new:hover:not(:disabled) { background: var(--hover); }
 .composer-new span:first-child { color: var(--accent-ink); font-size: 19px; font-weight: 400; line-height: 1; }
-.composer-nav-section { min-height: 0; overflow: hidden; padding-top: 20px; }
+.composer-nav-section { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; overflow: hidden; padding-top: 20px; }
 .composer-nav-heading { padding: 0 9px 8px; color: var(--muted); font-size: 11px; }
-.composer-session-list { display: grid; align-content: start; gap: 14px; max-height: 100%; overflow: auto; }
+.composer-session-list { display: grid; align-content: start; gap: 14px; min-height: 0; overflow: auto; }
 .composer-session-group { display: grid; gap: 3px; min-width: 0; }
 .composer-session-group-label { margin: 0; padding: 0 9px 4px; color: var(--muted); font-size: 10px; font-weight: 800; }
 .composer-session-group-list { display: grid; gap: 3px; min-width: 0; }
@@ -25,17 +25,16 @@
 .composer-session-item strong, .composer-session-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-session-item strong { font-size: 12px; }
 .composer-session-item small { margin-top: 3px; color: var(--muted); font-size: 10px; }
-.composer-session-menu { position: relative; margin-right: 4px; }
-.composer-session-menu > summary { display: grid; width: 28px; min-height: 28px; place-items: center; opacity: 0; border-radius: 6px; color: var(--muted); cursor: pointer; list-style: none; pointer-events: none; }
-.composer-session-menu > summary::-webkit-details-marker { display: none; }
-.composer-session-item:hover .composer-session-menu > summary,
-.composer-session-item:focus-within .composer-session-menu > summary,
-.composer-session-item[aria-current="true"] .composer-session-menu > summary,
-.composer-session-menu[open] > summary { opacity: 1; pointer-events: auto; }
-.composer-session-menu > summary:hover { color: var(--ink); background: var(--hover); }
-.composer-session-menu-panel { position: absolute; z-index: 18; top: calc(100% + 3px); right: 0; min-width: 84px; border: 1px solid var(--line); border-radius: 7px; padding: 3px; background: var(--card); box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 18%, transparent); }
-.composer-session-menu-panel .quiet-danger { width: 100%; min-height: 30px; border: 0; border-radius: 5px; padding: 5px 8px; text-align: left; }
-.composer-session-menu-panel button:disabled { color: var(--muted); }
+.composer-session-delete { width: 28px; min-width: 28px; min-height: 28px; margin-right: 4px; padding: 5px; border: 0; color: var(--muted); background: transparent; opacity: 0; pointer-events: none; }
+.composer-session-item:hover .composer-session-delete,
+.composer-session-item:has(:focus-visible) .composer-session-delete { opacity: 1; pointer-events: auto; }
+.composer-session-delete:hover:not(:disabled) { color: var(--ui-danger); }
+.composer-session-item:hover .composer-session-delete:disabled,
+.composer-session-item:has(:focus-visible) .composer-session-delete:disabled { opacity: .48; }
+@media (hover: none) {
+  .composer-session-delete { opacity: 1; pointer-events: auto; }
+  .composer-session-delete:disabled { opacity: .48; }
+}
 .composer-session-running { color: var(--accent-ink) !important; }
 
 .composer-chat { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: var(--card); }
@@ -205,11 +204,9 @@
 .composer-options-panel > strong { padding: 2px 2px 4px; font-size: 11px; }
 .composer-option-field { display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 10px; color: var(--muted); font-size: 10px; font-weight: 750; }
 .composer-option-field input, .composer-option-field select { min-height: 34px; border-color: var(--line); padding: 5px 8px; font-size: 11px; }
-.composer-option-toggle { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 2px; color: var(--ink); }
-.composer-option-toggle > span { display: grid; gap: 2px; }
-.composer-option-toggle b { font-size: 11px; }
-.composer-option-toggle small { color: var(--muted); font-size: 9px; line-height: 1.4; }
-.composer-option-toggle input { width: 32px; min-height: 18px; }
+.composer-option-toggles { display: grid; gap: 0; }
+.composer-option-toggle { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 2px; color: var(--ink); font-size: 12px; font-weight: 400; }
+.composer-option-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .composer-generation-settings { display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
 .composer-generation-settings[hidden] { display: none; }
 .composer-generation-settings > strong { font-size: 11px; }

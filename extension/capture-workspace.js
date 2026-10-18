@@ -44,6 +44,19 @@ const SUPPORTED_CAPTURE_MESSAGES = new Set([
   TEXT_CAPTURE_MESSAGE,
   ...VISUAL_CAPTURE_MESSAGES
 ]);
+// Metadata edits are merged into the latest stored draft instead of replacing
+// it, so an out-of-date page cannot roll back newer captured content.
+const CAPTURE_DRAFT_METADATA_FIELDS = [
+  "title",
+  "contentTypeId",
+  "contentTypeExplicit",
+  "customLabels",
+  "customLabelsExplicit",
+  "collectionId",
+  "newCollectionName",
+  "targetCaseId",
+  "targetPartEntryId"
+];
 
 export async function runCaptureTransaction({
   type,
@@ -161,6 +174,8 @@ export function createCaptureWorkspace({
         return captureTab(payload.tab);
       case "persist-draft":
         return persistDraft(payload.draft);
+      case "persist-draft-metadata":
+        return persistDraftMetadata(payload.patch);
       case "update-fragment":
         return updateFragment(payload.fragmentId, payload.text);
       case "remove-fragment":
@@ -189,6 +204,18 @@ export function createCaptureWorkspace({
 
   async function persistDraft(value) {
     const draft = createCaptureDraft(value);
+    await storage.set({ [captureDraftStorageKey]: draft });
+    return { ok: true, message: "采集草稿已更新", draft };
+  }
+
+  async function persistDraftMetadata(patchValue) {
+    const patch = patchValue && typeof patchValue === "object" ? patchValue : {};
+    const current = await readDraft();
+    const next = { ...current };
+    for (const key of CAPTURE_DRAFT_METADATA_FIELDS) {
+      if (Object.prototype.hasOwnProperty.call(patch, key)) next[key] = patch[key];
+    }
+    const draft = createCaptureDraft(next);
     await storage.set({ [captureDraftStorageKey]: draft });
     return { ok: true, message: "采集草稿已更新", draft };
   }

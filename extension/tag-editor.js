@@ -2,6 +2,7 @@ import { t } from "./i18n.js";
 import { createUiIcon } from "./ui-icons.js";
 import { installPanelDrag, placePanelInViewport, createPanelDragHandle } from './panel-drag.js';
 import { savedPanelPosition, savePanelPosition } from './panel-position.js';
+import { decorateCustomTag } from './tag-colors.js';
 
 export function normalizeTagValue(value) {
   return String(value ?? "").normalize("NFKC")
@@ -51,7 +52,7 @@ export function createTagEditor(options = {}) {
   add.textContent = options.addLabel || t("添加");
   row.append(input, add);
   root.append(chips, row);
-  let toggle;
+  let toggle, setOpen;
   if (options.compact) {
     root.classList.add('tag-editor-compact'); row.hidden = true;
     toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'button-secondary prompt-icon-action';
@@ -70,7 +71,7 @@ export function createTagEditor(options = {}) {
       setPosition(position) { intent++; return placePanelInViewport(row, position); },
       onEnd(position) { void savePanelPosition('tagEditor', row, position).catch(reportPositionError); }
     });
-    const open = async value => {
+    const open = setOpen = async value => {
       const currentIntent = ++intent;
       row.hidden = !value; toggle.setAttribute('aria-expanded', String(value));
       if (value) {
@@ -98,10 +99,12 @@ export function createTagEditor(options = {}) {
       text.textContent = value;
       const remove = document.createElement("button");
       remove.type = "button";
+      remove.className = "tag-remove-button";
       remove.textContent = "×";
       remove.setAttribute("aria-label", t("删除标签：{value}", { value }));
       remove.addEventListener("click", () => void applyValues(values.filter((item) => item !== value), remove));
       chip.append(text, remove);
+      decorateCustomTag(chip, value, { editable: true });
       return chip;
     }));
   };
@@ -147,6 +150,7 @@ export function createTagEditor(options = {}) {
   const commit = async () => {
     const additions = normalizeTagValues(splitTagInput(input.value));
     if (!additions.length) {
+      if (setOpen) { await setOpen(false); return true; }
       input.focus();
       return false;
     }
@@ -186,7 +190,7 @@ export function createTagEditor(options = {}) {
       input.disabled = Boolean(disabled);
       add.disabled = Boolean(disabled);
       if (toggle) toggle.disabled = Boolean(disabled);
-      chips.querySelectorAll("button").forEach((button) => { button.disabled = Boolean(disabled); });
+      chips.querySelectorAll("button, input").forEach((button) => { button.disabled = Boolean(disabled); });
     },
     commit,
     async flush() {

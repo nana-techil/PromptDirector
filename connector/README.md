@@ -6,9 +6,11 @@
 
 ## 当前参考与引用
 
+视频原件采集使用独立的[视频组件](../docs/VIDEO_COMPONENT.md)，在采集侧栏按提示安装即可，不需要 Agent 配对或预装开发工具。组件安装包自带解析和音画合并工具，不修改 Agent 的注册、配对或配置。
+
 在案例库使用多选选择参考，选择自动保存；外部Agent直接调用 `read_workspace_content(part=selection)` 读取完整参考，首次第一页可省略版本，续页携带返回的 `revision`。只需概览时使用 `read_workspace_context`。无需进入创作台、导出或发送参考；已有创作台可通过显式页面上下文接续。内部模型API不是外部调用前置。
 
-`resolve_reference` 接受名称链接中的 `#pd-reference=…` 片段，或 `promptdirector://reference?v=1&library=…&case=…&asset=…`，校验身份后再调用现有原文、结构和媒体接口，无需访问链接网页。引用身份不包含密钥；错误库或错误媒体归属明确失败。此接口可用不等于各宿主拖拽已通过，跨应用接收按实际验收记录判断。`show_case` 打开独立详情页面；返回opening后需读页面核对显示结果。
+`resolve_reference` 接受名称链接中的 `#pd-reference=…` 片段，或 `promptdirector://reference?v=1&library=…&case=…&asset=…`，校验身份后再调用现有原文、结构和媒体接口，无需访问链接网页。引用身份不包含密钥；错误库或错误媒体归属明确失败。此接口可用不等于各宿主拖拽已通过，跨应用接收按实际验收记录判断。`open_workspace` 打开或接续案例库/创作台；`show_case` 打开独立详情页面。两者等待现场可读后返回ready；opening表示尚未完成，按tabId继续读取。人工选择和草稿保留。
 
 卡片拖出使用案例名称链接，指向整个案例；详情图片及本地视频使用原件名称链接，指向具体素材。有本地原件的图片、视频、文档及其他附件同时携带原件文件拖出数据；视频取原视频，文档取原文档，不把预览封面作为原件。宿主须保留链接或纯文字中的引用才能精确定位；只收到名称时，同名搜索不能证明拖拽身份已传递。插件页面无有效资料库身份时拒绝拖出，普通阅读仍可继续。
 
@@ -95,7 +97,8 @@ Agent 根据任务需要与候选质量选择 limit、判断是否继续；证�
 | `wait_workspace_changes` | 等待并读取有序变化，过期明确重置 |
 | `control_workspace` | 在同一页面可见定位、选择和审片控制 |
 | `read_review_media` | 读取未入库临时样片原件并核对摘要 |
-| `show_case` | 打开案例详情，随后读取页面核对是否实际显示 |
+| `show_case` | 打开案例详情，等待实际现场可读 |
+| `open_workspace` | 打开或接续案例库／创作台，等待可读 |
 | `describe_case_query` | 发现共享查询字段、库内实际互动指标，以及类型、关系与缺失语义 |
 | `search_cases` | 全文或字段组合条件、选列、多字段排序、分组统计、指定参考相似检索和稳定分页 |
 | `read_case` | 分页读取正文、文档提取文字、原始提示词、分析文字、时间笔记和媒体提示词关系 |
@@ -105,6 +108,8 @@ Agent 根据任务需要与候选质量选择 limit、判断是否继续；证�
 | `read_skill_file` | 按清单读取当前生成文件或原始包文件，支持文字与二进制分块 |
 | `download_skill_file` | 将指定 Skill 文件完整保存到 Agent 本机，核对摘要；不执行脚本 |
 | `capture_url` | 插件打开独立 Chrome 标签并调用现有采集流程 |
+| `prepare_capture` / `read_capture` | 保留可接续预览，分页读取识别结果及网页正文、链接、媒体事实 |
+| `update_capture` / `save_capture` | 补充漏采资料、明确选择后沿插件原保存管线入库；旧版本拒绝覆盖 |
 | `list_analysis_batches` | 按要求关键字或状态找回当前资料库的外部分析批次 |
 | `submit_analysis_results` | 一页结果共用一次保存，逐项保留成功与失败 |
 | `manage_analysis_batch` | 分批登记分析输入，封口、取消、恢复接收及失败项重试；不调用模型 |
@@ -121,9 +126,13 @@ Agent 根据任务需要与候选质量选择 limit、判断是否继续；证�
 | `edit_case` | 按字段编辑标题、正文段落、来源、标签、逐媒体提示词和时间笔记 |
 | `organize_case` | 选定媒体拆为新案例、转移到另一案例、移动或独立复制到已有项目 |
 
-完整名称有 `promptdirector_` 前缀。创作由 Agent 完成，这些工具不额外调用模型。目前不包含删除或全库自动分析。工具是否可用以当前连接器的工具列表及插件 `status` 回执为准；新增编辑能力需要同时更新两端。
+完整名称有 `promptdirector_` 前缀。创作由 Agent 完成，这些工具不额外调用模型。可恢复删除仅用于用户明确指定的对象；不提供永久删除或自动全库分析。工具是否可用以当前连接器的工具列表及插件 `status` 回执为准；新增编辑能力需要同时更新两端。
 
 原件下载根据 Chrome 原生消息的传输方向和当前工作内存分块，保留完整文件和摘要校验。回存相同的本机图片、视频或音频时，扩展可复用经实际字节校验的库内原件，避免重复上传和存储；有变化的文件仍走正常上传。同次附件即使内容相同，也保留不同逐文件提示词所需的身份。更新后须重载扩展并重新连接 Agent 的 MCP 服务，已启动的服务仍可能使用旧代码。
+
+连接器下载目录保存可重新取得的临时副本：首次接收验证完整摘要，同一进程内文件身份、大小和修改时间未变时复用验证结果，但每次仍向当前资料库核对原件。已登记且连续闲置7天的副本按现有临时资源政策回收；正在传输、被编辑、未登记的历史文件及遗留占用标记不自动删除。这是闲置生命周期，不是资料库容量限制；需要长期使用的导出请保存到自己的工作目录。
+
+连接等待沿既有30秒预算；写入及原件读取允许两个处理阶段，最长60秒，变化等待另加请求的等待时长。写入超时表示完成状态未知，不会自动重新提交；先用原请求编号核对，避免重复保存。
 
 外部批量分析：分析由宿主完成，插件接收结果。先读案例版本、实际需要的原件；用 `manage_analysis_batch(action:"create")` 登记 `instruction` 与 `items:[{caseId,expectedRevision,assets:[]}]`，返回的 `batchId` 就是创建请求编号。文字分析 `assets=[]`；视觉分析逐项提供 `{assetId,sha256,coverage}`，摘要来自 `read_media`，coverage 如实写全片、抽帧或具体范围。大清单可用 `add` 分批登记，结束用 `seal`；同一批次每个案例登记一次，多个素材放该案例的 assets。
 
@@ -239,7 +248,7 @@ npm run check
 
 ## Release 安装包
 
-从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.4.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.4.0 支持查看、编辑、整理、参考交接及CLI，并新增可恢复删除、未入库文字相似检索和工作页面截图；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
+从 [Agent 连接器下载页](https://github.com/wchao6891/PromptDirector/releases/tag/agent-connector-v0.5.0) 下载并解压 `PromptDirector-版本号-Agent-Connector.zip`，让 Agent 在解压后的文件夹按 `INSTALL.md` 执行安装与连接检查。包中 `extension/manifest.json` 用于校验插件身份，`case-operation-specs.js` 与 `project-operation-specs.js` 为共享工具定义；实际扩展请使用`PromptDirector-版本号.zip`升级。连接器 0.5.0 支持查看、编辑、整理、参考交接及CLI，并新增可恢复删除、未入库文字相似检索和工作页面截图；安装包不包含 Node.js；Agent 会按统一安装说明检查并准备兼容运行时。
 
 读取与保存的正常路径：同次固定选择并读取完整内容 → 按名称/路径定位项目 → 保存。选材 `originalText` 完整保留一次；`referenceTextParts` 按序包含字符串及指向 `originalText` 或 `referenceSources[index].text` 的引用，来源 `textSource=originalText` 同理。`media` 返回所属案例、原件角色、封面编号与已知尺寸/时长；未知值不伪造。来源版本覆盖案例和组织关系，分页仍拒绝变化。
 
@@ -254,3 +263,13 @@ npm run check
 连接握手提供简短交付与调用指引，工具提供可读标题，成功结果数据标注为供助手使用；宿主是否折叠工具详情由宿主决定。默认不逐步播报工具、编号或内部参数；失败与必要决策仍需说明，完整提示词、原文和创作内容不缩短。用户明确要求诊断时才展开证据。
 
 `read_case_details` 同时需要多个部分时可传 `parts:["overview","source","media"]`，返回一个共同revision和分页JSON对象。与单部分`part`互斥；续页保持parts与expectedRevision，完整拼接后再解析。服务在一次资料读取中构造所需部分，不重复读取整库或计算未请求的分析覆盖。只读一个部分时继续用part。找当前案例新截图优先更新media，按derivedFromAssetId/frameTimeMs/capturedAt定位，再read_media；不扫描本机目录。
+
+检索由调用 Agent 生成跨语言同义表达，至少覆盖 `status.searchGuidance` 的用户系统语言和英语，用 `query`／`alternatives` 一次合并。多个词为交集，同义查询为并集；无需插件调用付费翻译 API，也不要求用户自己翻译。
+
+### 原文定位与批量采集任务
+
+采集完整性：summary.platform给出实际适配能力，candidates[].supplements列出评论来源与partial；用read_capture(part=supplement,candidateId,supplementId)调用插件评论展开采集器，按返回selector用textSources保存冻结全文。partial仍未完整，保存后的originalVerification是实际入库读回结果；duplicate不能证明新增全文已保存。
+
+`read_capture(part="page")`包含当前选区、可见代码区和对话框的定位事实。`read_capture(part="source", selector)`冻结指定网页区域的完整原文，返回新的revision；`update_capture`的候选可用`textSources:[{selector,target:"text"或"prompt"}]`直接采用原文，包括原始代码空白。Agent分页读取不意味着原文被截短，未读完不能称全文已读。旧后台的`status.captureReadParts`没有`source`时，不假定新能力可用。
+
+`update_capture.task`可登记`objective/outcome/candidateIds/state`，批量保存须选中全部声明的实际候选；缺少具体案例编号或对应保存回执时预览仍保留。`create_project`直接返回持久项目回执，不需要轮询`get_task`。媒体可提供网页`url`或已准备好原件的`localTransferId`，插件验证文件身份和类型；上传截图仅用于对话时不会自动保存。内部采集助手和外部MCP调用沿同一预览及入库规则执行。

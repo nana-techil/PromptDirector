@@ -790,3 +790,23 @@ test('an empty indexed library exposes an empty readonly browse directory withou
   assert.equal(Object.isFrozen(frame.stored.browseEntries),true);
   assert.equal(run.gets.flat().some(key=>key.startsWith('case:')),false);
 });
+
+test('batch fingerprint updates read only requested records and publish one atomic revision',async()=>{
+ const run=memory(legacy(['a','b','c']));await run.storage.set({entries:cases('a','b','c')});
+ run.gets.length=0;run.sets.length=0;
+ await run.storage.updateCases(['a','b'],current=>({...current,verified:true}));
+ assert.equal(run.sets.length,1);
+ assert.equal(run.gets.some(keys=>keys.includes(caseRecordKey('c'))||keys.includes('entries')||keys.includes(LEGACY_ENTRIES_KEY)),false);
+ const saved=(await run.storage.get('entries')).entries;
+ assert.deepEqual(saved.map(e=>e.verified),[true,true,undefined]);
+ run.backend.beforeSet=()=>{throw new Error('disk failure')};
+ await assert.rejects(run.storage.updateCases(['a','b'],current=>({...current,text:'lost'})),/disk failure/);
+ assert.deepEqual((await run.storage.get('entries')).entries,saved);
+});
+test('batch skips removed cases without reviving orphan records or erasing another edit',async()=>{
+ const run=memory(legacy(['a','b']));await run.storage.set({entries:cases('a')});
+ run.data[caseRecordKey('b')]=cases('b')[0];
+ await run.storage.updateCase('a',e=>({...e,text:'Newest'}));
+ await run.storage.updateCases(['a','b'],current=>current?({...current,verified:true}):null);
+ assert.deepEqual((await run.storage.get('entries')).entries,[{...cases('a')[0],text:'Newest',verified:true}]);
+});

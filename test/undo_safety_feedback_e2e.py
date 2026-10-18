@@ -5,7 +5,7 @@ import re
 import tempfile
 from pathlib import Path
 from playwright.sync_api import expect
-from e2e_support import base_entry, extension_session
+from e2e_support import apply_retained_recovery, base_entry, extension_session
 
 
 def state(page):
@@ -28,19 +28,17 @@ def main():
         page.locator('[data-manager-tab="vocabulary"]').click()
         page.locator('#new-node-name').fill('撤回验收标签')
         page.locator('#create-node-form button').click()
-        expect(page.locator('#facet-recovery-actions')).to_have_attribute('open', '')
+        expect(page.locator('#facet-recovery-actions, #undo-facet')).to_have_count(0)
         expect(page.locator('#manager-feedback')).to_contain_text('已创建')
         assert not page.locator('#feedback').inner_text(), '标签管理反馈不能同时出现两次'
         page.mouse.move(1200, 800)
         page.locator('#new-node-name').focus()
         page.clock.fast_forward(31000)
-        expect(page.locator('#facet-recovery-actions')).not_to_have_attribute('open', '')
+        expect(page.locator('#facet-recovery-actions')).to_have_count(0)
         expect(page.locator('#manager-feedback')).to_be_hidden()
-        page.locator('#facet-recovery-actions summary').click()
-        # Add after the historical snapshot, then use the actual undo button.
+        # Add after the historical snapshot, then exercise the retained guarded service.
         setup.evaluate("async entry => {const s=await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'));await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().set({entries:[...s.entries,entry]}));}", later)
-        page.locator('#undo-facet').click()
-        expect(page.locator('#manager-feedback')).to_contain_text('已撤回')
+        apply_retained_recovery(setup, 'UNDO_FACET_UPDATE')
         current = state(setup)
         assert {entry['id'] for entry in current['entries']} == {'first', 'later'}, current
         assert next(entry for entry in current['entries'] if entry['id']=='later')['text'] == later['text']
@@ -60,27 +58,24 @@ def main():
         page.locator('#manager-close').click()
         page.locator('#manage-facets').click()
         page.locator('[data-manager-tab="vocabulary"]').click()
-        expect(page.locator('#facet-recovery-actions')).not_to_have_attribute('open', '')
+        expect(page.locator('#facet-recovery-actions')).to_have_count(0)
         screenshot = Path(tempfile.gettempdir())/'pd-undo-tags.png'
         page.screenshot(path=str(screenshot))
         screenshots.append(str(screenshot))
         page.locator('#manager-close').click()
-        # A previous exact recovery point remains reachable, initially folded.
+        # Recovery is offered only inside the restore workflow, never beside ZIP import.
         setup.evaluate("""async () => {
           const {createLibraryReplacementRecoveryPoint}=await import('./library-recovery-point.js');
           const saved=await chrome.runtime.sendMessage({type:'GET_FOLDER_BACKUP_STATE'});
           await chrome.storage.local.set({libraryReplacementRecoveryPoint:createLibraryReplacementRecoveryPoint(saved)});
         }""")
         page.locator('#open-settings').click()
-        expect(page.locator('#library-recovery-actions')).to_be_visible()
-        expect(page.locator('#restore-library-replacement-point')).to_be_hidden()
-        page.locator('#library-recovery-actions summary').click()
+        expect(page.locator('#library-recovery-actions')).to_have_count(0)
+        expect(page.locator('#restore-library-replacement-point')).to_have_count(0)
+        page.locator('#restore-folder-backup').click()
         expect(page.locator('#restore-library-replacement-point')).to_be_visible()
-        page.locator('#sync-settings summary').click()
-        page.locator('#sync-now').is_visible()  # Inspect without connecting anything.
-        page.locator('#settings-close').click()
-        page.locator('#open-settings').click()
-        expect(page.locator('#restore-library-replacement-point')).to_be_hidden()
+        page.keyboard.press('Escape')
+        expect(page.locator('#restore-library-replacement-point')).to_have_count(0)
         screenshot = Path(tempfile.gettempdir())/'pd-undo-settings.png'
         page.screenshot(path=str(screenshot))
         screenshots.append(str(screenshot))
@@ -147,11 +142,8 @@ def main():
         expect(task_page.locator('body')).to_have_attribute('data-library-state','ready')
         task_page.locator('#open-settings').click()
         task_page.locator('[data-settings-tab="tasks"]').click()
-        expect(task_page.locator('#analysis-recovery-actions')).to_be_visible()
-        expect(task_page.locator('#undo-analysis-batch')).to_be_hidden()
-        task_page.locator('#analysis-recovery-actions summary').click()
-        task_page.locator('#undo-analysis-batch').click()
-        expect(task_page.locator('#feedback')).to_contain_text('已撤回本次批量分析')
+        expect(task_page.locator('#analysis-recovery-actions, #undo-analysis-batch')).to_have_count(0)
+        apply_retained_recovery(setup, 'UNDO_ANALYSIS_BATCH', 'batch:undo-proof')
         after_batch=state(setup)
         assert [entry['id'] for entry in after_batch['entries']]==batch['before']
         assert next(entry for entry in after_batch['entries'] if entry['id']=='later')==batch['later']
@@ -175,7 +167,7 @@ def main():
         assert image['undo']['ok'] and len(image['ids'])==3 and image['original']=='original-media',image
         assert image['entry']['text']=='用户后来编辑',image
     print(json.dumps({'tagUndoRetainsLaterCase':True,'errorExpires':True,'recoveryRemainsReachable':True,
-      'saveUndoTrashAndOriginalReadback':True,'laterEditRejected':True,'staleProjectUndoRejected':True,'batchUndoUiReadback':True,'imageUndoReadback':True,'screenshots':screenshots},ensure_ascii=False))
+      'saveUndoTrashAndOriginalReadback':True,'laterEditRejected':True,'staleProjectUndoRejected':True,'retainedBatchRecoveryReadback':True,'imageUndoReadback':True,'screenshots':screenshots},ensure_ascii=False))
 
 if __name__ == '__main__':
     main()

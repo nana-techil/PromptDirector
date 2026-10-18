@@ -143,7 +143,70 @@ def main():
               } finally {URL.revokeObjectURL(archive.url);}
             }''')
             assert backup['assets'] == 6 and backup['versions'] == 4, backup
+            internal_session = page.evaluate('''async () => {
+              const {createComposerSession}=await import('./composer.js');
+              const {createLocalComposerLibraryTools}=await import('./composer-library-host.js');
+              const {getLibraryStorage}=await import('./library-storage.js');
+              const session=createComposerSession({id:'inside-skill',libraryRetrievalEnabled:false,
+                messages:[{id:'explicit-request',role:'user',content:'保存整包Skill，然后按指定版本恢复'}]});
+              await getLibraryStorage().set({composerSessions:[session]});
+              globalThis.insideSkillTools=createLocalComposerLibraryTools({session,vision:false});
+              return session.id;
+            }''')
+
+            def inside(name, args, host=False):
+                if host:
+                    result = page.evaluate('''async ([sessionId,name,args]) => {
+                      const result=await chrome.runtime.sendMessage({type:'COMPOSER_LIBRARY_HOST',operation:'execute',
+                        sessionId,userMessageId:'explicit-request',input:{name,args,callId:'host-'+name}});
+                      if(!result.ok)throw Error(result.message);
+                      return result.data;
+                    }''', [internal_session, name, args])
+                else:
+                    result = page.evaluate('''async ([name,args]) => insideSkillTools.execute(name,args,{callId:'inside-'+name})''', [name, args])
+                return result['data']
+
+            package_a = {
+                'SKILL.md': b'---\nname: internal-package\ndescription: Internal workflow\n---\nOriginal internal method\n',
+                'scripts/tool.py': 'print("保留原始脚本")\n'.encode(),
+                'scripts/__init__.py': b'',
+                'assets/binary.bin': bytes(range(256)) * 800,
+                'references/source.md': '完整提示词与来源，不截断。\n'.encode()
+            }
+            inline = [{'path': path, 'encoding': 'base64', 'content': base64.b64encode(content).decode()}
+                      for path, content in package_a.items()]
+            internal_args = {'requestId': 'inside-package-save', 'files': inline}
+            internal_saved = inside('save_skill', internal_args)
+            assert internal_saved['ok'] and internal_saved['fileCount'] == 5, internal_saved
+            assert inside('save_skill', internal_args, host=True)['replayed']
+            internal_updated = inside('save_skill', {'requestId': 'inside-text-update', 'skillId': internal_saved['skillId'],
+                'expectedRevision': internal_saved['revision'], 'skillMarkdown': 'Later user text'}, host=True)
+            assert internal_updated['ok'], internal_updated
+            conflict = inside('save_skill', {'requestId': 'inside-stale', 'skillId': internal_saved['skillId'],
+                'expectedRevision': internal_saved['revision'], 'skillMarkdown': 'Must not overwrite'})
+            assert 'error' in conflict and not conflict.get('ok'), conflict
+            internal_restored = inside('restore_skill', {'requestId': 'inside-complete-restore', 'skillId': internal_saved['skillId'],
+                'expectedRevision': internal_updated['revision'], 'versionId': internal_saved['versionId']}, host=True)
+            assert internal_restored['ok'] and internal_restored['restoredScope'] == 'complete', internal_restored
+            for path, expected in package_a.items():
+                args = {'skillId': internal_saved['skillId'], 'expectedRevision': internal_restored['revision'],
+                        'source': 'package', 'path': path, 'encoding': 'binary'}
+                data = b''
+                while True:
+                    part = inside('read_skill_file', args)
+                    data += base64.b64decode(part['data'])
+                    if part['nextOffset'] is None:
+                        break
+                    args.update(offset=part['nextOffset'], expectedHash=part['sha256'])
+                assert data == expected, path
+            page.reload()
+            persisted = call('read_skill', {'skillId': internal_saved['skillId']})
+            assert persisted['revision'] == internal_restored['revision'] and persisted['content'] == 'Original internal method'
+            rejected = page.evaluate("""async()=>chrome.runtime.sendMessage({type:'COMPOSER_SKILL_TRANSFER',operation:'begin_transfer',
+              input:{id:'wrong-purpose',purpose:'video'}})""")
+            assert not rejected['ok'], rejected
             print('PASS: shared Skill reads and complete writes, retained script versions, binary/empty files, retry receipt, restore/reload, actual ZIP backup with all historical bytes; isolated fixture only')
+            print('PASS: internal complete Skill package save/update/restore, direct and worker-host tools, chunked binary/empty script readback, retry and stale-edit rejection; no script execution')
 
 
 if __name__ == '__main__':

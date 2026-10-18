@@ -2,9 +2,9 @@ import { ARTICLE_TEXT_KINDS } from "./article-edit.js";
 import { preserveElementPosition } from "./detail-position.js";
 import { renderArticleBlockText } from "./article-text-view.js";
 import { articleBlockIsMarkdown } from "./article-document.js";
-import { createUiIcon } from "./ui-icons.js";
+import { promptIconButton } from "./prompt-panel.js";
 
-export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, contextParts = [], t }) {
+export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, contextParts = [], markdownOptions, t }) {
   const toolbar = document.createElement("div");
   toolbar.className = "article-editor-toolbar";
   const context = document.createElement("span");
@@ -35,7 +35,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
     save.hidden = cancel.hidden = !editing;
     for (const node of textNodes()) {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
-      if (block?.kind === "list" || articleBlockIsMarkdown(block, entry)) renderArticleBlockText(node, block, { editing, entry });
+      if (block?.kind === "list" || articleBlockIsMarkdown(block, entry)) renderArticleBlockText(node, block, { editing, entry, markdownOptions });
       const markdownEditor = node.querySelector(".article-markdown-editor");
       node.contentEditable = editing && !markdownEditor ? "plaintext-only" : "false";
       if (markdownEditor) markdownEditor.setAttribute("aria-label", t("编辑正文段落"));
@@ -66,7 +66,7 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
   const resetText = () => {
     for (const node of textNodes()) {
       const block = blocks.find(item => item.id === node.dataset.articleBlockId);
-      if (block) renderArticleBlockText(node, block, { editing: reader.dataset.editing === "true", entry });
+      if (block) renderArticleBlockText(node, block, { editing: reader.dataset.editing === "true", entry, markdownOptions });
       else node.remove();
     }
     reader.dataset.dirty = "false";
@@ -110,10 +110,6 @@ export function attachArticleEditor(reader, entry, { onSave, onError, onCopy, co
     return node;
   }
   function iconButton(label, icon) {
-    const node = button(label, "button-secondary prompt-icon-action");
-    node.title = t(label);
-    node.setAttribute("aria-label", t(label));
-    node.replaceChildren(createUiIcon(icon));
-    return node;
+    return promptIconButton(t(label), icon);
   }
 }

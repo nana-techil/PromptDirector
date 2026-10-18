@@ -74,7 +74,7 @@ test("list headings expose sorting without an extra toolbar dropdown", () => {
 
 test("saving project membership sends only the toggled cases so concurrent additions and manual order survive", () => {
   const save = source.slice(source.indexOf("async function saveProjectSelection"), source.indexOf("async function shareProjectCollection"));
-  const enter = source.slice(source.indexOf("async function enterProjectSelection"), source.indexOf("async function enterVisionSelection"));
+  const enter = source.slice(source.indexOf("async function enterProjectSelection"), source.indexOf("async function enterSelectMode"));
   // The baseline is what the user saw when entering; a stale whole-list replace
   // would silently drop a case an agent or another tab added meanwhile.
   assert.match(enter, /projectSelectionBaseline = \[\.\.\.selectedCaseIds\]/);

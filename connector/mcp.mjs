@@ -1,5 +1,6 @@
 import { AGENT_INSTRUCTIONS, TOOL_TITLES } from './agent-guidance.mjs';
 import { WORKSPACE_OPERATION_SPECS } from '../extension/workspace-operation-specs.js';
+import { CAPTURE_OPERATION_SPECS } from '../extension/capture-operation-specs.js';
 import {ANALYSIS_BATCH_SPECS} from '../extension/analysis-batch-specs.js';
 import { AGENT_CASE_ACTION_SPECS } from '../extension/agent-case-action-specs.js';
 import { WORKSPACE_SCREENSHOT_SPEC } from '../extension/workspace-screenshot-specs.js';
@@ -10,7 +11,8 @@ import { isMain } from "./is-main.mjs";
 import { McpServer } from '@modelcontextprotocol/server';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { z } from 'zod';
-import { callExtension, CONNECTOR_TIMEOUT_MS } from './bridge-client.mjs';
+import { callExtension } from './bridge-client.mjs';
+import { TASK_WAIT_MS } from './request-policy.mjs';
 import { receiveMedia, receiveWorkspaceScreenshot, stageFiles } from './transfers.mjs';
 import { CASE_OPERATION_SPECS, CASE_SEARCH_PROPERTIES } from '../extension/case-operation-specs.js';
 import { CASE_QUERY_PROPERTIES, CASE_QUERY_DESCRIPTION } from '../extension/case-query-specs.js';
@@ -46,7 +48,7 @@ export function createServer(callBridge = callExtension) {
   });
   function tool(name, description, inputSchema, readonly, handler, destructive = false) {
     server.registerTool(`promptdirector_${name}`, { title: TOOL_TITLES[name], description, inputSchema,
-      annotations: { readOnlyHint: readonly, destructiveHint: destructive, idempotentHint: name !== 'show_case', openWorldHint: name === 'capture_url' } },
+      annotations: { readOnlyHint: readonly, destructiveHint: destructive, idempotentHint: name !== 'show_case', openWorldHint: ['capture_url', 'prepare_capture', 'save_capture'].includes(name) } },
     async input => {
       try {
         const result = await handler(input).catch(error => {
@@ -58,14 +60,30 @@ export function createServer(callBridge = callExtension) {
           return { content: [{ type: 'text', text: JSON.stringify(metadata), annotations: { audience: ['assistant'] } },
             { type: 'image', ...image }] };
         }
+        if (name === 'read_capture' && ['screenshot', 'image'].includes(result.part) && /^data:image\/(?:png|jpeg|webp|gif|avif);base64,[A-Za-z0-9+/=]+$/u.test(result.dataUrl || '')) {
+          const { dataUrl, ...metadata } = result;
+          return { content: [{ type: 'text', text: JSON.stringify(metadata), annotations: { audience: ['assistant'] } },
+            { type: 'image', data: dataUrl.split(',')[1], mimeType: dataUrl.slice(5, dataUrl.indexOf(';')) }] };
+        }
         return { content: [{ type: 'text', text: JSON.stringify(result), annotations: { audience: ['assistant'] } }] }; }
       catch (error) { return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code || 'operation_failed', message: error.message }) }] }; }
+    });
+  }
+  for (const spec of CAPTURE_OPERATION_SPECS) {
+    tool(spec.name, spec.description, z.fromJSONSchema(spec.parameters), spec.name === 'read_capture', async input => {
+      const status = await requireStatus(current => current.capabilities?.includes(spec.name));
+      if (!status.capabilities?.includes(spec.name)) throw Object.assign(new Error('插件尚未加载可接续采集工具，请保存未完成内容后重载扩展。'), { code: 'unsupported_capture_operation' });
+      const result = await call(spec.name, input);
+      if (!['queued', 'running'].includes(result.state)) return result;
+      try { return await call('get_task', { requestId: input.requestId, waitMs: TASK_WAIT_MS }); }
+      catch (error) { return { ...result, waitError: { code: error.code || 'operation_failed', message: error.message },
+        next: '完成状态尚未确认，请用原请求编号查询get_task，不要新建重复请求。' }; }
     });
   }
   for (const spec of WORKSPACE_OPERATION_SPECS) {
     const parameters = spec.name === 'control_workspace' ? { ...spec.parameters, properties: { ...spec.parameters.properties,
       file: { type: 'object', properties: { path: { type: 'string', minLength: 1 }, mimeType: { type: 'string' } }, required: ['path'], additionalProperties: false } } } : spec.name === 'read_review_media' ? { ...spec.parameters, properties: { tabId: spec.parameters.properties.tabId, temporaryId: spec.parameters.properties.temporaryId } } : spec.parameters;
-    tool(spec.name, spec.description + (spec.name === 'control_workspace' ? ' open_temporary可用file传入明确指定的本机图片/视频路径，不先保存案例；上传后仍校验页面版本，过期不会抢回现场。临时上传沿既有临时文件生命周期整理。' : spec.name === 'read_review_media' ? ' MCP连接器自动读完原件并返回可供模型读取的本机文件路径。' : ''), z.fromJSONSchema(parameters), spec.name !== 'control_workspace', async input => {
+    tool(spec.name, spec.description + (spec.name === 'control_workspace' ? ' open_temporary可用file传入明确指定的本机图片/视频路径，不先保存案例；上传后仍校验页面版本，过期不会抢回现场。临时上传沿既有临时文件生命周期整理。' : spec.name === 'read_review_media' ? ' MCP连接器自动读完原件并返回可供模型读取的本机文件路径。' : ''), z.fromJSONSchema(parameters), !['control_workspace', 'open_workspace'].includes(spec.name), async input => {
       if (spec.name === 'read_review_media') return receiveMedia({ ...input, caseId: `temporary:${input.tabId}`, assetId: input.temporaryId },
         (_operation, chunk) => call('read_review_media', { tabId: input.tabId, temporaryId: input.temporaryId, offset: chunk.offset || 0, ...(input.length ? { length: input.length } : {}) }));
       if (input.file) {
@@ -121,7 +139,7 @@ export function createServer(callBridge = callExtension) {
       return call('read_workspace_content', { ...input, expectedRevision: context.revision });
     }
   });
-  tool('show_case', '在插件新页面打开指定案例详情，保留原页面选择和未保存编辑。返回 opening 只表示页面已打开，随后用 read_workspace_context(tabId) 核对 viewedCaseId，才可报告详情已显示。', {
+  tool('show_case', '在插件新页面打开指定案例详情，保留原页面选择和未保存编辑，并等待详情现场真正可读。ready且viewedCaseId相符表示已显示；opening表示加载尚未完成，按返回tabId继续读取。', {
     caseId: z.string().min(1)
   }, false, input => call('show_case', input));
   for (const spec of [...CASE_OPERATION_SPECS, ...PROJECT_OPERATION_SPECS, ...SKILL_OPERATION_SPECS]) {
@@ -189,8 +207,8 @@ export function createServer(callBridge = callExtension) {
     const file = await receiveMedia(input, (_operation, args) => call('read_skill_file', { ...args, encoding: 'binary' }));
     return { ...file, skillId: input.skillId, revision: input.expectedRevision, source: input.source, relativePath: input.path };
   });
-  tool('capture_url', '交给 PromptDirector 自己采集网页，在 Chrome 打开独立标签。返回任务编号后必须查询 get_task，只有最终回执才能报告入库结果。重试沿用相同 requestId。', {
-    requestId, url: z.url(), project, generationPromptChoices: z.record(z.string(), z.enum(['overwrite', 'skip'])).optional()
+  tool('capture_url', '交给 PromptDirector 自己采集网页，在 Chrome 打开独立标签，复用通用与站点采集路径。mode=whole（默认）按整页采集，loaded采集当前已加载内容；maxCandidates是此次任务的候选数量预算，可按用户目标指定，默认沿插件采集预算，不是资料库容量上限。采集不调用付费模型。返回任务编号后必须查询 get_task，只有最终回执才能报告入库结果；partial列明未完成内容，登录/权限/限流失败不能当空页面或入库成功。重试沿用相同 requestId。', {
+    requestId, url: z.url(), project, mode: z.enum(['whole', 'loaded']).optional(), maxCandidates: z.number().int().positive().optional(), generationPromptChoices: z.record(z.string(), z.enum(['overwrite', 'skip'])).optional()
   }, false, input => call('capture', input));
   tool('save_material', '将正文、本机附件或创作结果保存到资料库。保留来源案例。project 用 read_projects 查到的 ID；新项目先 create_project。projectRevision 固定已读要求；sourceReferences 精确记录已读成员案例版本、素材与毫秒片段。previousCreation 仅在用户要求另存版本时指定，旧成果保留。files 必须是明确选定的绝对文件路径；不扫描目录。bodyFile 可指定正文文档，须同时列入 files。正文中的图片引用不会自动下载。连接器等待短任务并返回终态；仅 queued/running 或 waitError 才继续用原 requestId 查询 get_task。completed 时核对 results 的正文摘要、项目、来源与 revision；replayed 为历史回执，须按需读回确认当前存在。', {
     ...Object.fromEntries(Object.entries(MATERIAL_PROPERTIES).map(([key, schema]) => [key, z.fromJSONSchema(schema).optional()])),
@@ -211,9 +229,9 @@ export function createServer(callBridge = callExtension) {
     const staged = await stageFiles(files, bodyFile, input.requestId, call);
     const task = await call('save_material', { ...material, ...staged });
     if (!['queued', 'running'].includes(task.state)) return task;
-    // Half the existing bridge timeout leaves room for submission and transport.
+    // Wait within the extension's declared long-poll budget plus transport time.
     // Wait on the original persisted task; never resubmit after a lost receipt.
-    try { return await call('get_task', { requestId: input.requestId, waitMs: CONNECTOR_TIMEOUT_MS / 2 }); }
+    try { return await call('get_task', { requestId: input.requestId, waitMs: TASK_WAIT_MS }); }
     catch (error) { return { ...task, waitError: { code: error.code || 'operation_failed', message: error.message },
       next: '完成状态尚未确认；用原 requestId 查询 get_task，不要新建保存请求。' }; }
   });

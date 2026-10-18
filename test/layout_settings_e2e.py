@@ -16,7 +16,9 @@ def main():
                 'floatingPanelPositions': {'tagEditor': {'left': .3, 'top': .2}}}})
         original = setup.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries")
         p = run.open_page('library.html')
+        p.wait_for_function("()=>document.body.dataset.libraryState==='ready'")
         p.locator('#open-settings').click()
+        expect(p.locator('#settings-dialog')).to_be_visible()
         p.locator('[data-settings-tab=layout]').click()
         panel = p.locator('#settings-layout-panel')
         expect(panel).to_be_visible()
@@ -36,7 +38,11 @@ def main():
         assert preferences['floatingPanelPositions']['tagEditor'] == {'left': .3, 'top': .2}
         expect(p.locator('.gallery-shell')).to_have_attribute('data-view', 'list')
         # Verify the edited layout, not only a reset-to-default layout, across refresh.
-        p.reload(); p.locator('#open-settings').click(); p.locator('[data-settings-tab=layout]').click()
+        p.reload()
+        p.wait_for_function("()=>document.body.dataset.libraryState==='ready'")
+        p.locator('#open-settings').click()
+        expect(p.locator('#settings-dialog')).to_be_visible()
+        p.locator('[data-settings-tab=layout]').click()
         expect(panel.locator('[name=sidebarWidth]')).to_have_value('320')
         expect(panel.locator('[name=detailPanelRatio]')).to_have_value('40')
         # Named configurations capture live positions and do not round untouched splits.

@@ -34,8 +34,7 @@ def main() -> None:
               );
               const root = await navigator.storage.getDirectory();
               const vault = await vaultApi.createOrUnlockSyncVault(root, 'manual-sync-password');
-              await storeApi.saveSyncDirectoryHandle(root);
-              await storeApi.saveSyncCryptoKey(vault.key);
+              await storeApi.saveSyncConnection({directory: root, key: vault.key});
               await chrome.storage.local.set({
                 syncSettings: {
                   enabled: true,

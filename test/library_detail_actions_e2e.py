@@ -142,9 +142,9 @@ def main() -> None:
         library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".entry-editor-inline .entry-editor-body")).to_be_visible()
         expect(library.locator(".entry-editor-inline h4", has_text="案例标题")).to_have_count(1)
-        expect(library.locator(".entry-editor-inline .entry-edit-row")).to_be_visible()
+        expect(library.locator(".entry-editor-inline .entry-edit-row").first).to_be_visible()
         expect(library.locator(".entry-editor-inline .entry-edit-row").get_by_role("button", name="保存", exact=True)).to_be_visible()
-        title_row = library.locator(".entry-editor-inline .entry-edit-row").evaluate(
+        title_row = library.locator(".entry-editor-inline .entry-edit-row").first.evaluate(
             """node => ({display: getComputedStyle(node).display, columns: node.children.length})"""
         )
         assert title_row == {"display": "grid", "columns": 2}, title_row

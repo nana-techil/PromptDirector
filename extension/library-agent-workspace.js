@@ -11,6 +11,7 @@ import { EMBED_PLAYER_RESPONSE_TIMEOUT_MS } from './media-playback.js';
 import { createWorkspaceSession } from './workspace-session.js';
 import { agentError } from './agent-protocol.js';
 import { createUiIcon, setUiIcon } from './ui-icons.js';
+import { setCodeCaseGalleryPaused } from './code-case.js';
 
 export async function installLibraryAgentWorkspace({ chromeApi, readContext, openCase, selectCases, isDirty, libraryActions = {}, confirmDiscard = async () => false, t = value => value }) {
   const drawer = document.querySelector('#detail-drawer');
@@ -22,7 +23,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   const temporarySave = document.querySelector('#temporary-review-save');
   const temporaryTools = document.createElement('div'); temporaryTools.className = 'detail-media-tools';
   temporaryTools.append(temporarySave); temporaryActions.append(temporaryTools);
-  const readableDialogIds = ['manager-dialog', 'text-batch-dialog', 'vision-batch-dialog', 'share-dialog', 'import-dialog', 'library-package-import-dialog'];
+  const readableDialogIds = ['manager-dialog', 'text-batch-dialog', 'share-dialog', 'import-dialog', 'library-package-import-dialog'];
   let temporaryFeedback = null, frameSaving = null, temporaryGroup = null, switchingTemporary = false;
   let bindings = shortcutBindings();
   let review = false, temporary = null, temporaryBlob = null, temporaryDigest = null, loop = null, source = 'human', saving = null;
@@ -86,7 +87,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   }
   function updateReviewButton() {
     const label = review ? '退出审片' : '审片';
-    setUiIcon(reviewButton, review ? 'arrow-left' : 'clapperboard');
+    setUiIcon(reviewButton, review ? 'exit-fullscreen' : 'fullscreen');
     reviewButton.title = t(label); reviewButton.setAttribute('aria-label', t(label));
     reviewButton.dataset.i18nTitle = label; reviewButton.dataset.i18nAriaLabel = label;
     reviewButton.setAttribute('aria-pressed', String(review));
@@ -97,9 +98,11 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   }
   async function setReview(enabled) {
     if (!readContext().viewedCaseId) throw agentError('no_detail', '请先打开一个有媒体的案例');
-    if (!drawer.querySelector('.detail-visual-gallery')) throw agentError('no_review_media', '此案例没有可审阅媒体');
+    if (enabled && !drawer.querySelector('.detail-visual-gallery, .code-case-view:has(.code-case-frame)')) throw agentError('no_review_media', '此案例没有可审阅媒体');
     review = enabled;
+    drawer.dispatchEvent(new Event('detail-view-mode-changing'));
     drawer.classList.toggle('is-reviewing', review);
+    setCodeCaseGalleryPaused(review || !drawer.classList.contains('detail-sidebar-mode'));
     drawer.setAttribute('aria-modal', String(review || !drawer.classList.contains('detail-sidebar-mode')));
     updateReviewButton();
     drawer.querySelectorAll('.auxiliary-review-gallery').forEach(gallery => { gallery.hidden = !review; });
@@ -139,6 +142,12 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
           setLoop(null); break;
         }
         case 'set_selection': await selectCases(requireValue('caseIds')); break;
+        case 'set_browse': await libraryActions.setBrowse(requireValue('browse')); break;
+        case 'open_settings': await libraryActions.openSettings(); break;
+        case 'close_detail': {
+          if (isDirty() || temporaryFeedback?.getState().dirty) throw agentError('unsaved_workspace', '请先保存当前备注或案例编辑');
+          await libraryActions.closeDetail(); break;
+        }
         case 'set_review': await setReview(requireValue('enabled')); break;
         case 'open_temporary': {
           if (isDirty() || temporaryFeedback?.getState().dirty || temporaryFeedback?.getState().saving) throw agentError('unsaved_workspace', '请先保存当前备注或案例编辑');
@@ -269,7 +278,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   function installRangeControls() {
     const player = video();
     if (!player) return;
-    installReviewPlayerControls(player, { range: () => ({ startMs: rangeStart, endMs: rangeEnd }), review: () => setReview(!review), current: () => player === video() && player.isConnected, t, failed: error => showReviewFeedback(error.message, true) });
+    installReviewPlayerControls(player, { range: () => ({ startMs: rangeStart, endMs: rangeEnd }), review: () => setReview(!drawer.classList.contains('is-reviewing')), current: () => player === video() && player.isConnected, t, failed: error => showReviewFeedback(error.message, true) });
     const gallery = player.closest('.detail-visual-gallery');
     if (gallery) gallery.reviewRange = () => ({ startMs: rangeStart, endMs: rangeEnd });
     const toolbar = temporary ? temporaryActions : player.closest('.detail-visual-item')?.querySelector('.detail-visual-caption');
@@ -393,7 +402,7 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
       saveFeedback: () => { void currentFeedback()?.save(); }, closeFeedback: () => currentFeedback()?.hide(),
       newlineFeedback: () => currentFeedback()?.newline(),
       mute: () => video()?.reviewTransport?.mute.click(),
-      toggleReview: () => { void setReview(!review); },
+      toggleReview: () => { void setReview(!drawer.classList.contains('is-reviewing')); },
       closeReview: () => { if (temporaryDialog.open) void closeTemporary(); else if (review) void setReview(false); else libraryActions.closeDetail?.(); }
     }
   });
@@ -527,9 +536,9 @@ export async function installLibraryAgentWorkspace({ chromeApi, readContext, ope
   });
   new MutationObserver(() => { installRangeControls(); scheduleObserve(); }).observe(temporaryMedia, { childList: true });
   new MutationObserver(() => { installRangeControls(); scheduleObserve(); }).observe(drawer, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'aria-hidden'] });
-  reviewButton.addEventListener('click', () => { void setReview(!review).catch(error => showReviewFeedback(error.message, true)); });
+  reviewButton.addEventListener('click', () => { void setReview(!drawer.classList.contains('is-reviewing')).catch(error => showReviewFeedback(error.message, true)); });
   drawer.addEventListener('enter-media-review', () => { void setReview(true).catch(error => showReviewFeedback(error.message, true)); });
-  drawer.addEventListener('toggle-media-review', () => { void setReview(!review).catch(error => showReviewFeedback(error.message, true)); });
+  drawer.addEventListener('toggle-media-review', () => { void setReview(!drawer.classList.contains('is-reviewing')).catch(error => showReviewFeedback(error.message, true)); });
   temporarySave.addEventListener('click', () => { void saveTemporary().catch(error => showReviewFeedback(error.message, true)); });
   function openTemporary(blob, name, descriptor = {}, keepGroup = false) {
     temporaryFeedback?.dispose();

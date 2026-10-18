@@ -56,9 +56,8 @@ def main() -> None:
             library.locator("#open-settings").click()
         library.locator('[data-settings-tab="tasks"]').click()
         library.locator("#preview-analysis-batch").click()
-        expect(library.locator("#analysis-batch-summary")).to_contain_text("待补全 1 个案例")
-        library.locator(".task-diagnostics > summary").click()
-        expect(library.locator("#analysis-batch-details")).to_contain_text("固定分类提示")
+        expect(library.locator("#analysis-batch-summary")).to_contain_text("待处理 1")
+        expect(library.locator("#text-batch-dialog")).to_be_hidden()
         library.locator("#settings-close").click()
 
         print({"text_preview": 1, "batch_visual_preview": True})

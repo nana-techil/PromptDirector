@@ -11,6 +11,7 @@ test("composer combines cases and Skills in one reference workspace while keepin
   ]);
 
   assert.match(composerHtml, /id="composer-timeline"/);
+  assert.match(composerHtml, /composer-options-panel[\s\S]*id="composer-diagnostic-export"/);
   assert.match(composerHtml, /id="composer-reference-workspace"/);
   assert.match(composerHtml, /id="composer-project-list"/);
   assert.match(composerHtml, /id="composer-reference-feedback"/);
@@ -116,10 +117,10 @@ test("composer reference selection is visual while Skill management stays on its
   assert.doesNotMatch(composerJs, /planSnapshot|currentPlan|dimensionUses/);
   assert.match(composerJs, /routeOperationLabel\(activeOperation\?\.executionRoute/);
   assert.doesNotMatch(composerJs, /type:\s*["']plan["']/);
-  assert.match(composerJs, /previousOutputLanguage === elements\.composerOutputLanguage\.value/);
-  assert.match(composerJs, /previousTargetPlatform === elements\.composerPlatform\.value\.trim\(\)/);
+  assert.doesNotMatch(composerJs, /elements\.composer(?:Route|Platform|OutputLanguage)/);
+  assert.match(composerJs, /targetPlatform: "",\s*outputLanguage: "auto",\s*routeMode: "auto"/);
   assert.match(composerJs, /composerSession = working;\s*renderComposer\(\)/);
-  assert.match(composerJs, /composerDiagnosticExport\.hidden = response\.uiPreferences\?\.analysisDiagnostics !== true/);
+  assert.doesNotMatch(composerJs, /composerDiagnosticExport\.hidden/);
   assert.match(composerJs, /retryComposerTurn/);
   assert.doesNotMatch(composerJs, /deepReviewComposerOutput|runSemanticReview/);
   assert.doesNotMatch(composerJs, /reviewComposedPrompt|requestPhase = "reviewing"/);

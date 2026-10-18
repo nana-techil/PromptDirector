@@ -54,7 +54,15 @@ def main():
         if artifact:page.screenshot(path=str(Path(artifact)/'draggable-notes.png'))
         header=panel.locator('header').bounding_box();before=panel.bounding_box()
         page.mouse.move(header['x']+30,header['y']+10);page.mouse.down();page.mouse.move(header['x']-100,header['y']+70,steps=5);page.mouse.up()
-        after=panel.bounding_box();assert abs(after['x']-before['x'])>50 and no_overlap()
+        after=panel.bounding_box()
+        # Floating notes may be dragged over either pane (detail_workspace_controls covers cross-pane use),
+        # but the tool must keep following the pointer and stay inside the drawer with its handle reachable.
+        assert abs(after['x']-before['x'])>50,('header drag moves the notes panel',before,after)
+        drawer=page.locator('#detail-drawer').bounding_box()
+        assert drawer['x']-1<=after['x'] and after['x']+after['width']<=drawer['x']+drawer['width']+1,('notes stay inside the drawer',after,drawer)
+        assert drawer['y']-1<=after['y'] and after['y']+after['height']<=drawer['y']+drawer['height']+1,('notes stay inside the drawer',after,drawer)
+        header_after=panel.locator('header').bounding_box()
+        assert page.evaluate("""([x,y])=>{const el=document.elementFromPoint(x,y);return Boolean(el&&el.closest('.review-feedback-panel header'))}""",[header_after['x']+20,header_after['y']+10]),('dragged header stays reachable',header_after)
         panel.get_by_role('button',name='收起备注',exact=True).click()
         page.locator('.detail-video').evaluate('v=>v.currentTime=.9')
         page.evaluate('() => window.reviewPlayerBeforeSave=document.querySelector(".detail-video")')

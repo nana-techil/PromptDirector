@@ -137,6 +137,7 @@ class Control {
   focus(options) { this.focusOptions = options; }
   checkValidity() { return !this.value || Number.isFinite(Number(this.value)) && Number(this.value) >= 0; }
   querySelector() { return null; }
+  closest() { return null; }
 }
 
 const feedbackSource = (await readFile(new URL('../extension/review-feedback.js', import.meta.url), 'utf8')).replace(/^import .*;$/gm, '').replace(/export function /g, 'function ');
@@ -145,7 +146,7 @@ const panelPositionSource = (await readFile(new URL('../extension/panel-position
 function noteHarness(controller = null, response = { ok: true }) {
   const nodes = [], messages = [];
   const make = tag => { const node = new Control(tag); nodes.push(node); return node; };
-  const ctx = vm.createContext({ document: { createElement: make }, createUiIcon: () => make('svg'), crypto: { randomUUID: () => 'new-note' },
+  const ctx = vm.createContext({ window: { addEventListener() {}, removeEventListener() {} }, document: { createElement: make }, createUiIcon: () => make('svg'), crypto: { randomUUID: () => 'new-note' },
     Number, Promise, notes: [{ id: 'existing', startMs: 3000, text: 'existing' }],
     getPosition: async () => { if (!controller?.getCurrentTimeMs) throw new Error('请输入备注时间'); return controller.getCurrentTimeMs(); },
     seek: async () => { if (!controller?.seekToMs) throw new Error('当前播放器无法直接跳转'); },
@@ -242,7 +243,7 @@ test("emptying trash closes only after successful cleanup with no outstanding wa
     const dialog = { open: true, close() { this.open = false; } };
     const feedback = [], errors = [], sent = [];
     const ctx = vm.createContext({
-      trashItems: [{ id: "trash" }], elements: { trashDialog: dialog, trashEmpty: {} },
+      trashCleanupProgress: null, trashCleanupRequestPending: false, trashItems: [{ id: "trash" }], elements: { trashDialog: dialog, trashEmpty: {} },
       t: (text, values = {}) => text.replace(/\{(\w+)\}/g, (_, key) => values[key]),
       confirmAppAction: async () => outcome !== "declined",
       performTrashAction: async (_button, message) => {

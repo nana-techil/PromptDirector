@@ -89,3 +89,18 @@ test('deferred first search preserves complete prompts, document text and every 
     assert.deepEqual([...searchIndexedEntries(deferred, query)], [...searchIndexedEntries(eager, query)], query);
   }
 });
+
+
+test('fullwidth queries preserve exact membership and prefer title then labels over shared body', () => {
+  const entries = [
+    { id: 'body', title: '作品', text: 'cinematic camera' },
+    { id: 'tag', title: '作品', customLabels: ['ＣＩＮＥＭＡＴＩＣ'], text: 'camera' },
+    { id: 'title', title: 'ＣＩＮＥＭＡＴＩＣ camera', text: '' },
+    { id: 'other', title: 'camera' }
+  ];
+  const index = buildSearchIndex(entries);
+  assert.deepEqual([...searchIndexedEntries(index, 'ｃｉｎｅｍａｔｉｃ', {relevance:true})], ['title', 'tag', 'body']);
+  assert.deepEqual([...searchIndexedEntries(index, 'cinematic camera', {relevance:true})], ['title', 'tag', 'body']);
+  assert.deepEqual([...searchIndexedEntries(index, '"cinematic camera"', {relevance:true})], ['title', 'body']);
+  assert.deepEqual([...searchIndexedEntries(index, 'ｔａｇ：ＣＩＮＥＭＡＴＩＣ')], ['tag']);
+});

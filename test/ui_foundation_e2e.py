@@ -217,7 +217,9 @@ def main() -> None:
               motion: document.documentElement.dataset.motion,
               storedTheme: localStorage.getItem('promptDirectorTheme'),
               storedMotion: localStorage.getItem('promptDirectorMotion'),
-              selectedMotion: document.querySelector('#ui-motion').value
+              selectedMotion: document.querySelector('#ui-motion').checked,
+              selectedDarkTheme: document.querySelector('#ui-theme').checked,
+              selectedSystemTheme: document.querySelector('#ui-theme-system').checked
             })"""
         )
         assert migrated == {
@@ -225,7 +227,9 @@ def main() -> None:
             "motion": "reduced",
             "storedTheme": "light",
             "storedMotion": "reduced",
-            "selectedMotion": "reduced",
+            "selectedMotion": True,
+            "selectedDarkTheme": False,
+            "selectedSystemTheme": False,
         }, migrated
 
         light_tokens = light_page.evaluate(
@@ -251,22 +255,27 @@ def main() -> None:
             }"""
         )
         expected_light_tokens = {
-            "browser": "#e2e6e3",
-            "page": "#edf0ed",
-            "surface": "#f8f9f8",
-            "raised": "#e5e9e6",
-            "hover": "#dce2de",
-            "text": "#121714",
-            "muted": "#5b645e",
+            "browser": "#e5e5e5",
+            "page": "#f1f1f1",
+            "surface": "#f7f7f7",
+            "raised": "#e8e8e8",
+            "hover": "#dedede",
+            "text": "#171717",
+            "muted": "#606060",
             "accent": "#d1fe17",
             "emphasis": "#d1fe17",
-            "bodyBackground": "rgb(237, 240, 237)",
+            "bodyBackground": "rgb(241, 241, 241)",
             "primaryBackground": "rgb(209, 254, 23)",
-            "secondaryBackground": "rgb(229, 233, 230)",
+            "secondaryBackground": "rgb(232, 232, 232)",
         }
         for key, expected in expected_light_tokens.items():
             assert light_tokens[key] == expected, (key, light_tokens)
-        assert light_tokens["primaryBorder"] == "rgba(0, 0, 0, 0)", light_tokens
+        # Confirmed 2026-10-16 decision: neutral gray tiers (no gray-green tint) and the brand
+        # bright green primary keeps a dark border instead of the retired transparent border.
+        for key in ("browser", "page", "surface", "raised", "hover"):
+            value = light_tokens[key].lstrip("#")
+            assert value[0:2] == value[2:4] == value[4:6], (key, light_tokens)
+        assert light_tokens["primaryBorder"] != "rgba(0, 0, 0, 0)", light_tokens
         assert light_tokens["secondaryBackground"] != light_tokens["primaryBackground"], light_tokens
 
         for path in PAGES:
@@ -280,8 +289,8 @@ def main() -> None:
                 })"""
             )
             assert light_surface["theme"] == "light", (path, light_surface)
-            assert light_surface["bodyBackground"] == "rgb(237, 240, 237)", (path, light_surface)
-            assert light_surface["browserBackground"] == "rgb(226, 230, 227)", (path, light_surface)
+            assert light_surface["bodyBackground"] == "rgb(241, 241, 241)", (path, light_surface)
+            assert light_surface["browserBackground"] == "rgb(229, 229, 229)", (path, light_surface)
             assert light_surface["horizontalOverflow"] is False, (path, light_surface)
 
         light_page.evaluate(

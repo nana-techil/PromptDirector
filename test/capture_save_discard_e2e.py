@@ -7,10 +7,35 @@ from playwright.sync_api import expect
 from e2e_support import extension_session, wait_for_async_condition
 
 
+def emulate_capture_page_window(run):
+    """The capture sidebar is a panel of the captured page's browser window.
+
+    E2E loads collector.html as a standalone tab, so the panel's own tab is the
+    active one. While a durable save task exists, report that task's source page
+    as the active tab, matching the real side panel context (whose host
+    permission exposes the captured page URL).
+    """
+    run.context.add_init_script("""
+      (() => {
+        if (location.protocol !== 'chrome-extension:' || !location.pathname.endsWith('/collector.html')) return;
+        const query = chrome.tabs.query.bind(chrome.tabs);
+        chrome.tabs.query = async info => {
+          if (!info || !info.active) return query(info);
+          const { captureSaveTask, captureSaveInput } = await chrome.storage.local.get(['captureSaveTask', 'captureSaveInput']);
+          const input = captureSaveTask && (captureSaveTask.input || captureSaveInput);
+          const batch = input && input.batch;
+          if (!batch || !batch.sourceUrl) return query(info);
+          return [{ id: 999, windowId: 1, active: true, status: 'complete', url: batch.sourceUrl }];
+        };
+      })();
+    """)
+
+
 def main():
     out = Path(os.environ.get('PD_E2E_ARTIFACT_DIR') or tempfile.mkdtemp(prefix='pd-discard-evidence-'))
     out.mkdir(parents=True, exist_ok=True)
     with extension_session('pd-discard-', viewport={'width': 468, 'height': 800}) as run:
+        emulate_capture_page_window(run)
         page = run.open_page('collector.html')
         run.seed_storage(page, {'entries': [], 'uiPreferences': {'locale': 'zh-CN', 'theme': 'dark', 'motion': 'reduced'},
             'capturePermissionOnboarding': {'version': 1, 'acknowledgedAt': '2026-10-05T00:00:00Z', 'clipboardIncluded': True}})
@@ -73,7 +98,20 @@ def main():
                 return send(message);
               };
             }''', status)
-            page.locator('#add-page-capture:visible, #start-page-capture:visible').click()
+            # The overrides can land while the collector is still finishing its
+            # startup pass, so the same automatic capture may already own the
+            # preview. Enter through whichever start/preview entry is available
+            # and never click through a capture that is already running.
+            for _ in range(100):
+                if page.locator('#page-capture').is_visible():
+                    break
+                page.evaluate("""() => {
+                  const visible = node => Boolean(node) && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0;
+                  const entry = [document.querySelector('#add-page-capture'), document.querySelector('#start-page-capture')].find(visible);
+                  if (entry) entry.click();
+                }""")
+                page.wait_for_timeout(100)
+            expect(page.locator('#page-capture')).to_be_visible(timeout=10000)
             page.locator('.page-capture-confirm').click()
             page.locator('#page-capture-save').click()
             expect(page.locator('#page-capture')).to_be_hidden(timeout=30000)

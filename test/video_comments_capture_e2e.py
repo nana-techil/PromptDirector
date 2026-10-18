@@ -14,7 +14,8 @@ def main():
           document.querySelector('button').onclick=e=>{e.target.remove();const r=document.createElement('ytd-comment-view-model');r.innerHTML='<a id="author-text">Reply author</a><div id="content-text">Expanded reply text</div>';document.querySelector('ytd-comment-replies-renderer').append(r);};
         }''')
         setup=run.open_page('collector.html')
-        run.seed_storage(setup,{'entries':[],'uiPreferences':{'motion':'reduced'},'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-09-19T00:00:00Z'}})
+        run.seed_storage(setup,{'entries':[],'uiPreferences':{'motion':'reduced','videoOnlineOnly':True},'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-09-19T00:00:00Z'}})
+        # Comments are tested with the explicit online-only choice; original download has its own journey.
         # Only auto-entry's source fixture is substituted; picker messages and save run in the extension.
         site=setup.evaluate('''async()=>{const {normalizeVideoPagePayload}=await import('./video-page-capture.js');return normalizeVideoPagePayload({adapter:'youtube',itemId:'Wh3zKB3_ZHw',canonicalUrl:'https://www.youtube.com/watch?v=Wh3zKB3_ZHw',title:'Primary video title',description:'Full video introduction',author:'Video author'},'https://www.youtube.com/watch?v=Wh3zKB3_ZHw');}''')
         page=run.context.new_page()
@@ -74,8 +75,8 @@ def main():
           comment.firstElementChild.attachShadow({mode:'open'}).innerHTML='<div id="user-name">Bili author</div>';
           comment.lastElementChild.attachShadow({mode:'open'}).innerHTML='<p id="contents">Bili complete comment<img alt="[笑]" src="data:,"></p>';
         }''')
-        picker=(ROOT/'extension/page-content-picker.js').read_text().replace('export function','function',1)
-        source.add_script_tag(content=picker)
+        picker=setup.evaluate("async()=>String((await import('./page-content-picker.js')).pickPageContent)")
+        source.add_script_tag(content='window.pickPageContent = ('+picker+');')
         source.evaluate('()=>{window.picked=pickPageContent({commentLimit:30,timeoutMs:1000});}')
         source.locator('#user-name').click()
         result=source.evaluate('()=>window.picked')

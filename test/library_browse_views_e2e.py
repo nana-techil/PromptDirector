@@ -69,7 +69,7 @@ def main():
         expect(page.locator('#case-list .case-card')).to_have_count(2)
         page.locator('.project-folder-card[data-collection-id="grand"]').click()
         expect(page.locator('#case-list .case-card')).to_have_count(1)
-        page.locator('#browse-breadcrumb [data-project-id="root"]').click()
+        page.locator('.project-row[data-collection-id="root"] .project-filter').click()
         expect(page.locator('#case-list .case-card')).to_have_count(1)
         expect(page.locator('#project-folder-list .project-menu')).to_have_count(0)
         folder = page.locator('.project-folder-card').first
@@ -126,6 +126,7 @@ def main():
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1'), (width,mode)
                 for name in page.locator('.project-folder-name').all():
                     assert name.evaluate('el => el.scrollWidth <= el.clientWidth + 1')
+                assert 'null' not in page.locator('.gallery-heading-copy').inner_text()
                 page.screenshot(path=str(output / f'{width}-{mode}.png'))
                 assert page.locator('.gallery-heading').bounding_box()['height'] <= 53
                 controls_box = page.locator('#gallery-view-controls').bounding_box()
@@ -173,7 +174,7 @@ def main():
         for content_id, icon in [('content:audio','audio-lines'),('content:source-file','file-box'),('content:reference','file-text')]:
             use = preview.locator(f'[data-content-filter-id="{content_id}"] .ui-icon use')
             expect(use).to_have_attribute('href', __import__('re').compile(f'.*#icon-{icon}$'))
-        for selector in ['#browse-breadcrumb button', '.project-disclosure:not(.is-placeholder)', '#create-collection']:
+        for selector in ['.project-folder-card', '.project-disclosure:not(.is-placeholder)', '#create-collection']:
             control = preview.locator(selector).first
             control.hover()
             expected = control.evaluate("""el => {

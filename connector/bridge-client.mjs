@@ -3,10 +3,11 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { connectorRoot, instancePaths, readJson, ensurePrivateRoot } from "./paths.mjs";
 import { encodeFrame, frameDecoder } from "./framing.mjs";
+import { CONNECTOR_TIMEOUT_MS, requestTimeoutMs, timeoutMessage } from './request-policy.mjs';
 
-export const CONNECTOR_TIMEOUT_MS = 30000;
+export { CONNECTOR_TIMEOUT_MS } from './request-policy.mjs';
 
-export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs = CONNECTOR_TIMEOUT_MS, instanceId, expectedHostSession, onHostSession } = {}) {
+export async function callExtension(operation, input = {}, { root = connectorRoot(), timeoutMs, instanceId, expectedHostSession, onHostSession } = {}) {
   const id = randomUUID();
   const request = encodeFrame({ type: 'request', id, operation, input });
   await ensurePrivateRoot(root);
@@ -27,7 +28,8 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
       if (settled) return; settled = true; clearTimeout(timer); socket.destroy();
       if (error) reject(error); else resolve(value);
     };
-    const timer = setTimeout(() => finish(Object.assign(new Error("插件响应超时；写入任务请按原请求编号查询，不要重新提交不同编号。"), { code: "connector_timeout" })), timeoutMs);
+    const timedOut = () => finish(Object.assign(new Error(timeoutMessage(operation, input)), { code: 'connector_timeout' }));
+    let timer = setTimeout(timedOut, timeoutMs ?? CONNECTOR_TIMEOUT_MS);
     const decode = frameDecoder(message => {
       if (message.type === "ready") {
         if (message.instanceId !== instance || message.protocolVersion !== 1) return finish(new Error("连接的资料库或协议不匹配。"));
@@ -36,6 +38,8 @@ export async function callExtension(operation, input = {}, { root = connectorRoo
           return finish(Object.assign(new Error("插件已重新加载，需要重新核对能力。"), { code: "connector_session_changed" }));
         }
         onHostSession?.(message.hostSessionId);
+        clearTimeout(timer);
+        timer = setTimeout(timedOut, timeoutMs ?? requestTimeoutMs(operation, input));
         socket.write(request);
       } else if (message.id === id) {
         finish(message.error ? Object.assign(new Error(message.error.message), { code: message.error.code }) : null, message.result);

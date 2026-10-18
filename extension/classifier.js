@@ -8,6 +8,7 @@ import {
 import { entryHasMedia, normalizeEntryMedia } from "./media.js";
 import { entryHasVisual } from "./visuals.js";
 import { originalMediaPrompts } from "./prompt-sources.js";
+import { codePreviewHtml } from './code-case.js';
 
 export const CLASSIFIER_VERSION = 7;
 
@@ -40,6 +41,8 @@ export function classifyContent(entry = {}, rules = [], taxonomy = createDefault
   if (existing && existing.status === "confirmed" && ["manual", "local_import"].includes(existing.source)) {
     return existing;
   }
+
+  if (entry.sourceFacts?.codePreviewAvailable === true && codePreviewHtml(entry.text)) return classificationForRole(taxonomy, CONTENT_ROLES.codeCase, "包含可运行代码预览");
 
   const platformDefault = classifyPlatform(entry, rules, taxonomy);
   if (platformDefault) return platformDefault;

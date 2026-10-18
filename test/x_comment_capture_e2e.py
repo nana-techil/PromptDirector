@@ -85,7 +85,12 @@ def sidebar_journey(public_video=False):
               };
             }''')
             def add_comment():
-                with run.context.expect_page() as opened:
+                supplements = collector.locator('.page-capture-supplements')
+                if supplements.count() and not supplements.evaluate('details=>details.open'):
+                    supplements.locator('summary').click()
+                # The real reader first retries on the still-mounted source page (its
+                # navigation deadline is 30s) before falling back to a temporary page.
+                with run.context.expect_page(timeout=45000) as opened:
                     collector.get_by_role('button', name='补入当前案例', exact=True).click()
                 opened.value.goto(REPLY)
                 worker.evaluate('() => globalThis.fixtureTabReady()')
@@ -122,15 +127,24 @@ def sidebar_journey(public_video=False):
             expect(collector.locator('.page-capture-confirm')).to_have_count(1)
             collector.locator('.page-capture-confirm').click()
             collector.locator('.page-capture-supplements > summary').click()
-            # The user left the original source after scanning. Exercise the
-            # temporary-page path without reading or navigating this new page.
+            # 1.27 keeps a scanned preview with its own source page: leaving A shows
+            # B's untouched state, and returning restores A's preserved draft. The
+            # supplement read still runs on a temporary page because the reply's
+            # source URL is not the active tab.
             source_after_navigation = 'https://x.com/other/status/999'
             source.goto(source_after_navigation)
+            expect(collector.locator('#page-capture')).to_be_hidden()
+            source.goto(MAIN)
+            expect(collector.locator('#page-capture')).to_be_visible()
+            source.bring_to_front()
+            # The mounted thread no longer carries the reply, so the reader must fall
+            # back to its temporary page instead of trusting the scan preview.
+            source.evaluate("()=>document.querySelectorAll('article').forEach(article=>{if(article.querySelector('a[href*=\"/director/status/124\"]'))article.remove()})")
             add_comment()
             expect(collector.locator('#feedback')).to_contain_text('当前草稿已保留')
             expect(collector.locator('.page-capture-supplements')).to_have_count(1)
             expect(collector.locator('.page-capture-excerpt')).not_to_contain_text('Shot 179:')
-            assert source.url == source_after_navigation
+            assert source.url == MAIN
             assert not any(p.url == 'https://x.com/login' for p in run.context.pages), 'temporary failed tab leaked'
             failure[0] = False
             collector.locator('.page-capture-supplements > summary').click()
@@ -179,7 +193,7 @@ def sidebar_journey(public_video=False):
             assert next(item['sha256'] for item in hashes if item['kind']=='video') == hashlib.sha256(video_bytes).hexdigest()
             assert len({asset['id'] for asset in content}) == 5
             assert all(any(block.get('assetId')==asset['id'] for block in entry['articleDocument']['blocks']) for asset in content)
-            assert source.url == source_after_navigation
+            assert source.url == MAIN
             assert not any(p.url == REPLY for p in run.context.pages), 'temporary success tab leaked'
             library = run.open_page('library.html')
             library.locator('.case-card').first.click()

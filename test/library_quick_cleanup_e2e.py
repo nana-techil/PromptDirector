@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 from playwright.sync_api import expect
-from e2e_support import extension_session, base_entry
+from e2e_support import apply_retained_recovery, extension_session, base_entry
 
 with extension_session('pd-quick-cleanup-', viewport={'width':1440,'height':900}) as s:
     setup=s.open_page('collector.html')
@@ -47,15 +47,14 @@ with extension_session('pd-quick-cleanup-', viewport={'width':1440,'height':900}
             for field in ['text','mediaAssets']: assert e.get(field)==old.get(field)
     assert after['compoundCases'][0]['customLabels']==[]
     assert after['facetCatalog']==before['facetCatalog']
-    # Later material must survive undo from the visible recovery control.
+    # Later material must survive the retained recovery service.
     later=base_entry('later','后来新增','后来新增的完整原词','content:prompt:image')
     later['schemaVersion']=before['schemaVersion']
     setup.evaluate("async e=>{const {getLibraryStorage}=await import('./library-storage.js');const storage=getLibraryStorage();await storage.update('entries',s=>({entries:[...s.entries,e]}));}",later)
     page.locator('#manage-facets').click()
     page.locator('[data-manager-tab="vocabulary"]').click()
-    page.locator('#facet-recovery-actions summary').click()
-    page.locator('#undo-facet').click()
-    expect(page.locator('#manager-feedback')).to_contain_text('已撤回')
+    expect(page.locator('#facet-recovery-actions, #undo-facet')).to_have_count(0)
+    apply_retained_recovery(setup, 'UNDO_FACET_UPDATE')
     restored=setup.evaluate("()=>chrome.runtime.sendMessage({type:'GET_STATE'})")
     for e in before['entries']:
         current=next(x for x in restored['entries'] if x['id']==e['id'])
@@ -96,4 +95,4 @@ with extension_session('pd-quick-cleanup-', viewport={'width':1440,'height':900}
         page.screenshot(path=str(Path(tempfile.gettempdir())/f'pd-quick-trash-{theme}.png'))
         page.locator('#trash-close').click()
     assert not s.page_errors,s.page_errors
-    print('PASS: selected compound/member tags removed; refreshed readback; safe undo preserves later material; project/trash screenshots in both themes')
+    print('PASS: selected compound/member tags removed; refreshed readback; retained recovery preserves later material; project/trash screenshots in both themes')

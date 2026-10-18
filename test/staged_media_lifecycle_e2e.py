@@ -73,7 +73,15 @@ with extension_session('pd-staged-media-') as run:
     assert len(page.evaluate(SNAP)['rows']) == 1
 
     # A real IndexedDB cleanup failure keeps a retry record without blocking cancel.
-    prepare(page, {'name':'another.png','mimeType':'image/png','buffer':PNG})
+    # Distinct bytes are required: a known duplicate owns no temporary copy to reclaim.
+    distinct_png = base64.b64decode(page.evaluate("""() => {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 2;
+      const context = canvas.getContext('2d'); context.fillStyle = '#e24b32'; context.fillRect(0, 0, 2, 2);
+      return canvas.toDataURL('image/png').split(',')[1];
+    }"""))
+    prepare(page, {'name':'another.png','mimeType':'image/png','buffer':distinct_png})
+    pending = page.evaluate(SNAP)
+    assert len(pending['rows']) == 2 and len(pending['stages']) == 1, pending
     worker = run.context.service_workers[0]
     worker.evaluate('''()=>{const original=IDBDatabase.prototype.transaction;IDBDatabase.prototype.transaction=function(stores,mode,...args){
       if(mode==='readwrite'&&Array.isArray(stores)&&stores.includes('derived-media'))throw new Error('fixture cleanup failure');return original.call(this,stores,mode,...args)};}''')

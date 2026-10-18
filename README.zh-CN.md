@@ -133,6 +133,8 @@ AI 分析按需开启，使用你自己的服务；原图只在你选中或明�
 
 </details>
 
+可选本地视频采集使用[免费源码组件](docs/VIDEO_COMPONENT.md)，无需购买开发者证书。大型视频和网站覆盖边界见[已知限制](docs/KNOWN_LIMITATIONS.md)。
+
 ## 参与与许可
 
 欢迎提交问题、改善交互、完善采集适配、补充测试与文档。[反馈问题](https://github.com/wchao6891/PromptDirector/issues)时，请说明页面类型、看到的问题和复现步骤；提供示例前请移除 API Key、私人资料和未获授权的素材。提交代码前请运行 `npm run verify`。构建说明见[开发指南](docs/DEVELOPMENT.md)。

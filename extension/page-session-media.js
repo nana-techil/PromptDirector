@@ -3,6 +3,8 @@ export const PAGE_SESSION_MEDIA_CHUNK_BYTES = 512 * 1024;
 export async function preparePageSessionMedia(value = {}) {
   const clean = (input) => String(input ?? "").trim();
   const token = clean(value.token);
+  let stage = 'permission', totalBytes = 0;
+  try {
   const maxBytes = Number(value.maxBytes);
   const chunkBytes = Number(value.chunkBytes);
   const timeoutMs = Number(value.timeoutMs);
@@ -32,6 +34,7 @@ export async function preparePageSessionMedia(value = {}) {
   if (!(globalThis[downloadsKey] instanceof Map)) Object.defineProperty(globalThis, downloadsKey, { value: downloads, configurable: true });
   downloads.set(token, controller);
   try {
+    stage = 'request';
     const response = await globalThis.fetch(url.href, {
       credentials: "include",
       redirect: "error",
@@ -39,6 +42,7 @@ export async function preparePageSessionMedia(value = {}) {
       cache: "no-store",
       signal
     });
+    stage = 'response';
     if (!response?.ok) throw new Error(`页面媒体读取失败（HTTP ${response?.status || 0}）`);
     const declared = Number(response.headers?.get?.("content-length"));
     if (Number.isFinite(declared) && declared > maxBytes) {
@@ -46,12 +50,12 @@ export async function preparePageSessionMedia(value = {}) {
       throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
     }
     if (!response.body?.getReader) throw new Error("页面媒体无法流式读取");
-    let totalBytes = 0;
+    stage = 'read';
     const stream = response.body.pipeThrough(new TransformStream({ transform(part, controller) {
       totalBytes += part.byteLength;
       if (totalBytes > maxBytes) throw new Error(`页面媒体超过本次暂存预算（${maxBytes} bytes）`);
       controller.enqueue(part);
-    } }), { signal });
+    }, flush() { stage = 'blob'; } }), { signal });
     const blob = await new Response(stream).blob();
     signal.throwIfAborted();
     if (!totalBytes) throw new Error("页面媒体为空");
@@ -69,7 +73,17 @@ export async function preparePageSessionMedia(value = {}) {
       contentType: clean(response.headers?.get?.("content-type")).split(";", 1)[0].toLocaleLowerCase("en-US")
     };
   } finally { downloads.delete(token); }
-
+  } catch (error) {
+    // This function is injected without module imports. Return only serializable,
+    // redacted diagnostics; script exceptions otherwise lose the source failure.
+    const message = clean(error?.message || error || '页面媒体读取失败')
+      .replace(/https?:\/\/[^\s<>"']+/giu, '[媒体地址]')
+      .replace(/\b(?:authorization|cookie)\s*[:=][^\r\n]*/giu, '[凭据]')
+      .replace(/\b(?:Bearer|Basic)\s+\S+/giu, '[凭据]')
+      .replace(/\b(?:token|api[_-]?key|password|signature)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s;,]+)/giu, '[凭据]');
+    const name = /^(?:[A-Za-z]+)?Error$/u.test(error?.name) ? error.name : 'Error';
+    return { token, ok: false, error: { stage, receivedBytes: totalBytes, name, message } };
+  }
 }
 
 export async function readPageSessionMediaChunk(value = {}) {

@@ -13,10 +13,12 @@
     <main>
       <header class="collector-header">
         <div class="brand product-brand"><img class="product-brand-mark" src="assets/icons/icon-source.svg" alt="" /><div class="product-brand-copy"><p class="product-brand-name">PromptDirector</p><h1 class="product-brand-tagline" data-i18n="视觉创作灵感库">视觉创作灵感库</h1></div></div>
-      <button id="open-library" aria-label="打开灵感库" title="打开灵感库" data-i18n-aria-label="打开灵感库" data-i18n-title="打开灵感库" class="library-entry" type="button">
-        <span><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><strong data-i18n="打开灵感库">打开灵感库</strong></span>
-        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-chevron-right"></use></svg>
+      <div class="collector-header-actions">
+      <button id="open-capture-assistant" class="icon-button collector-nav-link" type="button" title="Agent 采集" aria-label="Agent 采集" data-i18n-title="Agent 采集" data-i18n-aria-label="Agent 采集"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-sparkles"></use></svg><span data-i18n="助手">助手</span></button>
+      <button id="open-library" aria-label="打开灵感库" title="打开灵感库" data-i18n-aria-label="打开灵感库" data-i18n-title="打开灵感库" class="library-entry collector-nav-link" type="button">
+        <svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-library"></use></svg><span data-i18n="案例库">案例库</span>
       </button>
+      </div>
       </header>
 
 
@@ -101,7 +103,7 @@
           <button id="page-capture-scan" class="button-secondary compact capture-icon-button" type="button" title="重新扫描" aria-label="重新扫描" data-i18n-title="重新扫描" data-i18n-aria-label="重新扫描"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button>
         </header>
         <p id="page-capture-help"></p>
-        <label id="page-capture-details-option" class="page-capture-details-option" hidden><input id="page-capture-details" type="checkbox" /><span data-i18n="采集详情信息">采集详情信息</span></label>
+        <label id="page-capture-details-option" class="page-capture-details-option" hidden><input role="switch" class="ui-switch" id="page-capture-details" type="checkbox" /><span data-i18n="采集详情信息">采集详情信息</span></label>
         <section id="page-capture-list-setup" class="page-capture-list-setup" hidden>
           <p data-i18n="选一个代表案例，再采集同类内容">选一个代表案例，再采集同类内容</p>
           <div class="page-capture-list-controls"><label><span data-i18n="目标案例数">目标案例数</span><input id="page-capture-target-count" type="number" min="1" inputmode="numeric" placeholder="数量" data-i18n-placeholder="数量" /></label><button id="page-capture-list-run" class="button-secondary" type="button" data-i18n="读取列表">读取列表</button></div>

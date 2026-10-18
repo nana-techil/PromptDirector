@@ -13,16 +13,17 @@ const item = (id, assets) => ({ id: `trash:entry:${id}`, kind: 'entry', targetId
 function fixture(state, options = {}) {
   const deleted = [];
   const context = vm.createContext({ normalizeTrashState, planTrashCleanup, retainedTrashCleanupAssets, TRASH_HISTORY_KEYS, TRASH_CLEANUP_KEY,
-    Set, structuredClone, console: { warn() {} }, activeCaptureAssetIds: new Set(), agentTransfers: { retainedIds: async () => options.activeIds ?? [] },
+    trashCleanupProgress: null, chrome: { runtime: { sendMessage: async () => {} } }, SCHEMA_VERSION: 29, Set, structuredClone, console: { warn() {} }, activeCaptureAssetIds: new Set(), agentTransfers: { retainedIds: async () => options.activeIds ?? [] },
     stagedMedia: { retainedIds: async () => [] },
     STORAGE_KEYS: Object.fromEntries(['trashState'].map(key => [key, key])),
     readState: async () => structuredClone(state),
     commitLocalChanges: async update => { if (options.commitFails) throw new Error('metadata failure'); Object.assign(state, structuredClone(update)); },
     libraryStorage: {
       get: async keys => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter(key => key in state).map(key => [key, structuredClone(state[key])])),
-      remove: async key => { delete state[key]; }
+      getSnapshot: async keys => Object.fromEntries(keys.filter(key => key in state).map(key => [key, structuredClone(state[key])])),
+      remove: async keys => { for (const key of Array.isArray(keys) ? keys : [keys]) delete state[key]; }
     },
-    deleteMediaBlobs: async ids => { if (options.deleteFails) throw new Error('disk failure'); deleted.push(...ids); }, deleteLocalAssetHandle: async () => {},
+    deleteMediaBlobs: async ids => { if (options.deleteFails) throw new Error('disk failure'); deleted.push(...ids); }, deleteLocalAssetHandles: async () => {},
     screenshotStorageKey: id => `screenshot:${id}`, LOCAL_ASSET_REFERENCE_RECORD_TYPE: 'local-asset-reference'
   });
   vm.runInContext(actions, context);
@@ -156,4 +157,12 @@ test('permanent cleanup removes local link handles without requesting deletion o
   const plan = planTrashCleanup({ entries: [], trashState: { items: [linked] } }, [linked.id]);
   assert.deepEqual(plan.cleanup.localReferenceIds, ['linked']);
   assert.ok(!('path' in plan.cleanup));
+});
+
+test('unaffected history is not rewritten when clearing unrelated trash',()=>{
+ const saved = {entries:[item('kept',['shared']).snapshot]};
+ const plan=planTrashCleanup({entries:[],trashState:{items:[item('gone',['exclusive'])]},upgradeBackup:saved,legacyEntries:saved.entries},['trash:entry:gone']);
+ assert.equal(Object.hasOwn(plan.changes,'upgradeBackup'),false);
+ assert.equal(Object.hasOwn(plan.changes,'legacyEntries'),false);
+ assert.deepEqual(plan.cleanup.mediaIds,['exclusive']);
 });

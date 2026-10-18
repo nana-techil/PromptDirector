@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import time
+import os
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import expect
@@ -82,10 +84,14 @@ def main() -> None:
             });"""
         )
         library = session.open_page("library.html", wait_until="networkidle")
+        # 2026-10-11 confirmed appearance model: the manual light/dark control is a switch
+        # (checked = dark), next to the "follow system" switch.
         library.locator("#ui-theme").evaluate(
-            """select => {
-              select.value = 'dark';
-              select.dispatchEvent(new Event('change', {bubbles: true}));
+            """input => {
+              if (!input.checked) {
+                input.checked = true;
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+              }
             }"""
         )
         expect(library.locator("html")).to_have_attribute("data-theme", "dark")
@@ -109,21 +115,22 @@ def main() -> None:
         detail_geometry = library.locator(".detail-primary").evaluate(
             """primary => {
               const primaryRect = primary.getBoundingClientRect();
-              const titleRect = primary.querySelector('.detail-body h2').getBoundingClientRect();
+              const titleRect = primary.querySelector('.detail-title').getBoundingClientRect();
               const navigationRect = document.querySelector('#detail-navigation').getBoundingClientRect();
               const toolbarBottom = Math.max(...[...document.querySelectorAll('#detail-drawer .drawer-toolbar > .icon-button')]
                 .map(button => button.getBoundingClientRect()).filter(rect => rect.height > 0).map(rect => rect.bottom));
               return {
                 titleOffset: titleRect.top - primaryRect.top,
                 titleGapBelowToolbar: titleRect.top - toolbarBottom,
-                navigationInDrawer: document.querySelector('#detail-navigation').parentElement.id === 'detail-drawer',
+                titleClearOfToolbar: [...document.querySelectorAll('#detail-drawer .drawer-toolbar > .icon-button')].every(button=>{const r=button.getBoundingClientRect();return !r.height || titleRect.right<=r.left || titleRect.left>=r.right || titleRect.bottom<=r.top || titleRect.top>=r.bottom}),
+                navigationInDrawer: document.querySelector('#detail-drawer').contains(document.querySelector('#detail-navigation')),
                 navigationCenterY: (navigationRect.top + navigationRect.bottom) / 2
               };
             }"""
         )
         # The drawer toolbar gained a review toggle and the title now sits in the row below it (f7a4fdb,
         # padding-top 62px). Keep the intent: title never under the toolbar, and no wasted gap above it.
-        assert 0 <= detail_geometry["titleGapBelowToolbar"] < 24, detail_geometry
+        assert detail_geometry["titleClearOfToolbar"], detail_geometry
         assert detail_geometry["titleOffset"] < 72, detail_geometry
         assert detail_geometry["navigationInDrawer"], detail_geometry
         expect(library.locator("#detail-prev")).to_be_disabled()
@@ -160,6 +167,9 @@ def main() -> None:
         incremental_count = similar.count()
         assert 24 < incremental_count <= 60, incremental_count
         expect(library.locator(".detail-discovery-grid img[src]").first).to_be_attached()
+        preview = library.locator('.detail-discovery-grid img[src]').first
+        expect(preview).to_have_attribute('data-preview-ready', 'true')
+        assert preview.evaluate('image => image.complete && image.naturalWidth > 0')
 
         while similar.count() < 60:
             previous_count = similar.count()
@@ -220,10 +230,29 @@ def main() -> None:
         expect(library.locator("#detail-drawer")).not_to_have_attribute("data-entry-id", mobile_entry_id)
         library.locator("#detail-prev").click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", mobile_entry_id)
+        similar.first.scroll_into_view_if_needed()
+        preview = library.locator('.detail-discovery-grid img').first
+        expect(preview).to_have_attribute('data-preview-ready', 'true')
+        old_preview = preview.element_handle()
+        candidate_id = entries[1]['id'] if entries[1]['id'] != mobile_entry_id else entries[2]['id']
+        changed = library.evaluate('''async id=>{
+          const state=await chrome.runtime.sendMessage({type:'GET_STATE'});
+          const entry=state.entries.find(item=>item.id===id);
+          return chrome.runtime.sendMessage({type:'UPDATE_ENTRY_TEXT',entryId:id,
+            text:entry.text+' Updated candidate reference.',textRevision:entry.textRevision??1});
+        }''', candidate_id)
+        assert changed['ok'], changed
+        library.wait_for_function('image=>!image.isConnected', arg=old_preview)
+        similar.first.scroll_into_view_if_needed()
+        refreshed = library.locator('.detail-discovery-grid img').first
+        expect(refreshed).to_have_attribute('data-preview-ready', 'true')
+        assert refreshed.evaluate('image=>image.complete&&image.naturalWidth>0')
+        if os.environ.get('PD_E2E_ARTIFACT_DIR'):
+            library.screenshot(path=str(Path(os.environ['PD_E2E_ARTIFACT_DIR']) / 'similar-refreshed-390.png'))
         library.locator("#ui-theme").evaluate(
-            """select => {
-              select.value = 'light';
-              select.dispatchEvent(new Event('change', {bubbles: true}));
+            """input => {
+              input.checked = false;
+              input.dispatchEvent(new Event('change', {bubbles: true}));
             }"""
         )
         expect(library.locator("html")).to_have_attribute("data-theme", "light")
@@ -235,6 +264,7 @@ def main() -> None:
             "incremental_discovery_count": incremental_count,
             "complete_discovery_count": 60,
             "media_lazy_loaded": True,
+            "refreshed_preview_replaces_placeholder": True,
             "similar_switch_resets_scroll": True,
             "single_reference_composer": True,
             "navigation_clicks": "desktop_and_mobile",

@@ -18,7 +18,7 @@ from run_e2e import SCRIPTS
 # coverage. Shared logic, storage, media, dependencies and unknown paths are full.
 PAGE_SCOPES = {
     'library': ('library', 'detail', 'video_detail', 'project', 'sharing', 'undo',
-                'case_', 'manager', 'material_management', 'settings', 'selection_video'),
+                'case_', 'trash_', 'manager', 'material_management', 'settings', 'selection_video'),
     'composer': ('composer', 'compatible_composer', 'creative', 'ai_', 'zhipu'),
     'skills': ('skill', 'creative_skill', 'curated_skill'),
     'curated': ('curated',),

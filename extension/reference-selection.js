@@ -145,6 +145,14 @@ export function createSelectionWriter({ read, write, onError, onRefresh }) {
       }).catch(onError);
       return queue;
     },
+    async commit(caseIds) {
+      await this.save(caseIds);
+      const stored = await read();
+      if (JSON.stringify(stored.caseIds) !== JSON.stringify(caseIds)) {
+        throw agentError('selection_not_saved', '参考选择未保存，请按当前选择重新操作。');
+      }
+      return stored;
+    },
     flush: () => queue
   };
 }

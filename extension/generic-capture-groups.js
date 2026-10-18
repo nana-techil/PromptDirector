@@ -1,4 +1,5 @@
 import { normalizeArticleDocument, articleDocumentText } from './article-document.js';
+import { captureSectionRanges, captureGroupRemainder, captureGroupTextBlocks } from './capture-group-boundaries.js';
 
 // Explicit grouping of unadapted pages only. Automatic capture and specialized
 // prompt/article adapters do not use these boundaries.
@@ -22,11 +23,7 @@ export function groupGenericCapture(candidate, mode) {
       if (starts.length < 2) continue;
       // A parent heading also closes a section: never attach the next chapter's
       // introduction to the preceding nested heading.
-      const ranges = starts.map(start => {
-        let end = start + 1;
-        while (end < top.length && !(top[end].kind === 'heading' && top[end].level <= level)) end++;
-        return top.slice(start, end);
-      });
+      const ranges = captureSectionRanges(top, starts, level).map(({ start, end }) => top.slice(start, end));
       if (ranges.filter(hasMedia).length < 2) continue;
       for (const parts of ranges) {
         const expanded = expand(parts);
@@ -72,15 +69,11 @@ export function groupGenericCapture(candidate, mode) {
     if (!groups.length) return [candidate];
   }
 
-  const remainingBlocks = blocks.filter(b => !usedBlocks.has(b.id));
-  const remainingMedia = media.filter(m => !usedMedia.has(m.id));
   // Unplaced assets, attachments, tables and shared prose are never silently
   // removed by a grouping operation. They remain separately selectable.
-  if (remainingBlocks.length || remainingMedia.length || candidate.possibleOmissions?.length || candidate.supplements?.length || !document && candidate.contentText) {
-    const remainder = !document && candidate.contentText
-      ? [{ id: `body:${candidate.id}`, kind: 'paragraph', text: candidate.contentText }]
-      : remainingBlocks;
-    add(`未分组内容 · ${candidate.title}`, remainder, remainingMedia, 'remainder', true);
+  const remainder = captureGroupRemainder(candidate, blocks, usedBlocks, usedMedia, !document && candidate.contentText);
+  if (remainder) {
+    add(`未分组内容 · ${candidate.title}`, remainder.parts, remainder.media, 'remainder', true);
   }
   return groups;
 
@@ -93,9 +86,7 @@ export function groupGenericCapture(candidate, mode) {
     groups.push({
       ...candidate, id: `${candidate.id}:${identity}`, title, pageType: 'article',
       contentText, contentHtml: '', excerpt: '', articleDocument,
-      // Section-kind blocks bypass prompt-ranking and retain even short titles.
-      textBlocks: (articleDocument?.blocks || []).filter(b => b.text && !owned.has(b.id))
-        .map(b => ({ id: b.id, kind: 'section', text: b.text, sourceOrder: b.sourceOrder })),
+      textBlocks: captureGroupTextBlocks(articleDocument?.blocks || [], owned),
       media: assets, batchStructureStatus: review ? 'review' : 'matched',
       sourceFacts: { ...candidate.sourceFacts, itemId: `${candidate.sourceFacts?.itemId || candidate.id}:${identity}` },
       region: candidate.region ? { ...candidate.region, contentTargets: (candidate.region.contentTargets || []).filter(target =>

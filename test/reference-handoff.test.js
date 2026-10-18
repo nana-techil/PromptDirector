@@ -248,3 +248,66 @@ test('an external event cannot lend its fresh revision to a click made against s
   await writer.save(['b','a']); // A fresh explicit click after synchronization.
   assert.deepEqual((await api.get()).caseIds,['b','a']);
 });
+
+test('an Agent cannot report selection saved after a disk failure that the UI already displayed', async () => {
+  const errors=[];
+  const writer=createSelectionWriter({read:async()=>({revision:0,caseIds:[]}),write:async()=>{throw Error('disk full');},onRefresh:()=>{},onError:e=>errors.push(e)});
+  await writer.initialize();
+  await assert.rejects(writer.commit(['a']), {code:'selection_not_saved'});
+  assert.equal(errors.length,1);
+});
+test('opening a composer waits for its actual reader and preserves an existing page', async () => {
+  let contexts=[], calls=0, created=0, focused=0;
+  const chromeApi={runtime:{getURL:p=>`chrome-extension://test/${p}`,getContexts:async()=>contexts,
+    sendMessage:async()=>{if(++calls===1)throw Error('loading');return {ok:true,result:{surface:'composer',instruction:'Human draft'}};}},
+    tabs:{create:async()=>{created++;contexts=[{tabId:8,documentUrl:'chrome-extension://test/composer.html'}];return{id:8,windowId:1};},update:async id=>({id,windowId:1}),get:async id=>({id})},
+    windows:{update:async()=>{focused++;}}};
+  const api=createAgentWorkspace({chromeApi});
+  const first=await api.open({surface:'composer'});
+  assert.equal(first.state,'ready');assert.equal(first.instruction,'Human draft');assert.equal(calls,2);
+  assert.equal((await api.open({surface:'composer'})).state,'ready');assert.equal(created,1);assert.equal(focused,2);
+  contexts.push({tabId:9,documentUrl:'chrome-extension://test/composer.html'});
+  assert.equal((await api.open({surface:'composer'})).state,'choose_workspace');
+  await assert.rejects(api.open({surface:'composer',tabId:99}),{code:'workspace_closed'});
+});
+
+for (const surface of ['library', 'composer']) test(`opening ${surface} waits through the initial missing Chrome context and returns the created tab`, async () => {
+  let contextReads = 0, reads = 0, created = 0;
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`,
+    getContexts: async () => ++contextReads < 3 ? [] : [{ tabId: 8, documentUrl: `chrome-extension://test/${surface}.html` }],
+    sendMessage: async () => { reads++; return { ok: true, result: { instruction: 'Retained human draft' } }; } },
+    tabs: { create: async () => { created++; return { id: 8, windowId: 1 }; }, get: async id => ({ id }) }, windows: { update: async () => {} } };
+  const result = await createAgentWorkspace({ chromeApi }).open({ surface });
+  assert.equal(result.state, 'ready'); assert.equal(result.tabId, 8);
+  assert.equal(result.instruction, 'Retained human draft'); assert.equal(reads, 1); assert.equal(created, 1);
+});
+
+test('a slow new workspace returns its opening tab after the existing wait budget instead of reporting no workspace', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 0 });
+  let contextReads = 0;
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`, getContexts: async () => {
+    if (++contextReads > 1) t.mock.timers.tick(15000);
+    return [];
+  } }, tabs: { create: async () => ({ id: 8, windowId: 1 }), get: async id => ({ id }) }, windows: { update: async () => {} } };
+  const result = await createAgentWorkspace({ chromeApi }).open({ surface: 'library' });
+  assert.equal(result.state, 'opening'); assert.equal(result.tabId, 8);
+});
+
+test('closing the newly created tab during initial loading reports closure without waiting for another page', async () => {
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`, getContexts: async () => [] },
+    tabs: { create: async () => ({ id: 8, windowId: 1 }), get: async () => { throw new Error('No tab with id: 8'); } },
+    windows: { update: async () => {} } };
+  await assert.rejects(createAgentWorkspace({ chromeApi }).open({ surface: 'library' }), { code: 'workspace_closed' });
+});
+
+test('showing a case waits through context loading until that exact case is visible', async () => {
+  let contexts = 0, reads = 0;
+  const chromeApi = { runtime: { getURL: path => `chrome-extension://test/${path}`,
+    getContexts: async () => ++contexts === 1 ? [] : [{ tabId: 8, documentUrl: 'chrome-extension://test/library.html' }],
+    sendMessage: async () => ({ ok: true, result: { viewedCaseId: ++reads === 1 ? 'previous-case' : 'requested-case' } }) },
+    tabs: { create: async () => ({ id: 8, windowId: 1 }), get: async id => ({ id }) }, windows: { update: async () => {} } };
+  const readCase = async ({ caseId }) => { assert.equal(caseId, 'requested-case'); };
+  const result = await createAgentWorkspace({ chromeApi, readCase }).show({ caseId: 'requested-case' });
+  assert.equal(result.state, 'ready'); assert.equal(result.tabId, 8);
+  assert.equal(result.viewedCaseId, 'requested-case'); assert.equal(reads, 2);
+});

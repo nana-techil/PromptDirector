@@ -16,6 +16,9 @@ export function createAgentTasks({ storage, execute, getLibraryId, allowLegacyTa
   if (typeof getLibraryId !== "function") throw new Error("Agent 任务缺少资料库身份。");
   const running = new Set();
   const completions = new Map();
+  // Byte updates are transient: never rewrite the immutable request payload on
+  // every download chunk. Persisted receipts remain authoritative after restart.
+  const live = new Map();
   let queue = Promise.resolve();
   const serialize = fn => {
     const operation = queue.then(fn, fn);
@@ -45,16 +48,29 @@ export function createAgentTasks({ storage, execute, getLibraryId, allowLegacyTa
     try {
       await assertLibrary(task.libraryId);
       await put({ ...task, state: "running", updatedAt: now() });
-      const scope = Object.freeze({ libraryId: task.libraryId, assertCurrent: () => assertLibrary(task.libraryId) });
+      live.set(task.id, { state: "running", updatedAt: now() });
+      const scope = Object.freeze({ libraryId: task.libraryId, assertCurrent: () => assertLibrary(task.libraryId),
+        report({ state, progress, sequence } = {}) {
+          const current = live.get(task.id);
+          if (!current || (sequence !== undefined && (!Number.isSafeInteger(sequence) || sequence <= (current.sequence ?? 0)))) return false;
+          live.set(task.id, { ...current,
+            ...(["queued", "running"].includes(state) ? { state } : {}),
+            ...(progress ? { progress: { ...progress } } : {}),
+            ...(sequence !== undefined ? { sequence } : {}), updatedAt: now() });
+          return true;
+        } });
       const result = await execute(task.operation, task.input, task.id, scope);
       await scope.assertCurrent();
+      live.delete(task.id);
       await put({ ...task, state: result?.ok === false ? "failed" : "completed", result, updatedAt: now() });
     } catch (error) {
       // Leave the original receipt intact when its library is no longer
       // active. Reopening it reports interruption; never replay paid work.
+      live.delete(task.id);
       await assertLibrary(task.libraryId);
-      await put({ ...task, state: "failed", error: { code: error.code || "operation_failed", message: error.message }, updatedAt: now() });
-    } finally { running.delete(task.id); }
+      await put({ ...task, state: "failed", error: { code: error.code || "operation_failed", message: error.message,
+        ...(error.details ? { details: error.details } : {}) }, updatedAt: now() });
+    } finally { live.delete(task.id); running.delete(task.id); }
   }
 
   return {
@@ -91,13 +107,19 @@ export function createAgentTasks({ storage, execute, getLibraryId, allowLegacyTa
       }
       const stored = await get(id);
       if (!stored) throw agentError("task_not_found", "没有找到这个任务，请核对请求编号与所连接的案例库。");
-      const task = await ownTask(stored);
+      let task = await ownTask(stored);
       if (["queued", "running"].includes(task.state) && !running.has(id)) {
-        task.state = "interrupted";
-        task.error = { code: "worker_restarted", message: "插件执行被中断。请先核对已保存结果；使用新请求编号重试时会检查已有内容。" };
-        await put(task);
+        // Completion may have committed while the snapshot/identity was read.
+        // Do not replace its terminal receipt with a stale interruption.
+        task = await ownTask(await get(id));
+        if (["queued", "running"].includes(task.state) && !running.has(id)) {
+          task.state = "interrupted";
+          task.error = { code: "worker_restarted", message: "插件执行被中断。请先核对已保存结果；使用新请求编号重试时会检查已有内容。" };
+          await put(task);
+        }
       }
       const { input: _input, ...receipt } = task;
+      if (["queued", "running"].includes(receipt.state) && live.has(id)) Object.assign(receipt, live.get(id));
       const conflicts = receipt.result?.promptConflicts;
       if (options.conflictToken) {
         const conflict = conflicts?.find(item => item.token === options.conflictToken);

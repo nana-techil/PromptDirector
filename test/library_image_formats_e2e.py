@@ -33,9 +33,7 @@ def main() -> None:
             for asset in entry["mediaAssets"]:
                 archive.write(fixtures / f"original.{asset['sourceFormat']}", asset["assetPath"])
         page = session.open_page("library.html", wait_until="networkidle")
-        page.locator("#open-settings").click()
-        page.locator('[data-settings-tab="general"]').click()
-        page.locator("#library-package-file").set_input_files(str(archive_path))
+        page.locator("#media-file").set_input_files(str(archive_path))
         expect(page.locator("#library-package-import-confirm")).to_be_enabled()
         expect(page.locator("#library-package-import-media-count")).to_have_text("2")
         page.locator("#library-package-import-confirm").click()
@@ -46,6 +44,8 @@ def main() -> None:
             return navigator.storage.getDirectory();
           };
         }""")
+        page.locator("#open-settings").click()
+        page.locator('[data-settings-tab="general"]').click()
         page.locator("#create-folder-backup").click()
         expect(page.locator("#data-safety-feedback")).to_contain_text("完整备份已完成", timeout=30000)
         proof = page.evaluate("""async () => {

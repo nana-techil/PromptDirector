@@ -1,4 +1,4 @@
-<!-- Generated from lucide-static (ISC; THIRD_PARTY_NOTICES.md) and PromptDirector editing marks. -->
+<!-- Generated from lucide-static (ISC; THIRD_PARTY_NOTICES.md) and PromptDirector editing marks and review controls. -->
 <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
   <symbol id="icon-arrow-down" viewBox="0 0 24 24">
     <path d="M12 5v14" />
@@ -99,6 +99,12 @@
     <path d="M13 19h8" />
     <path d="m3 17 2 2 4-4" />
     <path d="m3 7 2 2 4-4" />
+  </symbol>
+  <symbol id="icon-fullscreen" viewBox="0 0 24 24">
+    <path d="M8 3H3v5M16 3h5v5M21 16v5h-5M8 21H3v-5" />
+  </symbol>
+  <symbol id="icon-exit-fullscreen" viewBox="0 0 24 24">
+    <path d="M3 8h5V3M16 3v5h5M21 16h-5v5M8 21v-5H3" />
   </symbol>
   <symbol id="icon-maximize-2" viewBox="0 0 24 24">
     <path d="M15 3h6v6" />

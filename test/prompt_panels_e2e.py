@@ -68,11 +68,22 @@ def main():
             page.locator(f'.case-card[data-entry-id="{entry["id"]}"]').click()
             section = page.locator(".media-prompt-section")
             expect(section.locator(".original-prompt-panel")).to_have_count(1)
-            expect(section.get_by_role("tab", name="原始提示词", exact=True)).to_have_count(1)
+            # Confirmed 2026-10-18 layout: a single source keeps its name in the panel heading;
+            # source tabs only appear when there is a real second source to switch between.
+            tabs = section.locator(".prompt-source-tabs [role=tab]")
+            if ai == "1":
+                expect(section.locator(".prompt-source-tabs")).to_be_visible()
+                expect(tabs).to_have_text(["原始提示词", "AI 逆推"])
+            else:
+                expect(section.locator(".prompt-source-tabs")).to_be_hidden()
+                expect(tabs).to_have_count(1)
+                heading = section.locator(".prompt-section-heading h3").first
+                expect(heading).to_be_visible()
+                expect(heading).to_have_text("原始提示词")
+            assert section.locator('[data-prompt-tab="media"]').count() == 0, entry["id"]
             expect(section.locator(f".{kind}-reconstruction-current")).to_have_count(int(ai))
-            expect(section.get_by_role("tab", name="当前媒体", exact=True)).to_have_count(0)
-            expect(section.get_by_role("tab", name="AI 逆推", exact=True)).to_have_count(int(ai))
-            expect(section.get_by_role("button", name="以此创作", exact=True)).to_have_count(1)
+            # The creation action lives in the arranged workspace footer now, once per case.
+            expect(page.locator(".detail-primary .detail-core-actions").get_by_role("button", name="以此创作", exact=True)).to_have_count(1)
             if ai == "1":
                 section.get_by_role("tab", name="AI 逆推", exact=True).click()
                 panel = section.locator(f".{kind}-reconstruction-current")
@@ -123,7 +134,11 @@ def main():
                 expect(section).to_be_visible()
                 expect(rules_action).to_be_focused()
                 assert abs(page.locator("#detail-content").evaluate("e => e.scrollTop") - reading_position) <= 1
-            section.get_by_role("tab", name="原始提示词", exact=True).click()
+            if ai == "1":
+                section.get_by_role("tab", name="原始提示词", exact=True).click()
+            else:
+                # A single-source panel has no tab strip; the source is already shown.
+                expect(section.locator(".original-prompt-panel")).to_be_visible()
             if original == "1":
                 original_panel = section.locator(".original-prompt-panel")
                 original_panel.get_by_role("button", name="编辑原始提示词", exact=True).click()

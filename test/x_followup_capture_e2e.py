@@ -173,6 +173,12 @@ FAILED_SAVE_TASK = """()=>{window.failedSaveTask=(m,type)=>{
 def feedback():
     with extension_session('pd-feedback-actions-',viewport={'width':340,'height':700}) as run:
         page=run.open_page('collector.html')
+        # The sidebar restores its conversation and attempts automatic page capture
+        # asynchronously. Let that first attempt observe the real collector tab before
+        # this fixture replaces chrome.tabs.query/START_PAGE_CAPTURE; otherwise the
+        # stubbed batch becomes an automatic capture and hides the start controls.
+        expect(page.locator('#start-state')).to_be_visible(timeout=15000)
+        page.wait_for_timeout(1000)
         run.seed_storage(page,{'entries':[],'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-10-02T00:00:00Z','clipboardIncluded':True}})
         page.evaluate(FAILED_SAVE_TASK)
         page.evaluate("""async()=>{

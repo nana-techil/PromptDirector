@@ -133,6 +133,8 @@ Cases, media, tags and settings are stored in your browser by default. No accoun
 
 </details>
 
+Optional local video capture uses a [free source component](docs/VIDEO_COMPONENT.md); no paid developer certificate is required. See [known limitations](docs/KNOWN_LIMITATIONS.md) for large-video and website coverage limits.
+
 ## Contribute and license
 
 Contributions to capture adaptations, interactions, tests and documentation are welcome. When [reporting an issue](https://github.com/wchao6891/PromptDirector/issues), describe the page type, what you saw and the reproduction steps. Remove API keys, private data and unauthorized media. Run `npm run verify` before submitting code. See the [development guide](docs/DEVELOPMENT.md).

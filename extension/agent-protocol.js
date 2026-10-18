@@ -16,8 +16,8 @@ export const AGENT_JOB_PREFIX = "agentTask:";
 export const AGENT_UPLOAD_PREFIX = "agentUpload:";
 export const agentPosterAssetId = assetId => `${assetId}:poster`;
 
-export function agentError(code, message) {
-  return Object.assign(new Error(message), { code });
+export function agentError(code, message, details) {
+  return Object.assign(new Error(message), { code, ...(details ? { details } : {}) });
 }
 
 export function requireAgentId(value) {

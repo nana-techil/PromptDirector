@@ -1598,7 +1598,7 @@ async function requestRaw(url, apiKey, body, options, timeoutMs, label, extraHea
     return await pending;
   } catch (error) {
     if (timedOut) throw new ComposerServiceError(`${label} 请求超时，本次结果未保存`, 408, { cause: error });
-    if (error?.name === "AbortError") throw error;
+    if (error?.name === "AbortError" || error?.code === 'RESOURCE_BUDGET_REACHED') throw error;
     throw new ComposerServiceError(`无法连接 ${label}，请检查网络、地址和权限`, 0, { cause: error });
   } finally {
     if (timeoutId !== null) clearTimeout(timeoutId);

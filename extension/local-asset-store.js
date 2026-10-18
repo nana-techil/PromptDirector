@@ -44,14 +44,18 @@ export async function getLocalAssetHandle(assetId, options = {}) {
 }
 
 export async function deleteLocalAssetHandle(assetId, options = {}) {
-  const id = validateAssetId(assetId);
+  return deleteLocalAssetHandles([assetId], options);
+}
+
+export async function deleteLocalAssetHandles(assetIds, options = {}) {
+  const ids = [...new Set(assetIds.map(validateAssetId))];
+  if (!ids.length) return;
   const database = await resolveDatabase(options);
   const transaction = database.transaction(STORE_NAME, "readwrite");
   const completed = transactionAsPromise(transaction);
-  await Promise.all([
-    requestAsPromise(transaction.objectStore(STORE_NAME).delete(id)),
-    completed
-  ]);
+  const store = transaction.objectStore(STORE_NAME);
+  for (const id of ids) store.delete(id);
+  await completed;
 }
 
 export async function inspectStoredLocalAsset(assetId, expectedMetadata, options = {}) {

@@ -1,3 +1,5 @@
+import { withAssistantTaskRuntime } from './assistant-task.js';
+import { ASSISTANT_TASK_INSTRUCTION } from './plugin-assistant-prompt.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { getLibraryStorage } from './library-storage.js';
 import { createComposerWorkspaceTools } from './composer-workspace-tools.js';
@@ -6,7 +8,6 @@ import { createComposerLibraryTools } from './composer-library-tools.js';
 import { entryMediaAssets } from './media.js';
 import { materializeLogicalCases, normalizeCompoundCases } from './compound-cases.js';
 import { getDerivedMedia, getAllDerivedMetadata, getMediaBlob } from './media-store.js';
-import { getScreenshotBlob } from './image-store.js';
 import { blobToDataUrl } from './vision.js';
 import { createSearchIndexCache } from './search-index.js';
 import { filterCaseSearchEntries } from './case-search.js';
@@ -19,6 +20,11 @@ const searchCache = createSearchIndexCache();
 
 // This loader runs only after an actual native tool call. Files and credentials never enter search results.
 export function createLocalComposerLibraryTools(options) {
+  const taskTools = tools => options.executionHost ? tools : withAssistantTaskRuntime({ ...tools,
+    instructions: [tools.instructions, ASSISTANT_TASK_INSTRUCTION].filter(Boolean).join('\n\n') }, {
+    messages: options.session.messages, instruction: options.session.messages.findLast(message => message.role === 'user')?.content || options.session.currentInstruction || '',
+    userMessageId: options.userMessageId, context: { surface: 'composer', cases: options.session.libraryTools?.candidates, references: options.session.referenceSnapshots, model: { imageInput: options.vision === true } }
+  });
   const sendMessage = options.sendMessage ?? (message => chrome.runtime.sendMessage(message));
   const caseTools = createComposerLibraryTools({
     ...options,
@@ -28,7 +34,7 @@ export function createLocalComposerLibraryTools(options) {
       const entries = materializeLogicalCases(state.entries, normalizeCompoundCases(state.compoundCases, state.entries));
       signal?.throwIfAborted();
       const needsIndex = name === 'search_cases';
-      const { minDurationMs, maxDurationMs, hasOriginalPrompt, ...indexScope } = args;
+      const { minDurationMs, maxDurationMs, hasOriginalPrompt, hasPrompt, ...indexScope } = args;
       if (needsIndex) filterCaseSearchEntries([], state.organizerState, args);
       const scoped = needsIndex ? filterCaseSearchEntries(entries, state.organizerState, indexScope) : entries;
       const documentEntries = needsIndex ? scoped : args.part === 'document' ? entries.filter(entry => entry.id === args.caseId) : [];
@@ -42,7 +48,7 @@ export function createLocalComposerLibraryTools(options) {
     },
     readImage: async (id, signal, expectedHash) => {
       signal?.throwIfAborted();
-      const blob = await getMediaBlob(id) ?? await getScreenshotBlob(id);
+      const blob = await getMediaBlob(id);
       if (!blob) throw new Error('指定图片已不存在');
       const sha256 = await sha256Blob(blob);
       if (sha256 === expectedHash) return { sha256 };
@@ -50,9 +56,14 @@ export function createLocalComposerLibraryTools(options) {
       return { dataUrl: await blobToDataUrl(blob), mimeType: blob.type, sha256 };
     }
   });
-  const workspace = createComposerWorkspaceTools({ ...options, caseTools, invokeSkill: async (operation,input) => {
+  const workspace = createComposerWorkspaceTools({ ...options, caseTools,
+    invokeSkillTransfer: async (operation,input) => {
+      const response = await sendMessage({type:'COMPOSER_SKILL_TRANSFER',operation,input});
+      if (!response?.ok) throw new Error(response?.message || '无法传入Skill文件');
+      return response.data;
+    }, invokeSkill: async (operation,input) => {
     const response = await sendMessage({type:'SKILL_OPERATION',operation,input});
-    if (!response?.ok) throw new Error(response?.message || '无法读取Skill');
+    if (!response?.ok) throw new Error(response?.message || '无法操作Skill');
     return response.data;
   }, loadState: async () => {
     const state = await readWorkspaceLibraryState(sendMessage);
@@ -78,23 +89,27 @@ export function createLocalComposerLibraryTools(options) {
       signal?.throwIfAborted();
       return response.data;
     };
-    return { ...tools, budget: options.budget,
+    return taskTools({ ...tools, budget: options.budget,
       execute: (name, args, context = {}) => invoke('execute', { name, args, callId: context.callId }, context.signal),
+      loadContext: () => invoke('loadContext'),
+      recordToolResult: input => invoke('recordToolResult', input),
       loadContinuation: input => invoke('loadContinuation', input),
       saveContinuation: input => invoke('saveContinuation', input),
       retainSkillVersions: input => invoke('retainSkillVersions', input),
-      clearContinuation: () => invoke('clearContinuation') };
+      clearContinuation: () => invoke('clearContinuation') });
   }
-  return { ...tools,
+  return taskTools({ ...tools,
     budget: options.budget,
+    loadContext: () => taskProgress().loadContext(),
+    recordToolResult: input => taskProgress().recordToolResult(input),
     loadContinuation: input => taskProgress().loadContinuation(input),
     saveContinuation: checkpoint => taskProgress().saveContinuation(checkpoint),
     retainSkillVersions: ids => taskProgress().retainSkillVersions(ids),
-    clearContinuation: () => taskProgress().clearContinuation() };
+    clearContinuation: () => taskProgress().clearContinuation() });
 }
 
 export async function handleComposerLibraryHost(message, storage = getLibraryStorage(), hostOptions = {}) {
-  const operations = ['execute', 'loadContinuation', 'saveContinuation', 'retainSkillVersions', 'clearContinuation'];
+  const operations = ['execute', 'loadContext', 'recordToolResult', 'loadContinuation', 'saveContinuation', 'retainSkillVersions', 'clearContinuation'];
   if (!operations.includes(message.operation)) throw new Error('未知创作台资料工具动作');
   const { composerSessions } = await storage.get('composerSessions');
   const session = composerSessions?.find(item => item.id === message.sessionId);
@@ -102,7 +117,7 @@ export async function handleComposerLibraryHost(message, storage = getLibrarySto
     throw new Error('创作对话或用户要求已不存在，未执行工具动作');
   }
   const events = [];
-  const tools = createLocalComposerLibraryTools({ ...hostOptions, session, userMessageId: message.userMessageId,
+  const tools = createLocalComposerLibraryTools({ ...hostOptions, executionHost: true, session, userMessageId: message.userMessageId,
     vision: message.vision, onEvent: event => { events.push(event); } });
   const data = message.operation === 'execute'
     ? await tools.execute(message.input.name, message.input.args, { callId: message.input.callId })

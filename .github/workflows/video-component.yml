@@ -1,0 +1,157 @@
+name: Video component distributions
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'connector/video-*.mjs'
+      - 'connector/register-video.mjs'
+      - 'connector/node-command.mjs'
+      - 'connector/test/video-*.test.mjs'
+      - 'connector/installer/**'
+      - 'tools/video-component/**'
+      - 'extension/video-component-*.js'
+      - 'extension/native-video.js'
+      - 'test/video_native_launch_e2e.py'
+      - 'test/e2e_support.py'
+      - 'docs/VIDEO_COMPONENT.md'
+      - 'package.json'
+      - '.github/actions/setup-browser/**'
+      - '.github/workflows/video-component.yml'
+permissions:
+  contents: read
+concurrency:
+  group: video-component-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-browser
+      - if: runner.os == 'Windows'
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: make mingw-w64-ucrt-x86_64-gcc
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --yes --no-progress
+          'C:\Program Files (x86)\NSIS' | Out-File -FilePath $env:GITHUB_PATH -Append
+          'VIDEO_MSYS_BASH=${{ steps.msys2.outputs.msys2-location }}\usr\bin\bash.exe' | Out-File -FilePath $env:GITHUB_ENV -Append
+          'VIDEO_MSYS_PREFIX=/ucrt64' | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Verify video protocol and installation recovery contracts
+        run: node --test connector/test/video-host.test.mjs connector/test/video-service.test.mjs test/native-video.test.js test/video-component-setup.test.js
+      - run: node tools/video-component/build.mjs
+      - name: Install on disposable macOS runner
+        if: runner.os == 'macOS'
+        run: sudo installer -pkg dist/video-component/PromptDirector-Video-macOS.pkg -target /
+      - name: Install and verify Windows registration without developer runtimes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath dist/video-component/PromptDirector-Video-Windows.exe -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Installation failed' }
+          $componentRoot = Join-Path $env:LOCALAPPDATA 'PromptDirector/VideoComponent'
+          & "$componentRoot/bin/node.exe" "$componentRoot/connector/register-video.mjs"
+          if ($LASTEXITCODE -ne 0) { throw 'Bundled tool validation failed' }
+          $manifest = (Get-Item 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.promptdirector.video').GetValue('')
+          if ($manifest -ne "$componentRoot\native-manifest.json") { throw 'Chrome registration mismatch' }
+          & "$componentRoot/bin/node.exe" tools/video-component/smoke.mjs "$componentRoot"
+          if ($LASTEXITCODE -ne 0) { throw 'Native protocol validation failed' }
+          $env:PROMPTDIRECTOR_YTDLP = "$componentRoot/bin/yt-dlp.exe"
+          $env:PROMPTDIRECTOR_FFMPEG = "$componentRoot/bin/ffmpeg.exe"
+          $env:PROMPTDIRECTOR_FFPROBE = "$componentRoot/bin/ffprobe.exe"
+          $env:PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS = '1'
+          & "$componentRoot/bin/node.exe" --test --test-name-pattern='real FFmpeg merges' connector/test/video-service.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed video/audio merge failed' }
+          python test/video_native_launch_e2e.py
+          if ($LASTEXITCODE -ne 0) { throw 'Chrome could not launch the installed native host' }
+          $process = Start-Process -FilePath "$componentRoot/Uninstall.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0 -or (Test-Path 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.promptdirector.video')) { throw 'Uninstall did not remove its own registration' }
+      - name: Verify macOS native protocol with packaged runtime
+        if: runner.os == 'macOS'
+        run: |
+          componentRoot='/Library/Application Support/PromptDirector/VideoComponent'
+          "$componentRoot/bin/node" tools/video-component/smoke.mjs "$componentRoot"
+          PROMPTDIRECTOR_YTDLP="$componentRoot/bin/yt-dlp" PROMPTDIRECTOR_FFMPEG="$componentRoot/bin/ffmpeg" PROMPTDIRECTOR_FFPROBE="$componentRoot/bin/ffprobe" PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS=1 "$componentRoot/bin/node" --test --test-name-pattern='real FFmpeg merges' connector/test/video-service.test.mjs
+          # A subsequent Chrome success must come from the source installation,
+          # not fall back to the bundled host installed earlier on this runner.
+          node --input-type=module -e 'import fs from "node:fs"; import assert from "node:assert/strict"; const m=JSON.parse(fs.readFileSync("/Library/Google/Chrome/NativeMessagingHosts/com.promptdirector.video.json")); assert.equal(m.path,"/Library/Application Support/PromptDirector/VideoComponent/native-host");'
+          sudo rm '/Library/Google/Chrome/NativeMessagingHosts/com.promptdirector.video.json'
+      - name: Build and verify the independent free source distribution
+        run: |
+          npm run package:video-source
+          npm run check:video-source
+      - name: Install, launch and remove the source component on macOS
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          toolsRoot="$PWD/dist/video-component/mac/payload/bin"
+          export PROMPTDIRECTOR_YTDLP="$toolsRoot/yt-dlp"
+          export PROMPTDIRECTOR_FFMPEG="$toolsRoot/ffmpeg"
+          export PROMPTDIRECTOR_FFPROBE="$toolsRoot/ffprobe"
+          export PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS=1
+          node --test connector/test/video-source-install.test.mjs connector/test/video-registration.test.mjs
+          sourceRoot="$RUNNER_TEMP/PromptDirector video source"
+          componentRoot="$HOME/Library/Application Support/PromptDirector/VideoComponent-Source"
+          ditto -x -k dist/video-component/PromptDirector-Video-Source.zip "$sourceRoot"
+          test -x "$sourceRoot/Install-macOS.command"
+          trap 'node "$sourceRoot/connector/register-video.mjs" uninstall' EXIT
+          node "$sourceRoot/connector/register-video.mjs" install
+          node tools/video-component/check-source-registration.mjs "$componentRoot"
+          node tools/video-component/smoke.mjs "$componentRoot"
+          # Reinstall the extracted public artifact, then let Chrome launch it.
+          node "$sourceRoot/connector/register-video.mjs" install
+          python test/video_native_launch_e2e.py
+          node "$sourceRoot/connector/register-video.mjs" uninstall
+          trap - EXIT
+          node tools/video-component/check-source-registration.mjs "$componentRoot" --removed
+          test -x "$toolsRoot/ffmpeg"
+      - name: Install, launch and remove the source component on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $toolsRoot = Join-Path $PWD 'dist/video-component/win/payload/bin'
+          $env:PROMPTDIRECTOR_YTDLP = "$toolsRoot/yt-dlp.exe"
+          $env:PROMPTDIRECTOR_FFMPEG = "$toolsRoot/ffmpeg.exe"
+          $env:PROMPTDIRECTOR_FFPROBE = "$toolsRoot/ffprobe.exe"
+          $env:PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS = '1'
+          node --test connector/test/video-source-install.test.mjs connector/test/video-registration.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Source installation contracts failed' }
+          $sourceRoot = Join-Path $env:RUNNER_TEMP 'PromptDirector video source'
+          $componentRoot = Join-Path $env:LOCALAPPDATA 'PromptDirector/VideoComponent-Source'
+          Expand-Archive -LiteralPath dist/video-component/PromptDirector-Video-Source.zip -DestinationPath $sourceRoot
+          try {
+            node "$sourceRoot/connector/register-video.mjs" install
+            if ($LASTEXITCODE -ne 0) { throw 'Source installation failed' }
+            node tools/video-component/check-source-registration.mjs "$componentRoot"
+            if ($LASTEXITCODE -ne 0) { throw 'Source HKCU registration readback failed' }
+            node tools/video-component/smoke.mjs "$componentRoot"
+            if ($LASTEXITCODE -ne 0) { throw 'Source native protocol failed' }
+            node "$sourceRoot/connector/register-video.mjs" install
+            if ($LASTEXITCODE -ne 0) { throw 'Source update failed' }
+            python test/video_native_launch_e2e.py
+            if ($LASTEXITCODE -ne 0) { throw 'Chrome could not launch the source component' }
+          } finally {
+            node "$sourceRoot/connector/register-video.mjs" uninstall
+            if ($LASTEXITCODE -ne 0) { throw 'Source uninstallation failed' }
+          }
+          node tools/video-component/check-source-registration.mjs "$componentRoot" --removed
+          if ($LASTEXITCODE -ne 0) { throw 'Source uninstallation readback failed' }
+          if (!(Test-Path "$toolsRoot/ffmpeg.exe")) { throw 'Uninstall removed an external dependency' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: video-component-${{ runner.os }}
+          path: |
+            dist/video-component/*.pkg
+            dist/video-component/*.exe
+            dist/video-component/PromptDirector-Video-Source.zip
+            dist/video-component/*-build.json
+          if-no-files-found: error

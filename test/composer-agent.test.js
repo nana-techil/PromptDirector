@@ -6,13 +6,19 @@ import {
   COMPOSER_AGENT_VERSION,
   DEFAULT_AGENT_INSTRUCTION,
   DEFAULT_TASK_METHODS,
+  DEFAULT_AGENT_INSTRUCTION_EN,
+  DEFAULT_TASK_METHODS_EN,
+  agentInstructionFor,
   compileAgentAutoExecutionPrompt,
   compileAgentExecutionPrompt,
   compileAgentPlanningPrompt,
   composerAssemblyLayers,
   normalizeComposerAgentSettings,
   taskMethodFor,
-  updateAgentTaskMethod
+  updateAgentTaskMethod,
+  updateAgentInstruction,
+  resetAgentInstruction,
+  resetAgentTaskMethod
 } from "../extension/composer-agent.js";
 
 test("light agent compiles routing, button questions, and local search without a dimension contract", () => {
@@ -30,10 +36,44 @@ test("light agent compiles routing, button questions, and local search without a
 
   const execution = compileAgentExecutionPrompt({ settings, route: "compose", targetType: "image", outputLanguage: "en", productionReviewEnabled: true });
   assert.match(execution, /self-contained|自包含/);
-  assert.match(execution, /可见事实/);
-  assert.match(execution, /只使用用户指定/);
+  assert.match(execution, /Visible facts/);
+  assert.match(execution, /use only the specified/);
   assert.match(execution, /不要输出审核报告/);
   assert.doesNotMatch(execution, /plan\.|dimensionUses|preservedFeatures/);
+});
+
+test("English defaults reach planning, execution and assembly without translating user edits", () => {
+  const settings = normalizeComposerAgentSettings();
+  for (const compile of [compileAgentPlanningPrompt, compileAgentExecutionPrompt, compileAgentAutoExecutionPrompt]) {
+    const prompt = compile({ settings, outputLanguage: "en", route: "compose", targetType: "video" });
+    assert.ok(prompt.includes(DEFAULT_AGENT_INSTRUCTION_EN));
+    assert.ok(prompt.includes(DEFAULT_TASK_METHODS_EN["compose.video"]));
+    assert.ok(!prompt.includes(DEFAULT_AGENT_INSTRUCTION));
+  }
+  const layers = composerAssemblyLayers({ settings, routeMode: "compose", outputLanguage: "en", targetType: "video" });
+  assert.equal(layers.find(item => item.id === "agent").content, DEFAULT_AGENT_INSTRUCTION_EN);
+  assert.equal(layers.find(item => item.id === "task").content, DEFAULT_TASK_METHODS_EN["compose.video"]);
+  for (const key of AGENT_TASK_KEYS) {
+    const [route, target] = key.split(".");
+    assert.equal(taskMethodFor(settings, route, target, "en"), DEFAULT_TASK_METHODS_EN[key]);
+    assert.equal(taskMethodFor(settings, route, target, "zh-CN"), DEFAULT_TASK_METHODS[key]);
+  }
+  const edited = updateAgentTaskMethod(updateAgentInstruction(settings, "用户写的系统指令"), "compose.video", "用户写的视频方法");
+  assert.equal(agentInstructionFor(edited, "en"), "用户写的系统指令");
+  assert.equal(taskMethodFor(edited, "compose", "video", "en"), "用户写的视频方法");
+  assert.equal(agentInstructionFor(resetAgentInstruction(edited), "en"), DEFAULT_AGENT_INSTRUCTION_EN);
+  assert.equal(taskMethodFor(resetAgentTaskMethod(edited, "compose.video"), "compose", "video", "en"), DEFAULT_TASK_METHODS_EN["compose.video"]);
+});
+
+test("saving unchanged English defaults keeps them language-aware after a storage round trip", () => {
+  const saved = normalizeComposerAgentSettings(JSON.parse(JSON.stringify(updateAgentTaskMethod(
+    updateAgentInstruction({}, DEFAULT_AGENT_INSTRUCTION_EN), "compose.image", DEFAULT_TASK_METHODS_EN["compose.image"]
+  ))));
+  assert.equal(saved.agentInstruction.customized, false);
+  assert.equal(saved.taskMethods["compose.image"].customized, false);
+  assert.equal(agentInstructionFor(saved, "zh-CN"), DEFAULT_AGENT_INSTRUCTION);
+  assert.equal(taskMethodFor(saved, "compose", "image", "zh-CN"), DEFAULT_TASK_METHODS["compose.image"]);
+  assert.equal(agentInstructionFor(saved, "en"), DEFAULT_AGENT_INSTRUCTION_EN);
 });
 
 test("automatic execution chooses and completes one task in the same response", () => {

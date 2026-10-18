@@ -19,11 +19,11 @@ export function attachDetailSplit(primary, { label, readRatio, saveRatio }) {
     const min = Math.min(MIN_PANEL_WIDTH, total / 2);
     return { total, min, max: total - min };
   }
-  function apply(width) {
+  function apply(width, explicit = true) {
     const { total, min, max } = bounds();
     if (!total) return;
     const value = Math.min(max, Math.max(min, width));
-    primary.style.setProperty("--detail-panel-width", `${value}px`);
+    if (explicit) primary.style.setProperty("--detail-panel-width", `${value}px`);
     separator.setAttribute("aria-valuemin", String(Math.round(min)));
     separator.setAttribute("aria-valuemax", String(Math.round(max)));
     separator.setAttribute("aria-valuenow", String(Math.round(value)));
@@ -33,12 +33,13 @@ export function attachDetailSplit(primary, { label, readRatio, saveRatio }) {
   const updatePreferences = () => {
     ratio = readRatio();
     if (ratio == null) primary.style.removeProperty('--detail-panel-width');
-    apply(ratio == null ? body.getBoundingClientRect().width : primary.clientWidth * ratio);
+    apply(ratio == null ? body.getBoundingClientRect().width : primary.clientWidth * ratio, ratio != null);
   };
   primary.addEventListener('layout-preferences-changed', updatePreferences);
   const observer = new ResizeObserver(() => {
     if (!separator.getClientRects().length) return;
-    apply(ratio == null ? body.getBoundingClientRect().width : primary.clientWidth * ratio);
+    if (ratio == null) primary.style.removeProperty('--detail-panel-width');
+    apply(ratio == null ? body.getBoundingClientRect().width : primary.clientWidth * ratio, ratio != null);
   });
   observer.observe(primary);
   separator.addEventListener("pointerdown", event => {

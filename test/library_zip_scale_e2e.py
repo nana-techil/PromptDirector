@@ -65,16 +65,14 @@ def main() -> None:
         print("Generated real ZIP32-boundary and DEFLATE fixtures", flush=True)
         page = session.open_page("library.html", wait_until="networkidle")
         expect(page.locator("body")).to_have_attribute("data-library-state", "ready")
-        page.locator("#open-settings").click()
-        page.locator('[data-settings-tab="general"]').click()
-        page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])
+        page.locator("#media-file").set_input_files([str(item["path"]) for item in sources])
         confirm = page.locator("#library-package-import-confirm")
         expect_import_ready(page)
         # Cancellation after actual preflight must leave the existing library untouched.
         page.locator("#library-package-import-cancel").click()
         state = page.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert [entry["id"] for entry in state["entries"]] == [sentinel["id"]]
-        page.locator("#library-package-file").set_input_files([str(item["path"]) for item in sources])
+        page.locator("#media-file").set_input_files([str(item["path"]) for item in sources])
         expect_import_ready(page)
         confirm.click()
         expect(page.locator("#library-package-import-dialog")).to_be_hidden(timeout=300000)
@@ -89,7 +87,8 @@ def main() -> None:
             }""", source["id"])
             assert result == {"size": source["size"], "sha256": source["sha256"]}, result
         print("Default multi-package import and stored byte hashes passed", flush=True)
-        page.locator("#settings-close").click()
+        # ZIP packages enter through the unified picker; no settings dialog is involved.
+        expect(page.locator("#settings-dialog")).to_be_hidden()
         page.locator("#select-cases").click()
         for source in sources:
             page.locator(f'.case-card[data-entry-id="{source["id"]}"]').click()

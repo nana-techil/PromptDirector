@@ -38,6 +38,7 @@
   }, true);
   window.addEventListener('drop', event => {
     if (!event.isTrusted || !event.dataTransfer?.types.includes(type)) return;
+    if (event.dataTransfer.files.length) return;
     let descriptor;
     try {
       descriptor = JSON.parse(event.dataTransfer.getData(type));

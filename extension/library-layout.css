@@ -23,10 +23,12 @@
 .modular-library .topbar .top-actions { flex: none; gap: 5px; }
 .modular-library .top-actions > button, .modular-library .top-actions .package-menu > summary { padding: 6px 9px; font-size: 12px; }
 .modular-library .top-actions .settings-entry-button { padding: 6px; flex-basis: 32px; }
-.modular-library .topbar .browse-location { max-width: 32%; }
 .modular-library .topbar .share-bar, .modular-library .topbar .project-selection-actions { position: static; inset: auto; display: flex; align-items: center; flex: 0 1 auto; flex-wrap: nowrap; justify-content: flex-end; gap: 8px; height: 34px; min-width: 0; margin: 0 0 0 auto; background: transparent; }
 .modular-library .topbar .share-bar[hidden], .modular-library .topbar .project-selection-actions[hidden] { display: none; }
 .modular-library .selection-simple-actions, .modular-library .selection-selected-actions { flex-wrap: nowrap; }
+.modular-library .topbar .selection-simple-actions { min-width: 0; }
+.modular-library .topbar .selection-selected-actions { min-width: 0; overflow-x: auto; }
+.modular-library .topbar #share-count, .modular-library .topbar #share-cancel { flex: 0 0 auto; }
 .modular-library .topbar:has(.selection-mode, .project-selection-mode, .manual-order-mode) > .top-actions { display: none; }
 .modular-library .topbar:has(.selection-mode, .project-selection-mode, .manual-order-mode) .toolbar-more { display: none; }
 .modular-library .topbar .manual-order-mode .gallery-view-controls { display: none; }
@@ -82,7 +84,7 @@
 .modular-library .filters-collapsed .module-active-count { position: absolute; top: 0; right: 1px; font-size: 9px; }
 .modular-library .filters-collapsed .sidebar-layout-menu { display: none; }
 .modular-library .filters-collapsed .sidebar-trash-section #open-trash { width: 36px; }
-.modular-library .gallery-shell { min-width: 0; padding-top: 8px; }
+.modular-library .gallery-shell { min-width: 0; padding-top: 0; }
 .modular-library .sidebar-resizer { display: block; }
 .modular-library .toolbar-more { position: relative; flex: 0 0 32px; }
 .modular-library .toolbar-more > summary { display: grid; place-items: center; width: 32px; height: 32px; padding: 6px; list-style: none; border: 1px solid var(--line); border-radius: var(--ui-control-radius); background: var(--raised); cursor: pointer; }
@@ -111,6 +113,7 @@
   .modular-library .topbar .selection-selected-actions { gap: 3px; }
   .modular-library .topbar #share-count { font-size: 10px; }
   .modular-library .topbar #share-cancel { padding-inline: 5px; }
+  .modular-library .topbar .selection-mode .gallery-heading-copy { display: none; }
   .modular-library .topbar .selection-menu-panel { position: fixed; top: var(--library-topbar-height); left: 8px; right: 8px; width: auto; }
 }
 
@@ -118,8 +121,6 @@
 .modular-library .filter-sidebar { grid-column: 1; grid-row: 1; }
 .modular-library .sidebar-resizer { grid-column: 2; grid-row: 1; }
 .modular-library .toolbar-context { display: flex; align-items: center; gap: 8px; flex: 1 1 100%; min-width: 0; }
-.modular-library .topbar .toolbar-context .browse-location { display: block !important; max-width: 70%; }
-.modular-library .topbar .toolbar-context .browse-location[hidden] { display: none !important; }
 @media (max-width: 640px) {
   .modular-library .toolbar-more-panel { position: fixed; top: var(--library-topbar-height); left: 12px; right: 12px; width: auto; }
 }
@@ -161,9 +162,10 @@
   .modular-library .topbar, .modular-library .topbar .gallery-heading { gap: 4px; }
   .modular-library .topbar .gallery-heading-copy { max-width: 100px; flex: 0 1 100px; }
   .modular-library .topbar .global-search { min-width: 36px; }
-  .modular-library .topbar .browse-location { display: none; }
   .modular-library .topbar .gallery-select-button > span { display: none; }
   .modular-library .topbar #gallery-size { width: 48px; }
   .gallery-size-control { gap: 4px; margin: 0; }
   .modular-library .topbar .share-bar, .modular-library .topbar .project-selection-actions { overflow-x: auto; }
 }
+
+.module-chevron { transition: transform 180ms ease; }

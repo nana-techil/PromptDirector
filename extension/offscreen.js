@@ -45,6 +45,7 @@ import {
   inspectStoredLocalAsset
 } from "./local-asset-store.js";
 
+import { shareDirectory, writeShareArchive } from './share-directory.js';
 const blobUrls = new Set();
 let creativeJobRunner = null;
 const videoAnalysisRunners = new Map();
@@ -61,6 +62,14 @@ if (globalThis.chrome?.runtime?.onMessage) {
 
 async function handleMessage(message) {
   switch (message.type) {
+    case 'WRITE_SHARE_ARCHIVE': {
+      if (!blobUrls.has(message.url)) throw new Error('分享包已过期，请重新导出');
+      const directory = await shareDirectory();
+      if (!directory) throw new Error('请先选择分享文件夹');
+      const blob = await (await fetch(message.url)).blob();
+      const filename = await writeShareArchive(directory, blob, message.filename);
+      return { ok: true, filename, directoryName: directory.name };
+    }
     case "PREPARE_AGENT_FILE":
       return { ok: true, prepared: await prepareAgentFile(message.record) };
     case "PREPARE_STORED_VIDEO_POSTER": {

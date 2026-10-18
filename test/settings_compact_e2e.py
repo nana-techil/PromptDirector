@@ -9,7 +9,13 @@ with extension_session('pd-settings-compact-', viewport={'width':1440,'height':1
  page=session.open_page('library.html')
  page.locator('#open-settings').dispatch_event('click')
  expect(page.locator('#settings-general-panel')).to_be_visible()
- page.locator('#ui-theme').select_option('dark')
+ # Theme is a switch now; toggling persists through the same preference service.
+ if not page.locator('#ui-theme').is_checked():
+  with page.expect_navigation(wait_until='domcontentloaded'):
+   page.locator('#ui-theme').check()
+  page.locator('#open-settings').dispatch_event('click')
+ assert page.locator('#ui-theme').is_checked()
+ assert page.evaluate("async()=> (await chrome.runtime.sendMessage({type:'GET_STATE'})).uiPreferences.theme")=='dark'
  page.locator('#library-name-setting').fill('设置保存验证')
  page.locator('#save-library-settings').click()
  expect(page.locator('#library-settings-feedback')).to_have_text('已保存')
@@ -52,7 +58,10 @@ with extension_session('pd-settings-compact-', viewport={'width':1440,'height':1
   page.locator('#sync-password').scroll_into_view_if_needed()
   rects=page.evaluate('''() => {
    const rect = selector => {const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right};};
-   return {password:rect('#sync-password'),connect:rect('#connect-sync-folder'),permissions:[...document.querySelectorAll('.capture-permission-row')].map(row=>{
+   const setup=document.querySelector('.video-component-setup'), action=setup.querySelector('button');
+   const r=setup.getBoundingClientRect(), b=action.getBoundingClientRect();
+   const videoSetup={fits:setup.scrollWidth<=setup.clientWidth,actionInside:b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom};
+   return {videoSetup,password:rect('#sync-password'),connect:rect('#connect-sync-folder'),permissions:[...document.querySelectorAll('.capture-permission-row:not(.video-component-setup)')].map(row=>{
     const s=row.querySelector('span').getBoundingClientRect(), b=row.querySelector('button').getBoundingClientRect();return {gap:b.left-s.right,topDelta:Math.abs(b.top-s.top)};
    }),scrollWidth:document.querySelector('#settings-general-panel').scrollWidth,clientWidth:document.querySelector('#settings-general-panel').clientWidth};
   }''')
@@ -60,6 +69,8 @@ with extension_session('pd-settings-compact-', viewport={'width':1440,'height':1
   assert 0<=rects['connect']['left']-rects['password']['right']<=13,rects
   assert all(0<=r['gap']<=13 for r in rects['permissions']),rects
   assert rects['scrollWidth']<=rects['clientWidth'],rects
+  # Component setup deliberately wraps its one action on narrow screens.
+  assert rects['videoSetup']['fits'] and rects['videoSetup']['actionInside'],rects
   if width>680:
    # Scope to the general panel: the separate layout tab panel (also .setting-section) now precedes it in the DOM and is hidden.
    full=page.locator('#settings-general-panel .setting-section').first.bounding_box()

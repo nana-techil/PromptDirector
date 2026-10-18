@@ -25,12 +25,14 @@ def main():
         p.get_by_role('button',name='下一项媒体',exact=True).click()
         expect(p.locator('.detail-image.has-alpha-channel')).to_be_visible()
         p.wait_for_function("()=>getComputedStyle(document.querySelector('.detail-image')).backgroundImage!=='none'")
-        for theme,color in [('dark','rgb(0, 0, 0)'),('light','rgb(255, 255, 255)'),('dark','rgb(0, 0, 0)')]:
+        for theme in ['dark','light','dark']:
             if p.locator('html').get_attribute('data-theme') != theme:
                 with p.expect_navigation(wait_until='domcontentloaded'):
                     p.evaluate("async theme=>{const{updateUiPreferences}=await import('./i18n.js');const{uiPreferences}=await chrome.storage.local.get('uiPreferences');await updateUiPreferences({...uiPreferences,theme})}",theme)
                 p.locator('.case-card[data-entry-id=case]').click();p.get_by_role('button',name='下一项媒体',exact=True).click()
                 expect(p.locator('.detail-image.has-alpha-channel')).to_be_visible()
+            color=p.locator('.detail-body').evaluate('e=>getComputedStyle(e).backgroundColor')
+            assert color not in ['rgb(0, 0, 0)','rgb(255, 255, 255)']
             p.wait_for_function('(color)=>getComputedStyle(document.querySelector(".detail-visual-caption")).backgroundColor===color',arg=color)
             background=p.locator('.detail-visual-caption').evaluate('e=>({color:getComputedStyle(e).backgroundColor,image:getComputedStyle(e).backgroundImage})')
             assert background == {'color':color,'image':'none'}, background

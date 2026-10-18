@@ -10,7 +10,7 @@ def main():
         page=run.open_page('library.html')
         entry={'id':'toolbar','title':'审片与信息面板','text':'完整原始提示词，不因显示模式改变。','mediaAssets':[
             {'id':'video','kind':'video','storageMode':'managed','mimeType':'video/mp4','width':320,'height':180},
-            {'id':'picture','kind':'image','storageMode':'managed','mimeType':'image/png','width':50,'height':200}], 'primaryMediaId':'video','customLabels':['原有标签']}
+            {'id':'picture','kind':'image','storageMode':'managed','mimeType':'image/png','width':50,'height':200,'palette':{'colors':['#b24b48','#d6a04b','#385d74','#d1d1c2','#20373c','#666666','#989898']}}], 'primaryMediaId':'video','customLabels':['原有标签']}
         run.seed_storage(page,{'entries':[entry,{'id':'other','title':'另一条信息','text':'其他案例资料'}]})
         page.evaluate("""async bytes=>{const{saveMediaBlob}=await import('./media-store.js');await saveMediaBlob('video',new Blob([new Uint8Array(bytes)],{type:'video/mp4'}));const c=document.createElement('canvas');c.width=50;c.height=200;await saveMediaBlob('picture',await new Promise(r=>c.toBlob(r,'image/png')));}""",list(original))
         page.reload();page.locator('.case-card[data-entry-id=toolbar]').click()
@@ -45,6 +45,7 @@ def main():
         expect(page.locator('.detail-visual-rail')).to_be_hidden();one_row()
         page.get_by_role('button',name='下一项媒体',exact=True).click()
         expect(page.locator('.detail-image')).to_be_visible();one_row()
+        expect(page.locator('.detail-visual-caption > .detail-palette .swatch')).to_have_count(7)
         page.locator('#detail-review-toggle').click()
         expect(page.locator('.detail-visual-rail')).to_be_visible()
         page.get_by_role('button',name='切换侧栏详情',exact=True).click()

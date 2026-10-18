@@ -24,7 +24,9 @@ PREVIEW_URL = "https://wchao6891.github.io/PromptDirector-Curated/previews/workf
 PREVIEW_IMAGE_URL = "https://wchao6891.github.io/PromptDirector-Curated/previews/workflow/case.webp"
 PORTRAIT_IMAGE_URL = "https://wchao6891.github.io/PromptDirector-Curated/previews/workflow/portrait.webp"
 PACKAGE_URL = "https://github.com/wchao6891/PromptDirector-Curated/releases/download/workflow-1.0.0/workflow.zip"
-PUBLIC_DEEP_LINK = "https://wchao6891.github.io/PromptDirector-Curated/?pack=feature%3Aworkflow"
+# Public links follow the current UI language (curated-config.js curatedPublicUrl).
+PUBLIC_DEEP_LINK = "https://wchao6891.github.io/PromptDirector-Curated/?lang=zh-CN&pack=feature%3Aworkflow"
+PUBLIC_EN_DEEP_LINK = "https://wchao6891.github.io/PromptDirector-Curated/en/?lang=en&pack=feature%3Aworkflow"
 
 
 def png_bytes(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
@@ -327,6 +329,12 @@ def main() -> None:
         expect(curated.locator('.curated-sections [aria-current="page"]')).to_have_text("Curated cases")
         expect(curated.locator("#curated-search")).to_have_attribute("placeholder", "Search packs or cases")
         expect(curated.locator("#return-library")).to_have_text("Back to library")
+        curated.locator(".pack-card").click()
+        expect(curated.locator("#detail-dialog")).to_be_visible()
+        curated.locator(".detail-actions button").nth(2).click()
+        copied_en_link = curated.evaluate("() => navigator.clipboard.readText()")
+        assert copied_en_link == PUBLIC_EN_DEEP_LINK, copied_en_link
+        curated.keyboard.press("Escape")
 
         print({
             "catalog_retry": requests["catalog"],
@@ -335,6 +343,7 @@ def main() -> None:
             "verified_pack_save": True,
             "follow_local": following,
             "copy_deep_link": copied_link,
+            "copy_deep_link_en": copied_en_link,
             "medium": medium_geometry,
             "mobile": geometry,
             "english_ui": True,

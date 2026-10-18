@@ -14,7 +14,7 @@ test('offscreen video tools delegate canonical task identity and deliver worker 
     calls.push(message);
     return { ok: true, data: message.operation, events: message.operation === 'execute' ? [{ callId: 'read', status: 'completed' }] : [] };
   } } };
-  const tools = createLocalComposerLibraryTools({ session, vision: true, onEvent: event => events.push(event) });
+  const tools = createLocalComposerLibraryTools({ executionHost: true, session, vision: true, onEvent: event => events.push(event) });
   assert.equal(await tools.execute('read_case_text', { caseId: 'reference' }, { callId: 'read' }), 'execute');
   await tools.loadContinuation({ model: 'model', protocol: 'chat' });
   await tools.saveContinuation({ nextOffset: 24 });
@@ -30,7 +30,7 @@ test('offscreen cancellation and worker failures do not report successful tool r
   t.after(() => { globalThis.chrome = prior; });
   let requests = 0;
   globalThis.chrome = { runtime: { sendMessage: async () => { requests++; return { ok: false, message: '原件已不存在' }; } } };
-  const tools = createLocalComposerLibraryTools({ session });
+  const tools = createLocalComposerLibraryTools({ executionHost: true, session });
   const controller = new AbortController(); controller.abort();
   await assert.rejects(tools.execute('read_case_text', {}, { signal: controller.signal }));
   assert.equal(requests, 0);
@@ -51,7 +51,7 @@ test('worker case and Skill tools use the host dispatcher instead of messaging t
   } } };
   const calls = [];
   const tools = createLocalComposerLibraryTools({
-    session: createComposerSession({ libraryTools: { candidates: [{ caseId: 'reference' }] } }),
+    executionHost: true, session: createComposerSession({ libraryTools: { candidates: [{ caseId: 'reference' }] } }),
     sendMessage: async message => {
       calls.push(message);
       return message.type === 'CASE_OPERATION'

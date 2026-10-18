@@ -27,7 +27,11 @@ export function createLibraryLayout({ preferences, persist, onToggle }) {
     workspace.classList.toggle("filters-collapsed", layout.collapsed);
     toggle.setAttribute("aria-expanded", String(!layout.collapsed));
     toggle.replaceChildren(createUiIcon(layout.collapsed ? "panel-left" : "panel-left-close"));
-    for (const key of layout.order) dock.append(modules.get(key).section);
+    // Opening a module must not detach every other tree (or lose its scroll/focus).
+    layout.order.forEach((key, index) => {
+      const section = modules.get(key).section;
+      if (dock.children[index] !== section) dock.insertBefore(section, dock.children[index] || null);
+    });
     for (const [key, item] of modules) {
       const open = !layout.collapsed && layout.open.includes(key);
       item.section.classList.toggle("module-open", open);
@@ -161,7 +165,6 @@ function setupCompactToolbar() {
   const panel = document.createElement("div");
   panel.className = "toolbar-more-panel";
   const copy = heading.querySelector(".gallery-heading-copy");
-  const breadcrumb = heading.querySelector(".browse-location");
   const count = document.getElementById("result-count");
   menu.append(summary, panel); heading.append(menu);
   const compact = matchMedia("(max-width: 640px)");
@@ -170,7 +173,7 @@ function setupCompactToolbar() {
       panel.append(add, compose);
     }
     else {
-      copy.prepend(breadcrumb); copy.append(count);
+      copy.append(count);
       heading.querySelector(".global-search").after(controls);
       actions.prepend(add, compose); menu.open = false;
     }

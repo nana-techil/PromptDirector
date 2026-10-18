@@ -36,7 +36,7 @@ test("ordinary lossless export and curated submission are separate Skill detail 
   assert.match(skillsPage, /exportStoredSkillPackage\(skill, \{ readFile: getMediaBlob \}\)/);
   assert.match(skillsPage, /buildCuratedSkillSnapshot/);
   assert.match(skillsPage, /buildCuratedSkillSubmissionArchive/);
-  assert.match(skillsPage, /chrome\.tabs\.create\(\{ url: CURATED_SKILL_SUBMISSION_URL \}\)/);
+  assert.match(skillsPage, /chrome\.tabs\.create\(\{ url: curatedSubmissionUrl\(currentLocale\(\), "skills"\) \}\)/);
   assert.match(skillsPage, /from "\.\/curated-config\.js"/);
   assert.doesNotMatch(skillsPage, /github\.rest|issues\.create|auto.?publish/i);
   for (const hiddenMaintenanceField of ["skill-submission-id", "skill-submission-version", "skill-submission-author-id", "skill-submission-license"]) {

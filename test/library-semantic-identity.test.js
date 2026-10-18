@@ -1,7 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { reconcileLibrarySemanticIdentity } from "../extension/library-semantic-identity.js";
+import { caseSemanticFingerprint, reconcileLibrarySemanticIdentity } from "../extension/library-semantic-identity.js";
+
+test('copy provenance does not create new content, while independent copies and user edits remain distinct', () => {
+  const first = { ...semanticEntry('copy', 'asset', 'a'.repeat(64)), caseInstanceId: 'case-instance:copy',
+    copyOrigin: { caseId: 'source', title: 'Original', copiedAt: '2020-01-01T00:00:00.000Z' } };
+  const later = structuredClone(first);
+  later.copyOrigin.copiedAt = '2026-01-01T00:00:00.000Z';
+  assert.equal(caseSemanticFingerprint(first), caseSemanticFingerprint(later));
+  const { copyOrigin, ...olderCopy } = first;
+  assert.equal(caseSemanticFingerprint(first), caseSemanticFingerprint(olderCopy), 'copies imported before provenance was recorded keep their identity');
+  assert.notEqual(caseSemanticFingerprint(first), caseSemanticFingerprint({ ...later, caseInstanceId: 'case-instance:another-copy' }));
+  later.title = 'User-edited case title';
+  assert.notEqual(caseSemanticFingerprint(first), caseSemanticFingerprint(later));
+  assert.equal(first.copyOrigin.copiedAt, '2020-01-01T00:00:00.000Z', 'comparison must not erase the stored copy record');
+});
 
 test("complete duplicates within one folder converge while preserving creative references", () => {
   const first = semanticEntry("case:a", "asset:a", "a".repeat(64));

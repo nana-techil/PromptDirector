@@ -1,9 +1,10 @@
-import { open, mkdir, rename, unlink, stat } from 'node:fs/promises';
+import { open, mkdir, rename, unlink, stat, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { connectorRoot, ensurePrivateRoot } from './paths.mjs';
 import { readablePath } from './sensitive-paths.mjs';
+import { leaseCacheFile, maintainTransferCache, recordCacheFile, rememberVerifiedFile, verifyCachedFile } from './transfer-cache.mjs';
 
 async function digest(handle) {
   const hash = createHash('sha256');
@@ -34,8 +35,14 @@ export async function stageFiles(files, bodyFile, requestId, call, { purpose, li
   const transferIds = []; const filePrompts = {}; let bodyTransferId;
   for (const [index, file] of files.entries()) {
     if (!isAbsolute(file.path)) throw new Error('附件必须使用绝对路径。');
-    const handle = await open(await readablePath(file.path), constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    const path = await readablePath(file.path);
+    const isCache = dirname(path) === await realpath(join(connectorRoot(), 'files')).catch(() => '');
+    const release = isCache ? await leaseCacheFile(path) : null;
+    if (isCache && !release) throw new Error('临时附件正在使用或清理，请重试。');
+    let handle;
     try {
+      handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      if (isCache) await recordCacheFile(path).catch(() => {});
       const stat = await handle.stat();
       if (!stat.isFile() || (!stat.size && purpose !== 'skill-file')) throw new Error('附件必须是普通文件；案例附件不能为空。');
       const sha256 = await digest(handle);
@@ -54,13 +61,14 @@ export async function stageFiles(files, bodyFile, requestId, call, { purpose, li
       }
       await call('finish_transfer', { id });
       transferIds.push(id); if (file.originalPrompt) filePrompts[id] = file.originalPrompt; if (bodyFile === file.path) bodyTransferId = id;
-    } finally { await handle.close(); }
+    } finally { await handle?.close(); await release?.(); }
   }
   return { transferIds, filePrompts, ...(bodyTransferId ? { bodyTransferId } : {}) };
 }
 export async function receiveMedia(input, call, root = connectorRoot()) {
   await ensurePrivateRoot(root);
   const directory = join(root, 'files'); await mkdir(directory, { recursive: true, mode: 0o700 });
+  await maintainTransferCache(directory);
   // Always consult the current library before reusing a file: deletion, changed
   // membership or a new original must never be hidden by the local cache.
   const first = await call('read_media', { ...input, offset: 0 });
@@ -68,34 +76,55 @@ export async function receiveMedia(input, call, root = connectorRoot()) {
     throw new Error('媒体分块不一致。');
   }
   const name = basename(String(first.name || input.assetId || 'media')).replace(/[^\p{L}\p{N}._-]/gu, '_').slice(-100) || 'media';
-  const path = join(directory, `${first.sha256}-${name}`);
-  const result = { path, mimeType: first.mimeType, byteSize: first.byteSize, sha256: first.sha256, caseId: input.caseId, assetId: input.assetId };
-  let cached;
+  let path = join(directory, `${first.sha256}-${name}`);
+  let release = await leaseCacheFile(path);
+  // A concurrent reader/cleaner owns the canonical copy. Deliver a separate
+  // verified copy rather than wait on or replace that process's file.
+  if (!release) {
+    path = join(directory, `${first.sha256}-${randomUUID()}-${name}`);
+    release = await leaseCacheFile(path);
+  }
   try {
-    cached = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
-    const stat = await cached.stat();
-    if (stat.isFile() && stat.size === first.byteSize && await digest(cached) === first.sha256) return result;
-  } catch (error) {
-    if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error;
-  } finally { await cached?.close(); }
-  const temp = join(directory, `${randomUUID()}.partial`);
-  const handle = await open(temp, 'wx', 0o600);
-  let offset = 0;
-  const hash = createHash('sha256');
-  try {
-    do {
-      const part = offset === 0 ? first : await call('read_media', { ...input, offset, expectedHash: first.sha256 });
-      const bytes = Buffer.from(part.data, 'base64');
-      if (part.offset !== offset || part.sha256 !== first.sha256 || part.byteSize !== first.byteSize || (!bytes.length && offset < first.byteSize)) throw new Error('媒体分块不一致。');
-      await handle.writeFile(bytes); hash.update(bytes); offset += bytes.length;
-      if (part.nextOffset === null) break;
-      if (part.nextOffset !== offset) throw new Error('媒体分块位置错误。');
-    } while (offset < first.byteSize);
-    if (offset !== first.byteSize || hash.digest('hex') !== first.sha256) throw new Error('原件完整性验证失败，未交付文件。');
-    await handle.close();
-    await rename(temp, path);
-    return result;
-  } catch (error) { await handle.close().catch(() => {}); await unlink(temp).catch(() => {}); throw error; }
+    const result = { path, mimeType: first.mimeType, byteSize: first.byteSize, sha256: first.sha256, caseId: input.caseId, assetId: input.assetId };
+    let cached, occupied = false;
+    try {
+      cached = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+      const stat = await cached.stat();
+      if (stat.isFile() && stat.size === first.byteSize && await verifyCachedFile(path, cached, first.sha256, digest)) {
+        await recordCacheFile(path).catch(() => {});
+        return result;
+      }
+    } catch (error) {
+      occupied = error.code === 'ELOOP';
+      if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error;
+    } finally { await cached?.close(); }
+    if (cached || occupied) {
+      await release?.();
+      path = join(directory, `${first.sha256}-${randomUUID()}-${name}`);
+      release = await leaseCacheFile(path);
+      result.path = path;
+    }
+    const temp = join(directory, `${randomUUID()}.partial`);
+    const handle = await open(temp, 'wx', 0o600);
+    let offset = 0;
+    const hash = createHash('sha256');
+    try {
+      do {
+        const part = offset === 0 ? first : await call('read_media', { ...input, offset, expectedHash: first.sha256 });
+        const bytes = Buffer.from(part.data, 'base64');
+        if (part.offset !== offset || part.sha256 !== first.sha256 || part.byteSize !== first.byteSize || (!bytes.length && offset < first.byteSize)) throw new Error('媒体分块不一致。');
+        await handle.writeFile(bytes); hash.update(bytes); offset += bytes.length;
+        if (part.nextOffset === null) break;
+        if (part.nextOffset !== offset) throw new Error('媒体分块位置错误。');
+      } while (offset < first.byteSize);
+      if (offset !== first.byteSize || hash.digest('hex') !== first.sha256) throw new Error('原件完整性验证失败，未交付文件。');
+      await rename(temp, path);
+      await rememberVerifiedFile(path, handle, first.sha256).catch(() => {});
+      await handle.close();
+      await recordCacheFile(path, { owned: true }).catch(() => {});
+      return result;
+    } catch (error) { await handle.close().catch(() => {}); await unlink(temp).catch(() => {}); throw error; }
+  } finally { await release?.(); }
 }
 
 // A viewport capture is ephemeral, unlike a case original. Its opaque capture identity fixes
@@ -127,11 +156,16 @@ export async function receiveWorkspaceScreenshot(input, call, root = connectorRo
   await ensurePrivateRoot(root);
   const directory = join(root, 'files');
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  await maintainTransferCache(directory);
   const path = join(directory, `workspace-${randomUUID()}.png`);
-  const handle = await open(path, 'wx', 0o600);
-  try { await handle.writeFile(bytes); }
-  catch (error) { await handle.close(); await unlink(path).catch(() => {}); throw error; }
-  await handle.close();
-  const { data, nextOffset, offset: _offset, ...metadata } = first;
-  return { ...metadata, path, image: { data: bytes.toString('base64'), mimeType: 'image/png' } };
+  const release = await leaseCacheFile(path);
+  try {
+    const handle = await open(path, 'wx', 0o600);
+    try { await handle.writeFile(bytes); }
+    catch (error) { await handle.close(); await unlink(path).catch(() => {}); throw error; }
+    await handle.close();
+    await recordCacheFile(path, { owned: true }).catch(() => {});
+    const { data, nextOffset, offset: _offset, ...metadata } = first;
+    return { ...metadata, path, image: { data: bytes.toString('base64'), mimeType: 'image/png' } };
+  } finally { await release?.(); }
 }

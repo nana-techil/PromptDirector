@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createLibraryStorage, createLibraryCommitter } from '../extension/library-storage.js';
 import { markSyncMetaDirty } from '../extension/sync-model.js';
+import { assistantDraftUpdate, COMPOSER_DRAFTS_KEY } from '../extension/composer-session-drafts.js';
 
 function fixture(initial = {}) {
   const data = structuredClone(initial), listeners = new Set(), calls = [];
@@ -25,6 +26,48 @@ function fixture(initial = {}) {
   return { data, calls, backend, lock, storage, fail: error => { failure = error; },
     emit: (update, area) => { for (const listener of listeners) listener(update, area); } };
 }
+
+test('typing a shared draft writes only its patch and readback/export retain full history', async () => {
+  const history = { toolContext: [{ data: { original: 'original source'.repeat(1000) } }], assistantState: { turns: [{ requestId: 'old', diagnostic: { source: 'unaltered' } }] } };
+  const run = fixture();
+  await run.storage.set({ composerSessions: [{ id: 'chat', chatRevision: 1, currentInstruction: '', messages: [{ role: 'user', content: 'save' }], ...history }] });
+  const writesBefore = run.calls.length;
+  const get = run.backend.get;
+  run.backend.get = keys => {
+    assert(!JSON.stringify(keys).includes('"composerSessions"'), 'draft saves must not load diagnostics');
+    return get(keys);
+  };
+  await run.storage.update([COMPOSER_DRAFTS_KEY, 'assistantChatViews', 'composerSessionSummaries'], stored => {
+    const result = assistantDraftUpdate(stored, { id: 'chat', draft: 'continue', chatRevision: 1 }, 'now');
+    assert.equal(result.response.ok, true); return result.update;
+  });
+  const write = run.calls[writesBefore];
+  assert.equal(write.composerSessions, undefined);
+  assert(JSON.stringify(write).length < 1000);
+  run.backend.get = get;
+  const session = (await run.storage.get('composerSessions')).composerSessions[0];
+  assert.equal(session.currentInstruction, 'continue'); assert.equal(session.chatRevision, 2);
+  assert.deepEqual(session.toolContext, history.toolContext); assert.deepEqual(session.assistantState, history.assistantState);
+  const exported = await run.storage.get(null);
+  assert.deepEqual(exported.composerSessions[0], session);
+  assert.equal(exported[COMPOSER_DRAFTS_KEY], undefined, 'exports have a complete canonical conversation, not a patch requiring another key');
+  await run.storage.update('composerSessions', stored => ({ composerSessions: stored.composerSessions.map(s => ({ ...s, title: 'Edited' })) }));
+  assert.deepEqual(run.data[COMPOSER_DRAFTS_KEY], {});
+  assert.equal(run.data.composerSessions[0].currentInstruction, 'continue');
+  const stale = assistantDraftUpdate(await run.storage.get(['assistantChatViews', COMPOSER_DRAFTS_KEY]), { id: 'chat', draft: 'stale', chatRevision: 1 }, 'later');
+  assert.equal(stale.response.code, 'chat_conflict'); assert.equal(stale.update, undefined);
+  await run.storage.set({ composerSessions: [] });
+  assert.deepEqual((await run.storage.get('composerSessions')).composerSessions, []);
+  assert.equal(assistantDraftUpdate(await run.storage.get('assistantChatViews'), {id:'chat',draft:'resurrect',chatRevision:2}, 'later').response.code, 'chat_deleted');
+});
+
+test('explicit conversation replacement and deletion clear pending drafts without resurrecting them', async () => {
+  const run = fixture({ composerSessions: [{id:'chat',chatRevision:1}], [COMPOSER_DRAFTS_KEY]: {chat:{chatRevision:2,currentInstruction:'new draft'}} });
+  await run.storage.set({composerSessions:[{id:'chat',chatRevision:1,currentInstruction:'restored draft'}]});
+  assert.equal((await run.storage.get('composerSessions')).composerSessions[0].currentInstruction, 'restored draft');
+  await run.storage.remove('composerSessions');
+  assert.equal(run.data[COMPOSER_DRAFTS_KEY], undefined);
+});
 
 test('legacy snapshots retain unknown keys, missing/default semantics and exact body text', async () => {
   const run = fixture({ entries: [{ text: '\uFEFF正文\r\n  ', future: [false, 0, null] }], unknown: 'keep' });
@@ -117,4 +160,79 @@ test('removing history or sessions invalidates their summaries without touching 
   const run = fixture({ composerSessions: [{ id: 'old' }], composerSessionSummaries: [{ id: 'old' }], unrelated: true });
   await run.storage.remove(['composerSessions']);
   assert.deepEqual(run.data, { unrelated: true });
+});
+
+test('chat opening projection commits with sessions and never contains their full runtime or diagnostics', async()=>{
+ const run=fixture();const original='complete original source'.repeat(100000);
+ await run.storage.set({composerSessions:[{id:'chat',title:'capture',messages:[{role:'user',content:'save'}],assistantState:{turns:[{requestId:'old',diagnostic:{original}}]},toolContext:[{original}]}]});
+ const view=run.data.assistantChatViews;
+ assert.equal(view?.version,1);
+ assert.equal(view.chats[0].messages[0].content,'save');
+ assert(JSON.stringify(view).length<1000,'chat display must not scale with tool source bodies');
+ assert.equal(run.data.composerSessions[0].toolContext[0].original,original);
+ assert.equal(run.calls.length,1,'projection and full records commit atomically');
+ await run.storage.set({composerSessions:[]});assert.deepEqual(run.data.assistantChatViews.chats,[]);
+});
+
+test('fifty tool reads write only new journal facts while backup, sync, drafts and task continuation retain exact originals', async () => {
+  const { createComposerToolProgress } = await import('../extension/composer-tool-progress.js');
+  const original = 'Original source\n'.repeat(10000);
+  const sessions = Array.from({ length: 8 }, (_, i) => ({ id: 'chat-' + i, chatRevision: 1,
+    currentInstruction: 'unsent', assistantState: { turns: [{ diagnostic: { content: original } }] },
+    toolContext: [{ turnId: 'old', callId: 'old', name: 'read_case', data: { content: original } }] }));
+  async function measure(legacy) {
+    const f = fixture(); await f.storage.set({ composerSessions: sessions });
+    f.calls.length = 0;
+    const runtime = createComposerToolProgress({ storage: legacy ? { get: f.storage.get, update: f.storage.update } : f.storage,
+      sessionId: 'chat-0', userMessageId: 'now' });
+    for (let i = 0; i < 50; i++) await runtime.recordToolResult({ callId: 'read-' + i, name: 'read_capture', args: { part: 'source' }, data: { content: original + i } });
+    return { f, runtime, bytes: f.calls.reduce((total, call) => total + new Blob([JSON.stringify(call)]).size, 0) };
+  }
+  const baseline = await measure(true), optimized = await measure(false);
+  assert(optimized.bytes < baseline.bytes / 10, `${optimized.bytes} vs ${baseline.bytes}`);
+  assert(optimized.f.calls.every(call => !call.composerSessions && !call.assistantChatViews && !call.composerSessionSummaries));
+  assert.equal((await optimized.runtime.loadContext()).length, 51);
+  const restarted = createComposerToolProgress({ storage: createLibraryStorage({ backend: optimized.f.backend, lock: optimized.f.lock }), sessionId: 'chat-0', userMessageId: 'now' });
+  assert.equal((await restarted.loadContext()).at(-1).data.content, original + 49);
+  await restarted.saveContinuation({ protocol: 'chat', body: { model: 'fixture', content: original } });
+  assert.equal((await restarted.loadContinuation({ protocol: 'chat', model: 'fixture' })).body.content, original);
+  const exported = await optimized.f.storage.get(null);
+  assert(!Object.keys(exported).some(key => key.startsWith('composerTool')));
+  assert.equal(exported.composerSessions[0].toolContext.at(-1).data.content, original + 49);
+  assert.equal(exported.composerSessions[0].currentInstruction, 'unsent');
+  assert.equal(exported.composerSessions[1].toolContext[0].data.content, original);
+  await optimized.f.storage.set({ composerSessions: exported.composerSessions });
+  assert(!Object.keys(optimized.f.data).some(key => key.startsWith('composerToolRecord:')));
+  assert.equal((await restarted.loadContext()).at(-1).data.content, original + 49);
+  await optimized.f.storage.set({ composerSessions: [] });
+  await assert.rejects(restarted.recordToolResult({ callId: 'late', name: 'read_case', data: {} }), /不存在/u);
+  console.log(JSON.stringify({ toolReads: 50, baselineBytes: baseline.bytes, journalBytes: optimized.bytes }));
+});
+
+test('Chrome object-key reordering cannot reorder tool facts or erase repeated legacy receipts on restart', async () => {
+  const { createComposerToolProgress } = await import('../extension/composer-tool-progress.js');
+  const f = fixture();
+  await f.storage.set({ composerSessions: [{ id: 'chat', toolContext: [{ callId: 'legacy', data: { content: 'first' } }, { callId: 'legacy', data: { content: 'second' } }] }] });
+  const sort = value => Array.isArray(value) ? value.map(sort) : value && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sort(value[key])])) : value;
+  const get = f.backend.get; f.backend.get = async keys => sort(await get(keys));
+  const runtime = createComposerToolProgress({ storage: f.storage, sessionId: 'chat', userMessageId: 'human' });
+  for (let n = 0; n < 15; n++) await runtime.recordToolResult({ callId: 'read-' + n, name: 'read_capture', data: { content: String(n) } });
+  const restarted = createComposerToolProgress({ storage: createLibraryStorage({ backend: f.backend, lock: f.lock }), sessionId: 'chat', userMessageId: 'human' });
+  assert.deepEqual((await restarted.loadContext()).map(record => record.data.content), ['first', 'second', ...Array.from({ length: 15 }, (_, n) => String(n))]);
+});
+
+test('two tool writers and a normal conversation edit keep every committed fact and draft through journal folding', async () => {
+  const { createComposerToolProgress } = await import('../extension/composer-tool-progress.js');
+  const f = fixture(); await f.storage.set({ composerSessions: [{ id: 'chat', toolContext: [], toolContinuations: {}, currentInstruction: 'unsent' }] });
+  const other = createLibraryStorage({ backend: f.backend, lock: f.lock });
+  const a = createComposerToolProgress({ storage: f.storage, sessionId: 'chat', userMessageId: 'a' });
+  const b = createComposerToolProgress({ storage: other, sessionId: 'chat', userMessageId: 'b' });
+  await Promise.all([a.recordToolResult({ callId: 'one', name: 'read_capture', data: { content: 'first source' } }),
+    b.recordToolResult({ callId: 'two', name: 'read_capture', data: { content: 'second source' } })]);
+  await other.update('composerSessions', stored => ({ composerSessions: stored.composerSessions.map(session => ({ ...session, title: 'User edit' })) }));
+  await a.recordToolResult({ callId: 'three', name: 'save_capture', data: { entryId: 'saved-once' } });
+  const sessions = (await other.get('composerSessions')).composerSessions;
+  assert.deepEqual(sessions[0].toolContext.map(record => record.callId), ['one', 'two', 'three']);
+  assert.equal(sessions[0].currentInstruction, 'unsent'); assert.equal(sessions[0].title, 'User edit');
 });

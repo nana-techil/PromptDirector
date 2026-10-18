@@ -2,10 +2,11 @@
 import hashlib
 import json
 from playwright.sync_api import expect
-from capture_organization_progress_e2e import main as with_download
+from capture_organization_progress_e2e import emulate_capture_page_window, main as with_download
 
 
 def scenario(run, page, worker, out, video):
+    emulate_capture_page_window(run)
     page.close()
     page=run.open_page('collector.html')
     expect(page.locator('#feedback')).to_contain_text('49%',timeout=10000)
@@ -38,6 +39,9 @@ def scenario(run, page, worker, out, video):
     worker.evaluate('''async()=>{for(let i=0;i<100;i++){if(captureFixture.requests.length===2&&captureFixture.gates.has("video"))return;await new Promise(r=>setTimeout(r,20));}throw new Error("resume did not reach the network stream");}''')
     worker.evaluate('()=>captureFixture.gates.get("video")()')
     expect(page.locator('#feedback')).to_contain_text('正在入库',timeout=30000)
+    # The task enters committing only after the held commit gate opens. Wait for that
+    # state instead of sampling a slow CI frame where cancel may still be accepted.
+    page.wait_for_function("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task?.status==='committing'",timeout=20000)
     response=page.evaluate("async()=>{const {task}=await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'});return chrome.runtime.sendMessage({type:'CANCEL_CAPTURE_SAVE',id:task.id});}")
     assert not response['ok'],response
     expect(page.locator('#page-capture-save')).to_be_disabled()

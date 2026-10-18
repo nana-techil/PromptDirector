@@ -1,6 +1,6 @@
 {
   "name": "prompt-case-collector",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "private": false,
   "license": "Apache-2.0",
   "repository": "https://github.com/wchao6891/PromptDirector",
@@ -36,6 +36,9 @@
     "check:hash": "node tools/hash-runtime.mjs --check",
     "build:capture-runtime": "node tools/capture-runtime.mjs",
     "check:capture-runtime": "node tools/capture-runtime.mjs --check",
+    "package:video-component": "node tools/video-component/build.mjs",
+    "package:video-source": "node tools/video-component/package-source.mjs",
+    "check:video-source": "node tools/video-component/verify-source.mjs",
     "package:connector": "node tools/package-connector.mjs",
     "package:distribution": "npm run package && npm run package:release && node tools/prepare-public-release.mjs",
     "build:video-frames": "node tools/video-frame-runtime.mjs",

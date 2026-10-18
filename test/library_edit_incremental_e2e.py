@@ -30,16 +30,19 @@ def main():
           window.pdVideo=document.querySelector('.detail-video'); pdVideo.currentTime=0.2;
         }""")
         editor = page.locator('.entry-editor-inline')
+        original = page.locator('.original-prompt-panel')
+        # The case editor is a floating panel over the reading pane now, so start the prompt
+        # draft first: both editors still keep independent drafts while the title is committed.
+        original.get_by_role('button', name='编辑原始提示词', exact=True).click()
+        original.locator('textarea').fill('尚未提交的原词草稿')
         editor.locator('summary').click()
         title = editor.locator('.entry-edit-row input').first
         title.fill('标题保存后的案例')
-        original = page.locator('.original-prompt-panel')
-        original.get_by_role('button', name='编辑原始提示词', exact=True).click()
-        original.locator('textarea').fill('尚未提交的原词草稿')
         editor.locator('.entry-edit-row').first.get_by_role('button', name='保存', exact=True).click()
         expect(page.locator('#feedback')).to_contain_text('标题已保存')
         expect(original.locator('textarea')).to_have_value('尚未提交的原词草稿')
         assert page.evaluate("pdUntouched===document.querySelector('.case-card[data-entry-id=untouched]')"), 'title save rebuilt an unrelated card'
+        editor.locator('summary').click()
         # A second page commits while the local prompt reply is held: only the local echo may be consumed.
         page.evaluate("""() => { const send=chrome.runtime.sendMessage.bind(chrome.runtime);
           chrome.runtime.sendMessage=async message=>{const result=await send(message);
@@ -68,6 +71,8 @@ def main():
             await send({type:'UPDATE_ENTRY_TITLE',entryId:message.entryId,title:message.title});
             const result=await send(message);window.pdTitleNoop=result.changed===false;
             await new Promise(resolve=>window.pdReleaseTitle=resolve);return result};}''')
+        # Reopen the floating title editor; its own fields stay reachable above the prompt draft.
+        editor.locator('summary').click()
         title.fill('后台已有的相同标题')
         editor.locator('.entry-edit-row').first.get_by_role('button', name='保存', exact=True).click()
         page.wait_for_function('() => typeof window.pdReleaseTitle === "function"')

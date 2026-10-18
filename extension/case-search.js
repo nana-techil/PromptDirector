@@ -86,8 +86,12 @@ export function searchCaseEntries(entries, index, organizerState, input = {}) {
   if (input.sort && !['relevance', 'newest', 'oldest', 'engagement'].includes(input.sort)) throw invalid('排序方式无效。');
   const expressions = [query, ...(input.alternatives || [])];
   const queries = [...new Set(input.alternatives?.length ? expressions.filter(text => text.trim()) : expressions)];
-  const ids = new Set(queries.flatMap(text => [...searchIndexedEntries(index, text)]));
+  const ids = new Set(queries.flatMap(text => [...searchIndexedEntries(index, text, { relevance: !input.sort || input.sort === 'relevance' })]));
   const matches = filterCaseSearchEntries(entries, organizerState, input).filter(entry => ids.has(entry.id));
+  if (queries.some(text => text.trim()) && (!input.sort || input.sort === 'relevance')) {
+    const rank = new Map([...ids].map((id, index) => [id, index]));
+    matches.sort((a, b) => rank.get(a.id) - rank.get(b.id));
+  }
   if (input.sort === 'newest' || input.sort === 'oldest') matches.sort((a, b) =>
     (String(a.savedAt).localeCompare(String(b.savedAt)) || a.id.localeCompare(b.id)) * (input.sort === 'newest' ? -1 : 1));
   if (input.sort === 'engagement') matches.sort((a, b) => {

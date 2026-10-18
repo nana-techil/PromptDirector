@@ -9,7 +9,7 @@ def main():
  out=Path(os.environ.get('PD_E2E_ARTIFACT_DIR') or mkdtemp(prefix='pd-detail-information-'));out.mkdir(parents=True,exist_ok=True)
  raw=(Path(__file__).parent/'fixtures/review-workspace-smoke.mp4').read_bytes()
  assets=[{'id':'v','kind':'video','storageMode':'managed','mimeType':'video/mp4','width':320,'height':180}, {'id':'i','kind':'image','storageMode':'managed','mimeType':'image/png','width':50,'height':200}]
- entry={'id':'mixed','title':'car Photography photoshoot photoshop Socialmedia design architecture','text':'原始提示词完整内容：不应被删除。','sourceFacts':{'originalPromptAvailable':True,'author':'原始作者'},'url':'https://example.com/source','customLabels':['镜头参考','汽车广告'],'mediaAssets':assets,'primaryMediaId':'v'}
+ entry={'id':'mixed','title':'car Photography photoshoot photoshop Socialmedia design architecture','text':'原始提示词完整内容：不应被删除。','sourceFacts':{'originalPromptAvailable':True,'author':'原始作者'},'url':'https://example.com/source','customLabels':['镜头参考','汽车广告'],'mediaAssets':assets,'primaryMediaId':'v','mediaPrompts':[{'assetId':'i','source':'manual','text':'第二张图片独立提示词'}]}
  web={'id':'web','title':'网页原词独立保护','text':'原页面说明，不应被写媒体词覆盖。','sourceFacts':{'originalPromptAvailable':True,'author':'来源作者'},'mediaAssets':[dict(assets[1],id='wi'),dict(assets[1],id='wj')],'primaryMediaId':'wi', 'mediaPrompts':[{'assetId':'wi','source':'webpage','text':'第一张采集原词'},{'assetId':'wj','source':'webpage','text':'第二张采集原词'},{'assetId':'wi','source':'manual','text':'第一张自写词'},{'assetId':'wi','source':'ai-suggestion','text':'第一张AI词'}]}
  with extension_session('pd-detail-information-',viewport={'width':1440,'height':900}) as run:
   setup=run.open_page('collector.html');run.seed_storage(setup,{'entries':[entry,web], 'uiPreferences':{'locale':'zh-CN','theme':'dark','motion':'reduced'}})
@@ -39,7 +39,13 @@ def main():
   p.locator('.detail-quick-organization input[aria-label=添加标签]').press('Escape')
   expect(p.locator('.detail-quick-organization .tag-editor-row')).to_be_hidden()
   expect(p.locator('#detail-drawer')).to_have_attribute('aria-hidden','false')
-  p.locator('.detail-project-menu > summary').click();p.locator('.detail-new-project input').fill('汽车KV')
+  # Open the project menu immediately after the local label save: the scheduled workspace
+  # re-arrange must keep the open popover visible (fixed 2026-10-18).
+  p.locator('.detail-project-menu > summary').click()
+  project_popover=p.locator('.detail-project-menu .detail-project-popover')
+  expect(project_popover).to_be_visible()
+  assert project_popover.evaluate("e=>e.matches(':popover-open')")
+  p.locator('.detail-new-project input').fill('汽车KV')
   p.evaluate("()=>{window.projectDraftInput=document.querySelector('.detail-new-project input')}")
   p.get_by_role('button',name='新建并加入',exact=True).click()
   expect(p.locator('.detail-project-summary-text')).to_have_text('汽车KV')
@@ -63,14 +69,19 @@ def main():
   tab=p.get_by_role('tab',name='原始提示词',exact=True);tab.focus();tab.press('End');expect(p.get_by_role('tab',name='当前媒体',exact=True)).to_be_focused()
   p.get_by_role('tab',name='当前媒体',exact=True).press('Home');expect(tab).to_be_focused()
   def measure():
-   return p.evaluate('''()=>{const bar=document.querySelector('.detail-visual-caption'), nav=bar.querySelector('.detail-media-navigation'), section=document.querySelector('.media-prompt-section');const r=e=>e.getBoundingClientRect();const visible=[...section.children].filter(e=>e.getClientRects().length);const create=section.querySelector('.detail-core-actions'), prior=visible[visible.indexOf(create)-1];const buttons=[...bar.querySelectorAll('button')];return{center:r(nav).x+r(nav).width/2,barCenter:r(bar).x+r(bar).width/2,gap:prior?r(create).top-r(prior).bottom:null,height:r(bar).height,rows:[...new Set(buttons.map(e=>Math.round(r(e).top)))],stage:r(document.querySelector('.detail-visual-stage')).height}}''')
+   return p.evaluate('''()=>{const bar=document.querySelector('.detail-visual-caption'), nav=bar.querySelector('.detail-media-navigation'), cluster=nav.parentElement, label=cluster.querySelector(':scope > span');const r=e=>e.getBoundingClientRect();const labelVisible=label&&label.getClientRects().length;const footer=document.querySelector('.detail-workspace-footer'), create=footer?.querySelector(':scope > .detail-core-actions'), prior=create?[...footer.children][[...footer.children].indexOf(create)-1]:null;const buttons=[...bar.querySelectorAll('button')];return{center:r(nav).x+r(nav).width/2,navLeft:r(nav).x,labelRight:labelVisible?r(label).right:r(cluster).x,clusterLeft:r(cluster).x,barLeft:r(bar).x,barCenter:r(bar).x+r(bar).width/2,gap:prior?r(create).top-r(prior).bottom:null,height:r(bar).height,rows:[...new Set(buttons.map(e=>Math.round(r(e).top)))],stage:r(document.querySelector('.detail-visual-stage')).height}}''')
   result=[]
   for width in [1440,900,390]:
    p.set_viewport_size({'width':width,'height':900});p.get_by_role('button',name='上一项媒体',exact=True).click() if p.get_by_role('button',name='上一项媒体',exact=True).is_enabled() else None
    expect(p.locator('.detail-video')).to_be_visible();a=measure()
    p.get_by_role('button',name='下一项媒体',exact=True).click();expect(p.locator('.detail-image')).to_be_visible();b=measure()
-   assert abs(a['center']-b['center'])<1 and abs(a['center']-a['barCenter'])<1,(width,a,b)
-   assert abs(a['gap']-b['gap'])<1 and a['height']==b['height'] and abs(a['stage']-b['stage'])<1,(width,a,b)
+   # Media switching stays put: the navigation keeps its fixed 6px gap after the
+   # format label and stays in the leading media-label cluster. The label text itself
+   # (MP4/PNG) changes width slightly with the platform font, so compare the gap.
+   assert abs((a['navLeft']-a['labelRight'])-(b['navLeft']-b['labelRight']))<0.6 and abs(a['center']-b['center'])<5,(width,a,b)
+   # Navigation is anchored at the caption's leading edge, leaving the remaining width to tools.
+   assert a['clusterLeft']-a['barLeft']<=14 and a['center']<a['barCenter'],(width,a,b)
+   assert abs(a['gap']-b['gap'])<1 and a['gap'] is not None and a['height']==b['height'] and abs(a['stage']-b['stage'])<1,(width,a,b)
    assert len(a['rows'])==1 and len(b['rows'])==1,(width,a,b)
    result.append({'width':width,'video':a,'image':b})
    p.screenshot(path=str(out/f'mixed-detail-{width}.png'))

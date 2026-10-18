@@ -16,7 +16,13 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
     title: ["[class*=title]"], author: ["[class*=author]"], model: ["[class*=model]"]
   }, ["byteimg.com"]),
   adapter("libtv", "LibTV", ["liblib.tv"], "verified-declarative", [".react-flow__node[data-id]"], {}, ["libtv-res.liblib.art"]),
-  adapter("liblibai", "LiblibAI", ["liblib.art", "liblib.ai"], "verified-deep", ["[class*=work-card]", "[class*=waterfall] > *"], {}, ["liblib.cloud"]),
+  adapter("liblibai", "LiblibAI", ["liblib.art", "liblib.ai"], "verified-deep", ["[class*=work-card]", "[class*=waterfall] > *"], {
+    contentPathPrefixes: ["/modelinfo/"],
+    contentRequiredPathPrefixes: ["/modelinfo/"],
+    contentPageType: "artwork",
+    content: ['div:has(> [class*="ModelInfoHead_modelInfoHead"])'],
+    title: ['[class*="ModelInfoHead_title"]']
+  }, ["liblib.cloud"]),
   adapter("higgsfield", "Higgsfield", ["higgsfield.ai"], "verified-declarative", ["[data-testid*=creation]", "[class*=feed] > article"], {
     content: ['[aria-label^="Project brief:"]'],
     mediaContainers: [".rde-asset-embed"],
@@ -31,7 +37,13 @@ export const PAGE_CAPTURE_ADAPTERS = Object.freeze([
   adapter("kling", "可灵", ["klingai.com", "klingai.kuaishou.com"], "generic", GENERIC_CARD_SELECTORS),
 
   adapter("pinterest", "Pinterest", ["pinterest.com", "pin.it"], "verified-deep", ["[data-test-id=pin]", "[data-grid-item]"], {}, ["i.pinimg.com"]),
-  adapter("behance", "Behance", ["behance.net"], "verified-declarative", ["[data-project-id]", "main article"], {}, ["mir-s3-cdn-cf.behance.net"]),
+  adapter("behance", "Behance", ["behance.net"], "verified-declarative", ["[data-project-id]", "main article"], {
+    contentPathPrefixes: ["/gallery/"],
+    contentRequiredPathPrefixes: ["/gallery/"],
+    contentPageType: "artwork",
+    content: ["#project-modules"],
+    omitCoverWhenContentImages: true
+  }, ["mir-s3-cdn-cf.behance.net"]),
   adapter("dribbble", "Dribbble", ["dribbble.com"], "generic", ["[data-thumbnail-id]", "main article"]),
   adapter("artstation", "ArtStation", ["artstation.com"], "generic", [".project", "[data-test=project-card]"]),
   adapter("deviantart", "DeviantArt", ["deviantart.com"], "generic", ["main article", "[data-hook=deviation_link]"]),

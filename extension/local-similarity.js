@@ -44,8 +44,9 @@ export function* similarityIndexSteps(entries = [], catalogValue, options = {}) 
     const members = entry.memberEntries?.length ? entry.memberEntries : [entry];
     const media = (mediaForEntry(entry) ?? []).filter(asset => asset && asset.usage !== "poster");
     const kinds = new Set(media.map(asset => asset.kind));
-    const domain = options.domainForEntry ? options.domainForEntry(entry, media) : kinds.has("image") || kinds.has("video")
-      ? [...kinds].filter(kind => kind !== "attachment").sort().join("+") : "";
+    // Media composition is not a similarity boundary: mixed cases, single images,
+    // videos and text prompts share a corpus. Callers can still explicitly scope it.
+    const domain = options.domainForEntry ? options.domainForEntry(entry, media) : "content";
     const tagTerms = new Set();
     for (const member of members) for (const assignment of member.facetAssignments ?? []) {
       const node = nodes.get(assignment.nodeId);

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import {
   applyCuratedOrigin,
   curatedSourceKey,
+  curatedPackTitle,
   normalizeCuratedCatalog,
   normalizeCuratedMetrics,
   normalizeCuratedPreview,
@@ -400,4 +401,23 @@ test('one unknown case author does not hide the entire published preview or inve
     assert.throws(() => normalizeCuratedPreview({ ...value, entries: [entry, { ...value.entries[1], [field]: '' }] }, item), /必填字段/);
   }
   assert.throws(() => normalizeCuratedPreview({ ...value, entries: [entry, { ...value.entries[1], previewImageUrl: 'https://untrusted.example/a.png' }] }, item), /不受信任/);
+});
+
+
+test("English pack display names never rename imported cases or change the download identity", (t) => {
+  const original = catalogItem({ title: "精选原名" });
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse(original.updatedAt) });
+  const catalog = normalizeCuratedCatalog({
+    format: "prompt-director-curated", version: 2,
+    updatedAt: original.updatedAt,
+    themes: [{ ...original, titleEn: "  Curated picks  " }]
+  });
+  const translated = catalog.themes[0];
+  assert.equal(curatedPackTitle(translated, "en"), "Curated picks");
+  assert.equal(curatedPackTitle(translated, "zh-CN"), original.title);
+  assert.equal(curatedPackTitle(original, "en"), original.title);
+  for (const field of ["id", "title", "packageId", "packageVersion", "downloadUrl", "sha256", "archiveBytes"])
+    assert.equal(translated[field], original[field]);
+  const library = { entries: [{ id: "source-case", title: "案例原名", text: "原始提示词", mediaAssets: [] }] };
+  assert.deepEqual(prepareCuratedPackageVersion(library, translated), prepareCuratedPackageVersion(library, original));
 });

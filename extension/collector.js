@@ -1,6 +1,7 @@
 import { genericDetailRequests, applyGenericCaptureDetails, remapDetailTextSelection } from "./generic-capture-details.js";
 import { setTaskFeedbackState, setTaskProgress } from "./task-feedback.js";
 import { anchorCollectorFeedback } from './collector-feedback.js';
+import { createVideoComponentView } from './video-component-view.js';
 import { createCaptureProjectMenu } from './capture-organization.js';
 import { bindTransientMenus } from './transient-menu.js';
 import { captureSaveProgressPresentation, createCaptureProgressGate } from './capture-save-progress.js';
@@ -50,6 +51,7 @@ import {
   pageCaptureStructureMatches
 } from "./page-capture.js";
 import { createTagEditor } from "./tag-editor.js";
+import { installCaptureAssistant } from './collector-capture-assistant.js';
 
 await initializeUi();
 
@@ -75,6 +77,12 @@ const elements = Object.fromEntries([
 ].map((id) => [camel(id), document.getElementById(id)]));
 
 const placeCollectorFeedback = anchorCollectorFeedback(elements.feedback, [elements.pageCaptureActions, elements.collectorFooter]);
+const videoSetupContainer = document.createElement('span');
+videoSetupContainer.id = 'video-component-setup';
+const videoSetupView = createVideoComponentView(videoSetupContainer, { primary: true });
+chrome.runtime.onMessage.addListener(message => {
+  if (message.type === 'VIDEO_COMPONENT_SETUP_CHANGED') void videoSetupView.changed(message.state);
+});
 
 let draft = null;
 let targetEntry = null;
@@ -99,6 +107,22 @@ let smartVisualSession = null;
 let smartVisualCommitCreative = false;
 let regionCaptureState = null;
 let pageCaptureBatch = null;
+let capturePreviewEditVersion = 0;
+const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptureBatch,
+  isBusy: () => Boolean(saving || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || smartVisualSession || regionCaptureState || draft?.targetCaseId),
+  isAutomaticCapturing: () => autoPageCaptureActive,
+  getBatchEditVersion: () => capturePreviewEditVersion,
+  getDraft: () => draft, getMetadata: () => captureMetadataForCommit(),
+  changeProject: (...args) => updateCaptureMetadata(...args),
+  // A durable page-capture save task restored after reopening the sidebar keeps
+  // its own preview until the user continues, cancels or completes it.
+  preserveBatch: () => Boolean(pageCaptureBatch && captureSaveTask?.input?.type === 'COMMIT_PAGE_CAPTURE'),
+  switchBatch: batch => {
+    pageCaptureAppendBase = null; pageCaptureDetailsBase = null; genericGroupingBase = null;
+    pageCaptureMediaView = null; pageCaptureEditHistory = []; pageCaptureDraftIds = new Set(); manuallyPickedBatchId = '';
+    pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render();
+  },
+  applyBatch: batch => { pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render(); } });
 let pageCaptureAppendBase = null;
 let pageCaptureDraftIds = new Set();
 const draftVisualHashes = new Map();
@@ -152,11 +176,10 @@ libraryStorage.subscribe((changes) => {
   refresh().catch(() => undefined);
 });
 
+elements.openLibrary.addEventListener("click", () => void openLibraryTab());
 await refresh();
 await tryAutoSelection();
 void refreshPageCapturePermissionState();
-
-elements.openLibrary.addEventListener("click", () => void openLibraryTab());
 window.addEventListener("focus", () => {
   void tryAutoSelection();
   void refreshPageCapturePermissionState();
@@ -196,6 +219,7 @@ elements.pageCaptureScan.addEventListener("click", () => {
   void startPageCapture(pageCaptureBatch?.adapter === "generic" ? "whole" : pageCaptureBatch?.articleSplit ? "article" : "loaded", elements.pageCaptureScan);
 });
 elements.pageCaptureMode.addEventListener("change", async () => {
+  capturePreviewEditVersion++;
   const mode = elements.pageCaptureMode.value;
   if (pageCaptureBatch?.adapter === "generic" && mode !== "list") {
     regroupGenericPreview(mode === "article" ? "sections" : mode === "media" ? "media" : "whole");
@@ -215,10 +239,12 @@ elements.pageCaptureDetails.addEventListener("change", () => { if (elements.page
 elements.pageCaptureMergeGroups.addEventListener("click", mergeGenericPreviewGroups);
 elements.pageCaptureListRun.addEventListener("click", () => startPageListCapture(elements.pageCaptureListRun));
 elements.pageCaptureSaveMode.addEventListener("change", () => {
+  capturePreviewEditVersion++;
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, saveMode: elements.pageCaptureSaveMode.value });
   render();
 });
 elements.pageCaptureCombinedTitle.addEventListener("change", () => {
+  capturePreviewEditVersion++;
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, combinedTitle: elements.pageCaptureCombinedTitle.value });
 });
 elements.pageCaptureCancel.addEventListener("click", cancelPageCapture);
@@ -303,6 +329,7 @@ elements.contentType.addEventListener("change", () => updateCaptureMetadata({
   contentTypeExplicit: true
 }));
 
+await captureAssistantView.restore();
 void startAutomaticPageCapture();
 
 async function startAutomaticPageCapture() {
@@ -335,11 +362,6 @@ async function openLibraryTab() {
   try {
     const tab = await chrome.tabs.create({ url: chrome.runtime.getURL("library.html"), active: false });
     if (Number.isInteger(tab?.id)) {
-      try {
-        await chrome.sidePanel?.setOptions?.({ tabId: tab.id, enabled: false });
-      } catch {
-        showFeedback("灵感库已打开，但未能为新标签关闭侧边栏", true);
-      }
       await chrome.tabs.update(tab.id, { active: true });
     }
   } catch (error) {
@@ -489,10 +511,11 @@ async function extractPageSelection(button) {
       if (!response?.ok) { if (!response?.cancelled) showFeedback(response?.message || "无法选取内容", true); return; }
       const batch = normalizePageCaptureBatch({ ...response.batch, status: "preview" });
       const candidate = batch.candidates[0];
-      if (!candidate?.contentText && !candidate?.media.length) return showFeedback("这个区域没有可保存内容", true);
+      if (!candidate?.contentText && !candidate?.media.length) return showFeedback(batch.error || "这个区域没有可保存内容", true);
       const previousCandidate = previous?.candidates.find(item => item.id === previous.selections[0]?.candidateId);
       if (previousCandidate && (manuallyPickedBatchId === previous.id || response.supplement === "comments")) {
         appendToPageCapture(candidate);
+        if (batch.error) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, error: batch.error });
         if (batch.selectionTemplate) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selectionTemplate: batch.selectionTemplate });
         render();
         return;
@@ -645,6 +668,11 @@ async function addClipboardContentToDraft({ text: clipboardText, image } = {}) {
 }
 
 function render() {
+  for (const button of [elements.saveDraft, elements.pageCaptureSave]) {
+    const waiting = captureSaveTask?.status === 'waiting-component';
+    button.classList.toggle('primary', !waiting); button.classList.toggle('button-secondary', waiting);
+  }
+  captureAssistantView.refresh();
   if (!draft) return;
   const view = collectorViewState(draft, targetEntry, { organizing });
   if (!view.hasContent) organizing = false;
@@ -860,6 +888,7 @@ function renderPageCapture() {
     selectedMediaIds: selections.get(candidate.id)?.selectedMediaIds || [],
     loadLocalVisual: loadVisual,
     onIncludeMediaGroup: group => {
+      capturePreviewEditVersion++;
       const selection = selections.get(candidate.id);
       pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selection) });
       pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selections: pageCaptureBatch.selections.map(s => s.candidateId === candidate.id
@@ -867,6 +896,7 @@ function renderPageCapture() {
       render();
     },
     onRemoveMedia: media => {
+      capturePreviewEditVersion++;
       const selection = selections.get(candidate.id);
       pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selection) });
       pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selections: pageCaptureBatch.selections.map(s => s.candidateId === candidate.id
@@ -917,6 +947,7 @@ function createPageCaptureArticlePreview(candidate, selection) {
     remove.textContent = "×";
     remove.setAttribute("aria-label", t("移除"));
     remove.addEventListener("click", () => {
+      capturePreviewEditVersion++;
       pageCaptureEditHistory.push({ batch: structuredClone(pageCaptureBatch), genericBase: genericGroupingBase });
       const revised = removeCaptureTextBlock(candidate, block.id);
       const blocks = revised.textBlocks;
@@ -997,6 +1028,7 @@ function openPageCaptureArticleUrl(url) {
 }
 
 function removePageCaptureCandidate(candidateId) {
+  capturePreviewEditVersion++;
   pageCaptureBatch = normalizePageCaptureBatch({
     ...pageCaptureBatch,
     selections: pageCaptureBatch.selections.filter((item) => item.candidateId !== candidateId)
@@ -1011,6 +1043,7 @@ function textNode(tagName, value) {
 }
 
 function appendToPageCapture(addition) {
+  capturePreviewEditVersion++;
   const selection = pageCaptureBatch?.selections[0];
   if (!selection || pageCaptureBatch.selections.length !== 1) return;
   const candidate = pageCaptureBatch.candidates.find(c => c.id === selection.candidateId);
@@ -1031,6 +1064,7 @@ function syncDraftIntoPageCapture() {
 }
 
 function confirmPageCaptureCandidate(candidate) {
+  capturePreviewEditVersion++;
   if (pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureCancelling || pageCaptureBatch?.status === "saving") return;
   if (pageCaptureAppendBase) {
     const selected = applyPageCaptureSelections(normalizePageCaptureBatch({ ...pageCaptureBatch,
@@ -1059,6 +1093,7 @@ function confirmPageCaptureCandidate(candidate) {
 }
 
 function clearPageCaptureConfirmation() {
+  capturePreviewEditVersion++;
   if (pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureCancelling || pageCaptureBatch?.status === "saving") return;
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selections: [] });
   previewPageCaptureRegion(null);
@@ -1085,6 +1120,7 @@ async function previewPageCaptureRegion(candidate, locate = false) {
 
 
 async function includePageCaptureSupplement(candidate, item) {
+  capturePreviewEditVersion++;
   if (pageCaptureSupplementRequest || !candidate.supplements.some(value => value.id === item.id)) return;
   const request = { batchId: pageCaptureBatch.id, candidateId: candidate.id };
   pageCaptureSupplementRequest = request;
@@ -1225,6 +1261,7 @@ function setPageCaptureMediaDecisionClass(node, mediaId, selection) {
 }
 
 function updatePageCaptureMediaSelection(candidateId, mediaId) {
+  capturePreviewEditVersion++;
   const selections = pageCaptureBatch.selections.map((selection) => {
     if (selection.candidateId !== candidateId) return selection;
     const selected = new Set(selection.mediaDecision === "none" ? [] : selection.selectedMediaIds);
@@ -1305,6 +1342,7 @@ function regroupGenericPreview(grouping) {
 }
 
 function splitGenericPreviewGroup(candidate) {
+  capturePreviewEditVersion++;
   const groups = groupGenericCapture(candidate, "media");
   if (groups.length < 2) return;
   const selected = pageCaptureBatch.selections.find(s => s.candidateId === candidate.id);
@@ -1317,6 +1355,7 @@ function splitGenericPreviewGroup(candidate) {
 }
 
 function mergeGenericPreviewGroups() {
+  capturePreviewEditVersion++;
   const selected = applyPageCaptureSelections(finalizePageCaptureSelectionsForSave(pageCaptureBatch));
   if (selected.length < 2) return;
   const ids = new Set(selected.map(c => c.id));
@@ -1340,6 +1379,7 @@ function mergeGenericPreviewGroups() {
 }
 
 function undoPageCaptureRegionEdit() {
+  capturePreviewEditVersion++;
   const previous = pageCaptureEditHistory.pop();
   if (!previous) return;
   if (previous.batch) { pageCaptureBatch = normalizePageCaptureBatch(previous.batch);
@@ -1438,6 +1478,7 @@ function pageCaptureMediaSourceLabel(value, captureMethod = "") {
 }
 
 async function cancelPageCapture() {
+  capturePreviewEditVersion++;
   if (pageCaptureCancelling || pageCaptureBatch?.status === "saving") return;
   pageCaptureCancelling = true;
   const scanning = pageCaptureBatch?.status === "scanning";
@@ -1711,6 +1752,7 @@ async function readPageCaptureDetails() {
 }
 
 async function startPageCapture(mode, button, { automatic = false } = {}) {
+  if (!automatic) capturePreviewEditVersion++;
   if (pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureCancelling || pageCaptureBatch?.status === "saving" || button?.disabled) return;
   if (mode !== "list" && pageCaptureBatch?.selections.length === 1 && button === elements.addPageCapture) {
     pageCaptureAppendBase = structuredClone(pageCaptureBatch);
@@ -1835,7 +1877,7 @@ async function startPageListCapture(button) {
 
 async function finishPageCaptureSave(response, reviewBatch, saveBatch, selected, metadata) {
   captureProgressGate.end();
-  if (!response?.ok) throw new Error(response?.message || t("网页内容保存失败"));
+  if (!response?.ok) throw Object.assign(new Error(response?.message || t("网页内容保存失败")), { code: response?.code });
   const results = response.results || [];
   const savedCandidateIds = savedPageCaptureCandidateIds(saveBatch, selected, results);
   const remainingIds = new Set(selected.filter(candidate => !savedCandidateIds.has(candidate.id)).map(candidate => candidate.id));
@@ -1885,6 +1927,7 @@ async function savePageCapture(textOnly = false) {
   if (saving && !textOnly) return cancelCaptureSave();
   if (saving || !pageCaptureBatch || pageCaptureRequestId || pageCaptureEditing || pageCaptureSupplementRequest || pageCaptureBatch.status === "saving") return;
   const trigger = textOnly ? elements.pageCaptureSaveTextOnly : elements.pageCaptureSave;
+  let result;
   await withButton(trigger, async () => {
     const reviewBatch = pageCaptureBatch;
     saving = true;
@@ -1917,15 +1960,19 @@ async function savePageCapture(textOnly = false) {
         ...metadata
       }, { send: waitForCaptureSave });
       await finishPageCaptureSave(response, reviewBatch, saveBatch, selected, metadata);
+      result = response;
     } catch (error) {
       captureProgressGate.end();
       pageCaptureBatch = normalizePageCaptureBatch({ ...reviewBatch, status: "preview", error: error.message });
-      showFeedback(error.message || t("网页内容保存失败"), true);
+      if (error.code === 'video_component_required') showVideoSetup();
+      else showFeedback(error.message || t("网页内容保存失败"), true);
       render();
+      result = { ok: false, message: error.message || t("网页内容保存失败") };
     } finally {
       captureProgressGate.end(); saving = false; awaitingCaptureSaveReply = false; await refresh(); render();
     }
   });
+  return result;
 }
 
 async function confirmSmartVisualSelection() {
@@ -1995,23 +2042,24 @@ async function sendDraftAction(button, type, payload = {}) {
   });
 }
 
-async function updateDraft(value) {
+async function updateDraftMetadata(patch) {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "UPDATE_CAPTURE_DRAFT", draft: value });
-    if (!response?.ok) throw new Error(response?.message || "标题更新失败");
+    const response = await chrome.runtime.sendMessage({ type: "UPDATE_CAPTURE_DRAFT_METADATA", patch });
+    if (!response?.ok) throw new Error(response?.message || "保存设置未更新");
     draft = response.draft;
     render();
-    return draft;
+    return true;
   } catch (error) {
-    showFeedback(error.message || "标题更新失败", true);
-    return null;
+    showFeedback(error.message || "保存设置未更新", true);
+    return false;
   }
 }
 
 function updateCaptureMetadata(patch) {
-  // Merge into the latest draft when this edit reaches the queue, so quickly
-  // selecting a project and adding tags cannot restore a stale draft snapshot.
-  metadataUpdates = metadataUpdates.then(async () => Boolean(draft && await updateDraft({ ...draft, ...patch })));
+  // The capture workspace merges this patch into the latest stored draft.
+  // Sending a whole in-memory draft from a stale page could overwrite newer
+  // content meanwhile written by another page, the Agent or the side panel.
+  metadataUpdates = metadataUpdates.then(async () => Boolean(draft && await updateDraftMetadata(patch)));
   return metadataUpdates;
 }
 
@@ -2172,18 +2220,20 @@ async function waitForCaptureSave(input) {
 }
 
 function restoreCaptureSaveTask(task) {
+  const previousStatus = captureSaveTask?.status;
   captureSaveTask = task;
   if (!task || awaitingCaptureSaveReply || handlingRestoredSave) return;
-  const active = ['queued', 'running', 'cancelling', 'committing'].includes(task.status);
+  const active = ['queued', 'running', 'cancelling', 'committing', 'waiting-component'].includes(task.status);
   if (task.input?.type === 'COMMIT_PAGE_CAPTURE') {
     pageCaptureDraftIds = new Set(task.input.draftItemIds || []);
     pageCaptureBatch = normalizePageCaptureBatch({ ...task.input.batch, status: active ? 'saving' : 'preview',
-      error: !active && task.input.batch.adapter === 'generic' ? task.input.batch.error : '' });
+      error: !active ? task.input.batch.error : '' });
   }
   saving = active;
   if (active) {
-    if (currentCaptureSaveId !== task.id) { currentCaptureSaveId = task.id; captureProgressGate.begin(task.id); }
-    showCaptureSaveProgress(task.progress);
+    if (currentCaptureSaveId !== task.id || task.status === 'waiting-component' || previousStatus === 'waiting-component') { currentCaptureSaveId = task.id; captureProgressGate.begin(task.id); }
+    if (task.status === 'waiting-component') showVideoSetup();
+    else showCaptureSaveProgress(task.progress);
   } else if (task.status === 'completed') {
     handlingRestoredSave = true; currentCaptureSaveId = task.id;
     void (async () => {
@@ -2200,6 +2250,15 @@ function restoreCaptureSaveTask(task) {
       finally { handlingRestoredSave = false; }
     })();
   } else if (task.message) showFeedback(task.message, false);
+}
+
+function showVideoSetup() {
+  if (feedbackTimer) window.clearTimeout(feedbackTimer);
+  feedbackTimer = 0;
+  elements.feedback.replaceChildren(videoSetupContainer);
+  setTaskFeedbackState(elements.feedback);
+  placeCollectorFeedback();
+  void videoSetupView.refresh();
 }
 
 function beginCaptureSaveProgress() {

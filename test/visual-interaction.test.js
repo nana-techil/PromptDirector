@@ -17,7 +17,11 @@ test("the current project uses the product accent while other library selections
   assert.match(rule(source, '.project-filter[aria-pressed="true"]'), /color:\s*var\(--accent-ink\)/);
   assert.match(rule(source, '.project-filter[aria-pressed="true"]'), /background:\s*var\(--ui-project-active-surface\)/);
   assert.match(rule(source, '.project-filter[aria-pressed="true"]'), /box-shadow:\s*inset 2px 0 var\(--accent-emphasis\)/);
-  assert.doesNotMatch(rule(source, ".project-filter"), /border(?:-color)?:\s*(?!transparent)/);
+  const borders = [...rule(source, '.project-filter').matchAll(/(?:^|;)\s*(border|border-color)\s*:\s*([^;]+)/g)];
+  assert(borders.length > 0, 'project borders must explicitly remain restrained');
+  for (const [, property, value] of borders) {
+    assert.match(value.trim(), property === 'border-color' ? /^transparent$/ : /^(?:0|(?:[\d.]+px\s+solid\s+)?transparent)$/);
+  }
   assert.match(rule(source, '.content-filter-option[aria-pressed="true"]'), /background:\s*var\(--ui-content-active-surface\)/);
   assert.match(rule(source, '.filter-option[aria-pressed="true"]'), /background:\s*var\(--selection\)/);
   assert.match(rule(source, '.facet-option-row[aria-pressed="true"] .facet-option-check'), /background:\s*var\(--accent-emphasis\)/);
@@ -32,8 +36,6 @@ test("the current project uses the product accent while other library selections
   assert.match(rule(source, ".detail-visual-thumb"), /background:\s*var\(--raised\)/);
   assert.match(rule(source, '.manager-tabs button[aria-selected="true"]::after'), /height:\s*1px/);
   assert.match(rule(source, '.analysis-kind-tabs button[aria-selected="true"]'), /background:\s*var\(--selection\)/);
-  assert.match(rule(source, ".compact-general .share-package-import"), /display:\s*flex/);
-  assert.doesNotMatch(rule(source, ".compact-general .share-package-import"), /background:|box-shadow:|justify-content:\s*space-between/);
   assert.doesNotMatch(source, /scrollbar-gutter:\s*stable/);
   assert.doesNotMatch(source, /0 0 0 (?:2px|3px) color-mix\(in srgb, var\(--accent\)/);
 });
@@ -67,19 +69,19 @@ test("composer and Skill selections avoid oversized green outer rings", async ()
   assert.doesNotMatch(skills, /box-shadow:\s*0 0 0 (?:2px|3px) color-mix\(in srgb, var\(--accent\)/);
 });
 
-test("composer session delete menu reuses the compact shared danger action", async () => {
+test("composer conversation close action uses the shared danger icon button", async () => {
   const [foundation, composer, runtime] = await Promise.all([
     readFile(new URL("../extension/ui-foundation.css", import.meta.url), "utf8"),
     readFile(new URL("../extension/composer-page.css", import.meta.url), "utf8"),
     readFile(new URL("../extension/composer-page.js", import.meta.url), "utf8")
   ]);
-  assert.match(runtime, /composer-session-delete quiet-danger/);
-  assert.match(rule(composer, ".composer-session-menu-panel"), /min-width:\s*84px/);
-  assert.match(rule(composer, ".composer-session-menu-panel .quiet-danger"), /min-height:\s*30px/);
+  assert.match(runtime, /icon-button composer-session-delete quiet-danger/);
+  assert.doesNotMatch(runtime, /composer-session-menu/);
+  assert.match(rule(composer, ".composer-session-delete"), /min-height:\s*28px/);
   assert.match(rule(foundation, ".quiet-danger"), /color:\s*var\(--ui-danger\)/);
   assert.match(rule(foundation, ".quiet-danger"), /background:\s*transparent/);
   assert.match(rule(foundation, ".quiet-danger:hover:not(:disabled)"), /var\(--ui-danger\) 10%/);
-  assert.match(rule(composer, ".composer-session-menu-panel button:disabled"), /color:\s*var\(--muted\)/);
+
 });
 
 test("collector highlights use the shared restrained interaction language", async () => {

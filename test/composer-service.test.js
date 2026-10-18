@@ -18,6 +18,14 @@ import { createComposerSession, normalizeComposerSettings } from "../extension/c
 
 const settings = normalizeComposerSettings();
 
+test('authorized budget exhaustion is reported as budget, never as a provider connection failure', async () => {
+  const error=Object.assign(new Error('User token budget reached'),{code:'RESOURCE_BUDGET_REACHED'});
+  const session=createComposerSession({aiProfile:{serviceId:'deepseek',model:'deepseek-flash'}});
+  await assert.rejects(executeComposerTurnWithService({session,userMessage:'Continue',route:'chat'},
+    {ai:{apiKey:'fixture-secret',consent:true},vision:{}},[],{fetchImpl:async()=>{throw error}}),
+    actual=>actual===error);
+});
+
 function response(payload, contentType = "application/json") {
   return {
     ok: true,

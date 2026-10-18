@@ -83,3 +83,18 @@ test('Skill drafting rejects ephemeral reference aliases instead of saving an un
  const result=await tools.execute('draft_skill',{callName:'方法',description:'测试',skillMarkdown:'按照 @参考2 的参数布光。'},{callId:'portable'});
  assert.match(result.data.error,/参考编号/);
 });
+
+test('explicit Skill writes share schemas, preserve structured references and report a committed receipt after stopping generation', async()=>{
+ const controller=new AbortController(),calls=[];
+ const {tools,events}=runtime({invokeSkill:async(name,input)=>{
+   calls.push({name,input});controller.abort();return {ok:true,callName:'方法',skillId:'saved'};
+ }});
+ const input={requestId:'save-method',callName:'方法',skillMarkdown:'完整方法',references:[{path:'references/source.md',markdown:'完整原词',runtime:false}]};
+ const result=await tools.execute('save_skill',input,{callId:'save',signal:controller.signal});
+ assert.equal(result.data.skillId,'saved');
+ assert.deepEqual(calls[0],{name:'save_skill',input});
+ assert.equal(events.at(-1).status,'completed');
+ assert.ok(tools.specs.some(spec=>spec.name==='restore_skill'));
+ const invalid=await tools.execute('restore_skill',{requestId:'bad',skillId:'saved'},{callId:'restore'});
+ assert.ok(invalid.data.error);assert.equal(calls.length,1);
+});

@@ -6,7 +6,7 @@ Public distribution formats and the permissions used by PromptDirector.
 
 - Chrome Web Store item public key: stored in the source `manifest.json` for local identity verification only; `package:release` removes `key` from the upload manifest.
 - Expected extension ID: `iahakaahijddcjjldidbclicedibgpjm`.
-- Current upload artifact: `dist/store/PromptDirector-1.26.0-Chrome-Web-Store.zip`. Keep this artifact local for Web Store submission. The sole GitHub extension installation package is `PromptDirector-1.26.0.zip`, with stable identity and the local updater.
+- Current upload artifact: `dist/store/PromptDirector-1.27.0-Chrome-Web-Store.zip`. Keep this artifact local for Web Store submission. The sole GitHub extension installation package is `PromptDirector-1.27.0.zip`, with stable identity and the local updater.
 - Generate a candidate only with `npm run package:release`; the command verifies the source public key against the expected identity, then removes `key` from the Web Store upload manifest and excludes the local program installer.
 
 ## Store listing
@@ -47,7 +47,8 @@ Help visual creators capture web visuals with their prompts, media, and notes as
 - `https://objects.githubusercontent.com/*`: follow GitHub's Release download path for selected curated content.
 - `https://release-assets.githubusercontent.com/*`: download selected curated Release archives and media after integrity checks.
 - Optional `<all_urls>`: not granted at installation. Capture and AI settings request the necessary origins. Enabling Agent connection requests website access so the paired Agent can capture user-requested URLs in a dedicated tab; this does not monitor browsing.
-- Optional `nativeMessaging`: requested only when enabling Agent connection; communicates with the separately installed local connector for case search, original-file access, requested capture and material saving.
+- Optional `downloads.open`: requested when the user installs the video component; the explicit Open installer action opens the downloaded official installer. Files are never opened automatically.
+- Optional `nativeMessaging`: requested when enabling Agent connection or installing the video component. Agent connection supports case search, original-file access, requested capture and material saving. Independent local video extraction resolves and merges selected video originals without Agent pairing.
 - Optional `clipboardRead`: read clipboard content only when the user triggers the relevant action.
 - Optional `declarativeNetRequestWithHostAccess`: create bounded media-read rules only on origins the user already granted.
 

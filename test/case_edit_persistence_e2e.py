@@ -28,9 +28,13 @@ def main():
         editor.locator('summary').click()
         title = editor.locator('.entry-edit-row input').first
         title.fill('尚未保存标题')
+        # The inline editor is a floating panel over the reading column; collapse it
+        # before reaching the prompt editor underneath, then reopen it for tag edits.
+        editor.locator('summary').click()
         original = page.locator('.original-prompt-panel')
         original.get_by_role('button', name='编辑原始提示词', exact=True).click()
         original.locator('textarea').fill('尚未保存原始提示词')
+        editor.locator('summary').click()
         remove = editor.locator('.selected-edit-tags button').first
         label = remove.inner_text()
         page.evaluate('''() => {
@@ -51,7 +55,9 @@ def main():
         stored = page.evaluate("async()=> (await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.find(e=>e.id==='edit-case')")
         assert not stored['facetAssignments']
         assert stored['title'] == fixture['title'] and stored['text'] == fixture['text']
+        editor.locator('summary').click()
         original.get_by_role('button', name='取消', exact=True).click()
+        editor.locator('summary').click()
         node = page.evaluate("async()=> (await chrome.storage.local.get('facetCatalog')).facetCatalog.nodes.find(n=>n.name==='电影写实')")
         editor.locator('select[aria-label="选择创作维度"]').select_option(node['facetId'])
         editor.locator('select[aria-label="选择创作标签"]').select_option(node['id'])

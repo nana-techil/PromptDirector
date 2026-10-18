@@ -11,9 +11,10 @@ test("current libraries bypass whole-library migration and normalization on ever
   assert.match(readState, /shouldMigrate \? migrateLibraryState\(stored\) : null/);
 });
 
-test("visual batch selection preselects analyzable project cases before continuing", () => {
-  const enterVision = library.slice(library.indexOf("function enterVisionSelection"), library.indexOf("function enterSelectMode"));
-  assert.match(enterVision, /replaceSelectedCaseIds\(getVisionSelectableEntries\("all"\)\.map\(\(entry\) => entry\.id\)\)/);
+test("project batch analysis inherits the clicked project without forcing image-only selection", () => {
+  const menu = library.slice(library.indexOf("function createProjectMenu"), library.indexOf("function bindCaseDrop"));
+  assert.match(menu, /openBatchAnalysis\(\{ scope: \{ collectionId: collection\.id, includeSubprojects: uiPreferences\.includeSubprojects \}/);
+  assert.doesNotMatch(library, /function enterVisionSelection/);
 });
 
 test("visible thumbnails use a bounded queue and a rebuildable persistent cache", () => {

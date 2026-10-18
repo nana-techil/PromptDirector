@@ -125,7 +125,10 @@ def main():
             next_prompt = call('search', {**prompt_input, 'offset': prompt_result['nextOffset'], 'expectedRevision': prompt_result['revision']})
             assert next_prompt['cases'][0]['similarity']['promptEvidence']['sources'] == ['ai'], next_prompt
             assert [c['caseId'] for c in call('search', {'mediaKind': 'video', 'hasPrompt': False})['cases']] == ['case-2']
-            assert call('search', {**prompt_input, 'similarTo': {'caseId': 'case-0', 'method': 'local'}})['total'] == 0
+            local_result = call('search', {**prompt_input, 'similarTo': {'caseId': 'case-0', 'method': 'local'}})
+            assert local_result['total'] == 2 and local_result['cases'][0]['caseId'] == 'case-1', local_result
+            assert local_result['cases'][0]['similarity']['prompt'] > 0, local_result
+            assert local_result['similarityCoverage']['knownPromptPairs'] == 2 and local_result['similarityCoverage']['unknownExcluded'] == 1, local_result
             page.reload()
             assert call('search', prompt_input)['revision'] == prompt_result['revision']
             print('PASS: prompt-first mixed/pure video search, original/AI provenance, missing-prompt expansion, local behavior unchanged, reload stable')

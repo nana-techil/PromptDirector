@@ -1,7 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { detailPromptSources } from "../extension/prompt-sources.js";
+import { detailPromptSources, sharedOriginalPrompt, caseOriginalPromptText, detailCaseOriginalPromptText } from "../extension/prompt-sources.js";
 import { setEntryMediaPrompt } from "../extension/media.js";
+
+test('an explicitly captured full case prompt remains readable when a screenshot carries only its prefix', () => {
+  const complete = 'Create a cinematic scene, standing barefoot inside an apartment. No watermark.';
+  const entry = { text: complete, sourceFacts: { originalPromptAvailable: true },
+    mediaAssets: [{ id: 'video', kind: 'video' }, { id: 'screenshot', kind: 'image' }],
+    mediaPrompts: [{ assetId: 'screenshot', source: 'webpage', text: 'Create a cinematic scene, standing' }] };
+  const before = structuredClone(entry);
+  assert.equal(detailCaseOriginalPromptText(entry), complete);
+  assert.equal(sharedOriginalPrompt(entry), '', 'legacy display inference does not pollute shared prompt search');
+  assert(caseOriginalPromptText({ ...entry, sourceFacts: { ...entry.sourceFacts, caseOriginalPromptAvailable: true } }).includes(complete));
+  assert.deepEqual(entry, before, 'reading must preserve the screenshot original and existing library');
+});
 
 test("article body never becomes an image prompt; actual per-media prompts remain available", () => {
   const asset = { id: "image", kind: "image" };
@@ -90,4 +102,20 @@ for (const type of ['image-case', 'video-case']) test(`original text stays visib
   assert.equal(detailPromptSources(entry, asset).original, entry.text);
   assert.equal(entry.sourceFacts, undefined);
   assert.equal(detailPromptSources({ ...entry, sourceFacts: { originalPromptAvailable: false } }, asset).original, '');
+});
+
+test('media tabs require distinct original prompts, not extra images, repeated excerpts or AI results', async () => {
+  const { hasDistinctMediaPrompts } = await import('../extension/prompt-sources.js');
+  const entry = { text: 'A forest with glowing fireflies', sourceFacts: { originalPromptAvailable: true },
+    mediaAssets: [{ id: 'image', kind: 'image' }, { id: 'video', kind: 'video' }] };
+  assert.equal(hasDistinctMediaPrompts(entry), false);
+  for (const text of [entry.text, 'A forest', '  A forest\n with glowing fireflies  ']) {
+    assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'image', source: 'webpage', text }] }), false);
+  }
+  assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'image', source: 'ai-suggestion', text: 'AI result' }] }), false);
+  assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'deleted', source: 'manual', text: 'Orphan prompt' }] }), false);
+  assert.equal(hasDistinctMediaPrompts({ ...entry, mediaPrompts: [{ assetId: 'image', source: 'manual', text: 'A city' }] }), true);
+  const originals = [{ assetId: 'image', source: 'webpage', text: 'A city' }, { assetId: 'video', source: 'webpage', text: 'An ocean' }];
+  assert.equal(hasDistinctMediaPrompts({ ...entry, text: '', mediaPrompts: originals }), true);
+  assert.equal(hasDistinctMediaPrompts({ ...entry, text: '', mediaPrompts: originals.slice(0, 1) }), false);
 });

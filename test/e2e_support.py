@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
@@ -32,6 +33,14 @@ class ExtensionTestSession:
     extension_id: str
     profile_dir: Path
     page_errors: list[str]
+    playwright: Playwright
+
+    def restart_browser(self, *, extension_dir: Path = EXTENSION_DIR) -> None:
+        """Reopen the same disposable profile, discarding all worker/page memory."""
+        self.context.close()
+        self.context = launch_context(self.playwright, str(self.profile_dir), viewport={"width": 1280, "height": 900},
+                                      accept_downloads=True, extension_dir=extension_dir)
+        self.context.on("page", lambda page: record_page_errors(page, self.page_errors))
 
     def open_page(self, path: str, *, wait_until: str = "domcontentloaded") -> Page:
         page = self.context.new_page()
@@ -95,6 +104,8 @@ def extension_session(
     accept_downloads: bool = True,
     extension_dir: Path = EXTENSION_DIR,
     preserve_http_cache: bool = False,
+    show_scrollbars: bool = False,
+    extra_args: list[str] | None = None,
 ) -> Iterator[ExtensionTestSession]:
     with tempfile.TemporaryDirectory(prefix=profile_prefix) as profile:
         with sync_playwright() as playwright:
@@ -105,15 +116,18 @@ def extension_session(
                 accept_downloads=accept_downloads,
                 extension_dir=extension_dir,
                 preserve_http_cache=preserve_http_cache,
+                show_scrollbars=show_scrollbars,
+                extra_args=extra_args,
             )
             page_errors: list[str] = []
             context.on("page", lambda page: record_page_errors(page, page_errors))
             try:
                 worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker")
-                yield ExtensionTestSession(context, worker.url.split("/")[2], Path(profile), page_errors)
+                run = ExtensionTestSession(context, worker.url.split("/")[2], Path(profile), page_errors, playwright)
+                yield run
                 assert not page_errors, f"扩展页面出现运行时错误：{page_errors}"
             finally:
-                context.close()
+                (run.context if 'run' in locals() else context).close()
 
 
 def launch_context(
@@ -124,12 +138,16 @@ def launch_context(
     accept_downloads: bool,
     extension_dir: Path = EXTENSION_DIR,
     preserve_http_cache: bool = False,
+    show_scrollbars: bool = False,
+    extra_args: list[str] | None = None,
 ) -> BrowserContext:
     network_blocked = os.environ.get("PROMPTDIRECTOR_E2E_BLOCK_EXTERNAL_NETWORK") == "1"
     cache_safe_args = ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost"] if network_blocked and preserve_http_cache else []
     context = playwright.chromium.launch_persistent_context(
         profile_dir,
         headless=True,
+        # Headless Chromium hides tracks by default, masking scroll affordance bugs.
+        ignore_default_args=["--hide-scrollbars"] if show_scrollbars else None,
         channel=os.environ.get("PROMPTDIRECTOR_E2E_CHANNEL", "chromium"),
         accept_downloads=accept_downloads,
         viewport=viewport,
@@ -139,6 +157,7 @@ def launch_context(
             f"--disable-extensions-except={extension_dir}",
             f"--load-extension={extension_dir}",
             *cache_safe_args,
+            *(extra_args or []),
         ],
     )
     worker = wait_for_extension_worker(context)
@@ -154,7 +173,11 @@ def launch_context(
     # Playwright routing disables native HTTP cache. Cache tests block external
     # DNS at launch instead, retaining actual conditional requests to loopback.
     if network_blocked and not preserve_http_cache:
-        context.route("https://**/*", lambda route: route.abort("blockedbyclient"))
+        # Real local TLS fixtures still exercise fetch/streaming while CI blocks
+        # external services. Match the hostname, never a URL prefix.
+        context.route("https://**/*", lambda route: route.continue_()
+                      if urlparse(route.request.url).hostname in {"127.0.0.1", "localhost", "::1"}
+                      else route.abort("blockedbyclient"))
     return context
 
 
@@ -264,3 +287,68 @@ def scroll_to_case(page, entry_id: str) -> None:
             return
         page.evaluate('scrollBy(0,innerHeight/2)')
     raise AssertionError(f'Case {entry_id} was not reachable through the gallery')
+
+
+def enable_analysis_diagnostics(page: Page) -> None:
+    """Persist the confirmed development-diagnostics preference before a task opens.
+
+    The diagnostics copy action is intentionally hidden in normal use; enabling it
+    from the settings switch writes ``uiPreferences.diagnosticsEnabled``. Tests must
+    do this before the analysis dialog opens, because the surrounding task tools are
+    only offered while that dialog is open or a job has failed.
+    """
+    response = page.evaluate('''async () => chrome.runtime.sendMessage({
+      type: 'UPDATE_UI_PREFERENCES', preferences: {diagnosticsEnabled: true}
+    })''')
+    assert response and response.get('ok'), response
+
+
+def copy_analysis_diagnostics(page: Page) -> str:
+    """Use the visible support action without depending on the system clipboard."""
+    button = page.locator('#copy-analysis-diagnostics')
+    if button.is_hidden():
+        # Never close the caller's analysis dialog: diagnostics live inside it.
+        enable_analysis_diagnostics(page)
+        button.wait_for(state='visible')
+    page.evaluate('''() => {
+      window.copiedAnalysisDiagnostics = null;
+      navigator.clipboard.writeText = async text => { window.copiedAnalysisDiagnostics = text; };
+    }''')
+    button.click()
+    page.wait_for_function('window.copiedAnalysisDiagnostics !== null')
+    return page.evaluate('window.copiedAnalysisDiagnostics')
+
+
+def apply_retained_recovery(page: Page, action: str, job_id=None):
+    """Exercise retained recovery safety in disposable profiles after retiring its UI."""
+    result = page.evaluate('''async ({action, jobId}) => {
+      const preview = await chrome.runtime.sendMessage({type:'PREVIEW_LIBRARY_UNDO',action,jobId});
+      if (!preview?.ok) return preview;
+      return chrome.runtime.sendMessage({type:action,jobId,confirmationToken:preview.confirmationToken});
+    }''', {'action': action, 'jobId': job_id})
+    assert result.get('ok'), result
+    return result
+
+
+def open_library_analysis(page: Page):
+    """Reach whole-library scoped analysis through the existing selection tools."""
+    page.wait_for_function("document.body.dataset.libraryState === 'ready'")
+    if page.locator('#settings-dialog').is_visible():
+        page.locator('#settings-close').click()
+    if page.locator('#selection-select-filtered').is_hidden():
+        page.locator('#select-cases').click()
+    page.locator('#selection-select-filtered').click()
+    page.locator('#selection-more-menu > summary').click()
+    page.locator('#selection-text-analyze').click()
+    page.locator('#batch-scope-project').select_option('')
+
+
+def open_task_settings(page: Page):
+    """Return from case management to the actual inline settings entry."""
+    if page.locator('#text-batch-dialog').is_visible():
+        page.locator('#text-batch-close').click()
+    if not page.locator('#settings-dialog').is_visible():
+        if page.locator('#share-cancel').is_visible():
+            page.locator('#share-cancel').click()
+        page.locator('#open-settings').click()
+    page.locator('[data-settings-tab="tasks"]').click()

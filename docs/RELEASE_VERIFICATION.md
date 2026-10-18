@@ -15,7 +15,7 @@ The conservative default is full coverage. A manual run of `Release safety` also
 
 ## One package, independent tests
 
-The package job builds the fixed-ID public extension, store package and connector archive once. It checks ZIP integrity/channel identity and records each SHA-256 plus the Git source tree in `ci-package.json`. Four independent browser runners partition the authoritative `test/run_e2e.py` registry; each uses isolated profiles and the same downloaded package. Linux and Windows upgrade jobs use that same bundle in parallel. Four is configured in the workflow to reduce sequential waiting without running several large-media browsers in the same runner.
+The package job builds the fixed-ID public extension, store package and connector archive once. It checks ZIP integrity/channel identity and records each SHA-256 plus the Git source tree in `ci-package.json`. Eight independent browser runners partition the authoritative `test/run_e2e.py` registry; each uses isolated profiles and the same downloaded package. Linux and Windows upgrade jobs use that same bundle in parallel. Eight is configured in the workflow to keep the release gate bounded without running several large-media browsers in the same runner.
 
 Each browser receipt includes its complete planned scenario list, every result, preflight identity and package metadata. The required `Chromium journeys and packaged upgrade` gate verifies that all shards are present exactly once and all selected scenarios passed. Full coverage retains the 344 MB X save/readback, recovery and actual worker-tool regressions. Source, upgrade and connector job failures also block the gate.
 

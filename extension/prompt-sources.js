@@ -1,5 +1,5 @@
 import { usesArticleReader } from "./case-presentation.js";
-import { currentVideoReconstruction } from "./media.js";
+import { currentVideoReconstruction, entryMediaAssets } from "./media.js";
 import { validReconstructionPrompt } from "./image-prompt.js";
 
 export function detailPromptSources(entry = {}, asset = {}) {
@@ -26,9 +26,20 @@ export function originalMediaPrompt(entry, assetId) {
   return prompts.find(item => item.source === "manual") || prompts[0];
 }
 
+export function hasDistinctMediaPrompts(entry = {}) {
+  const assets = entryMediaAssets(entry).filter(asset => ['image', 'video'].includes(asset.kind) && asset.usage !== 'poster');
+  if (assets.length < 2) return false;
+  const normalize = text => String(text || '').trim().replace(/\s+/gu, ' ');
+  const prompts = assets.map(asset => normalize(originalMediaPrompt(entry, asset.id)?.text)).filter(Boolean);
+  const shared = normalize(sharedOriginalPrompt(entry)
+    || (entry.sourceFacts?.originalPromptAvailable === true && !usesArticleReader(entry) ? entry.text : ''));
+  // A captured excerpt of the case prompt does not add another reading scope.
+  return shared ? prompts.some(text => !shared.includes(text)) : new Set(prompts).size > 1;
+}
+
 export function sharedOriginalPrompt(entry = {}) {
   if (usesArticleReader(entry) || entry.sourceFacts?.originalPromptAvailable === false
-    || originalMediaPrompts(entry).some(item => item.source === "webpage")) return "";
+    || (entry.sourceFacts?.caseOriginalPromptAvailable !== true && originalMediaPrompts(entry).some(item => item.source === "webpage"))) return "";
   return String(entry.text ?? "").trim();
 }
 
@@ -44,4 +55,18 @@ export function caseOriginalPromptText(entry = {}) {
   const shared = !prompts.length || entry.sourceFacts?.originalPromptAvailable === true
     ? sharedOriginalPrompt(entry) : "";
   return [...new Set([shared, ...prompts.map(item => String(item.text).trim())].filter(Boolean))].join("\n\n");
+}
+
+// Older captures did not distinguish a case prompt from per-media evidence.
+// The detail may show the retained full body only when it actually contains
+// that media prompt prefix. This display inference never becomes search data.
+export function detailCaseOriginalPromptText(entry = {}) {
+  const original = sharedOriginalPrompt(entry) || caseOriginalPromptText(entry);
+  const body = String(entry.text || '').trim();
+  const normalized = body.replace(/\s+/gu, ' ');
+  const extendsPrefix = originalMediaPrompts(entry).some(item => {
+    const prefix = item.text.trim().replace(/\s+/gu, ' ');
+    return prefix && normalized.includes(prefix) && normalized.length > prefix.length;
+  });
+  return entry.sourceFacts?.originalPromptAvailable === true && !usesArticleReader(entry) && extendsPrefix ? body : original;
 }

@@ -98,7 +98,11 @@ test("classification manager keeps taxonomy work while settings owns AI services
   assert.match(settings, /data-settings-tab="ai"/);
   assert.match(settings, /data-settings-tab="tasks"/);
   assert.match(settings, /data-settings-panel="tasks"/);
+  assert.doesNotMatch(settings, /id="open-text-batch"/);
   assert.match(settings, /id="preview-analysis-batch"/);
+  const batch = html.slice(html.indexOf('<dialog id="text-batch-dialog"'), html.indexOf('</dialog>', html.indexOf('<dialog id="text-batch-dialog"')));
+  assert.match(batch, /id="text-batch-content"/);
+  assert.match(batch, /id="batch-scope-project"/);
   assert.match(settings, /id="preview-reanalyze"/);
   assert.match(settings, /id="ai-settings-form"/);
   assert.match(settings, /id="vision-settings-form"/);
@@ -106,10 +110,10 @@ test("classification manager keeps taxonomy work while settings owns AI services
   assert.doesNotMatch(settings, /id="deepseek-api-key"|id="text-ai-provider"|id="vision-provider"|id="vision-compatible-endpoint"/);
 });
 
-test("collector opens a new library tab and disables the side panel for that tab", async () => {
+test("collector opens the library while keeping the unified assistant side panel available", async () => {
   const collector = await readFile(new URL("../extension/collector.js", import.meta.url), "utf8");
   assert.match(collector, /chrome\.tabs\.create\(\{\s*url:\s*chrome\.runtime\.getURL\("library\.html"\),\s*active:\s*false\s*\}\)/);
-  assert.match(collector, /chrome\.sidePanel\?\.setOptions\?\.\(\{\s*tabId:\s*tab\.id,\s*enabled:\s*false\s*\}\)/);
+  assert.doesNotMatch(collector, /chrome\.sidePanel\?\.setOptions\?\.\(\{\s*tabId:\s*tab\.id,\s*enabled:\s*false\s*\}\)/);
   assert.match(collector, /chrome\.tabs\.update\(tab\.id,\s*\{\s*active:\s*true\s*\}\)/);
   assert.doesNotMatch(collector, /location\.assign\(chrome\.runtime\.getURL\("library\.html"\)\)/);
 });

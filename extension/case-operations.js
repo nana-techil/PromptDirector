@@ -1,6 +1,6 @@
 import { assertSourceCorrection } from './case-field-access.js';
 import { confirmClassification } from './classifier.js';
-import { isValidContentPath } from './taxonomy.js';
+import { isValidContentPath, CONTENT_ROLES, contentTypeForRole, contentRoleForEntry } from './taxonomy.js';
 import { removeCaseTags } from './case-tags.js';
 import { appendFacetUndo } from './facet-history.js';
 import { validateCaseOperation } from './case-operation-specs.js';
@@ -15,6 +15,7 @@ import { moveEntriesBetweenCollections } from './organizer.js';
 import { planCaseCopies } from './library-folder-ownership.js';
 import { agentError } from './agent-protocol.js';
 import { assertCaseFilesReadable } from './case-file-status.js';
+import { updateCodePreviewText } from './code-case.js';
 import { caseAnalysisCoverage } from './analysis-coverage.js';
 
 const canonical = value => Array.isArray(value) ? value.map(canonical) : value && typeof value === 'object'
@@ -104,6 +105,10 @@ export function editCaseEntry(entry, patch, now = new Date().toISOString()) {
     next = updateEntryText(next, patch.text, next.textRevision || 1);
   }
   if (patch.articlePatches) next = updateArticleText(next, patch.articlePatches, next.textRevision || 1);
+  if (patch.codePreview) {
+    next = markEntryTextChanged(next, updateCodePreviewText(next.text, patch.codePreview.html));
+    next.sourceFacts = { ...next.sourceFacts, codePreviewAvailable: true };
+  }
   if (patch.customLabels) next.customLabels = uniqueNames(patch.customLabels);
   for (const item of patch.mediaPrompts || []) {
     const updated = setEntryMediaPrompt(next, item.assetId, item.text, item.source, { preserveOtherSource: true });
@@ -228,9 +233,11 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
     assertSourceCorrection(current, input.patch, input.sourceCorrection);
     let next = editCaseEntry(current, input.patch, now);
     if (input.patch.creative) next.creative = { ...current.creative, ...input.patch.creative };
-    if (input.patch.classificationPathIds) {
-      if (!isValidContentPath(state.taxonomy, input.patch.classificationPathIds)) fail('invalid_classification', '分类编号不在当前词库中');
-      next = confirmClassification(next, input.patch.classificationPathIds, state.taxonomy);
+    const classificationPathIds = input.patch.classificationPathIds || (input.patch.codePreview
+      ? [contentTypeForRole(state.taxonomy, CONTENT_ROLES.codeCase).id] : null);
+    if (classificationPathIds) {
+      if (!isValidContentPath(state.taxonomy, classificationPathIds)) fail('invalid_classification', '分类编号不在当前词库中');
+      next = confirmClassification(next, classificationPathIds, state.taxonomy);
     }
     if (input.patch.mediaOrder) {
       const assets = next.mediaAssets || [], ids = input.patch.mediaOrder;
@@ -311,7 +318,7 @@ export async function planCaseOperation(state, operation, input, { now = new Dat
       savedAt: current.savedAt, libraryAddedAt: now, libraryUpdatedAt: now, schemaVersion: current.schemaVersion,
       mediaAssets: selected.mediaAssets, primaryMediaId: selected.primaryMediaId, mediaPrompts: selected.mediaPrompts,
       timeNotes: selected.timeNotes, videoAnalyses: selected.videoAnalyses,
-      customLabels: [], facetAssignments: selected.facetAssignments.filter(a => a.visualId), analysisCandidates: [], analysisBreakdown: [], visualSetAnalyses: selected.visualSetAnalyses,
+      customLabels: uniqueNames(group.customLabels), facetAssignments: selected.facetAssignments.filter(a => a.visualId), analysisCandidates: [], analysisBreakdown: [], visualSetAnalyses: selected.visualSetAnalyses,
       sourcePages: group.sourceUrl ? [{ url: httpUrl(group.sourceUrl), title: group.title.trim() }] : [] }, group);
     const document = { version: 1, blocks: selectedBlocks.length
       ? current.articleDocument.blocks.filter(b => group.textBlockIds.includes(b.id) || ids.has(b.assetId))
@@ -349,7 +356,7 @@ export function createCaseOperations({ loadState, loadReadState = loadState, sto
           primaryMediaId: entry.primaryMediaId, coverVisualId: entry.coverVisualId, mediaCount: (entry.mediaAssets || []).length, savedAt: entry.savedAt, libraryUpdatedAt: entry.libraryUpdatedAt }),
         source: () => ({ url: entry.url || '', sourceFacts: entry.sourceFacts || {}, sourcePages: entry.sourcePages || [], provenance: entry.agentProvenance || null, corrections: entry.sourceCorrections || [] }),
         creative: () => entry.creative || {}, media: () => entry.mediaAssets || [], document: () => ({ text: entry.text || '', articleDocument: entry.articleDocument || null }),
-        annotations: () => ({ creative: entry.creative || {}, customLabels: entry.customLabels || [], classification: entry.classification, facetAssignments: entry.facetAssignments || [],
+        annotations: () => ({ creative: entry.creative || {}, customLabels: entry.customLabels || [], classification: entry.classification, contentRole: contentRoleForEntry(entry, state.taxonomy), facetAssignments: entry.facetAssignments || [],
           mediaPrompts: entry.mediaPrompts || [], timeNotes: entry.timeNotes || [], videoAnalyses: entry.videoAnalyses || [], visualSetAnalyses: entry.visualSetAnalyses || [] }),
         organization: () => memberships, analysis_coverage: () => caseAnalysisCoverage(entry)
       };

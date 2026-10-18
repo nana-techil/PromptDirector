@@ -116,32 +116,47 @@ def main() -> None:
 
         library.locator("#case-list > .case-card").click()
         expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", "project-private")
+        # Confirmed 2026-10-16 layout: media and case information are two continuous panes side by
+        # side on one screen, sharing the theme content surface; only the reading region scrolls.
         detail_surface = library.locator(".detail-primary").evaluate(
             """primary => {
+              const rect = node => { const r = node.getBoundingClientRect(); return {left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width, height: r.height}; };
               const body = primary.querySelector('.detail-body');
-              const primaryRect = primary.getBoundingClientRect();
-              const bodyRect = body.getBoundingClientRect();
+              const gallery = primary.querySelector('.detail-visual-gallery');
+              const reading = body?.querySelector('.detail-reading');
+              const footer = primary.querySelector('.detail-workspace-footer');
               return {
-                primaryHeight: primaryRect.height,
-                bodyHeight: bodyRect.height,
-                bodyBottom: bodyRect.bottom,
-                primaryBottom: primaryRect.bottom,
+                workspace: primary.classList.contains('detail-workspace'),
+                gallery: rect(gallery),
+                body: rect(body),
+                footer: rect(footer),
+                reading: reading ? {overflowY: getComputedStyle(reading).overflowY, scrollHeight: reading.scrollHeight, clientHeight: reading.clientHeight} : null,
                 bodyBackground: getComputedStyle(body).backgroundColor,
-                mediaBackground: getComputedStyle(primary.querySelector('.detail-visual-gallery')).backgroundColor
+                mediaBackground: getComputedStyle(gallery).backgroundColor,
+                drawerBackground: getComputedStyle(document.querySelector('#detail-drawer')).backgroundColor,
+                horizontalOverflow: primary.scrollWidth > primary.clientWidth,
+                viewportHeight: innerHeight
               };
             }"""
         )
-        assert detail_surface["bodyHeight"] >= detail_surface["primaryHeight"] - 1, detail_surface
-        assert abs(detail_surface["bodyBottom"] - detail_surface["primaryBottom"]) <= 1, detail_surface
-        assert detail_surface["bodyBackground"] != detail_surface["mediaBackground"], detail_surface
+        assert detail_surface["workspace"], detail_surface
+        assert detail_surface["gallery"]["right"] <= detail_surface["body"]["left"] + 1, detail_surface
+        assert detail_surface["body"]["left"] > detail_surface["gallery"]["left"], detail_surface
+        assert abs(detail_surface["gallery"]["top"] - detail_surface["body"]["top"]) <= 1, detail_surface
+        assert detail_surface["bodyBackground"] == detail_surface["mediaBackground"] == detail_surface["drawerBackground"], detail_surface
+        assert detail_surface["bodyBackground"] not in {"rgb(0, 0, 0)", "rgb(255, 255, 255)"}, detail_surface
+        assert detail_surface["footer"]["bottom"] <= detail_surface["viewportHeight"] + 1, detail_surface
+        assert detail_surface["reading"] and detail_surface["reading"]["overflowY"] in {"auto", "scroll"}, detail_surface
+        assert detail_surface["horizontalOverflow"] is False, detail_surface
         expect(library.locator("#detail-prev")).to_be_disabled()
         expect(library.locator("#detail-next")).to_be_disabled()
         library.screenshot(path=str(screenshots / "promptdirector-library-detail-light.png"), full_page=True)
 
         composer = session.open_page("composer.html", wait_until="networkidle")
-        expect(composer.locator("#composer-route")).not_to_be_visible()
-        expect(composer.locator("#composer-platform")).not_to_be_visible()
-        expect(composer.locator("#composer-output-language")).not_to_be_visible()
+        # Confirmed 2026-10-18: task, target model and output language are inferred per request,
+        # not manual composer settings; the remaining three switches are compact (30px each).
+        for removed in ("#composer-route", "#composer-platform", "#composer-output-language"):
+            expect(composer.locator(removed)).to_have_count(0)
         expect(composer.locator("#composer-production-review")).not_to_be_visible()
         expect(composer.locator("#composer-thinking")).not_to_be_visible()
         expect(composer.locator("#composer-applied-skills")).to_be_hidden()
@@ -149,8 +164,24 @@ def main() -> None:
         expect(composer.locator("#composer-reference-open")).to_be_visible()
         composer.screenshot(path=str(screenshots / "promptdirector-composer-desktop.png"), full_page=True)
         composer.locator("#composer-options > summary").click()
-        expect(composer.locator("#composer-route")).to_be_visible()
+        expect(composer.locator("#composer-production-review")).to_be_visible()
         expect(composer.locator("#composer-thinking")).to_be_visible()
+        expect(composer.locator("#composer-create-image")).to_be_visible()
+        toggle_metrics = composer.locator(".composer-option-toggles").evaluate(
+            """node => {
+              const rows = [...node.querySelectorAll('.composer-option-toggle')].map(row => row.getBoundingClientRect().height);
+              return {
+                rows,
+                total: node.getBoundingClientRect().height,
+                switches: [...node.querySelectorAll('input.ui-switch')].map(input => ({role: input.getAttribute('role'), type: input.type})),
+                overflow: node.scrollWidth > node.clientWidth
+              };
+            }"""
+        )
+        assert len(toggle_metrics["rows"]) == 3 and all(abs(height - 30) < 1 for height in toggle_metrics["rows"]), toggle_metrics
+        assert abs(toggle_metrics["total"] - 90) < 2, toggle_metrics
+        assert all(item == {"role": "switch", "type": "checkbox"} for item in toggle_metrics["switches"]), toggle_metrics
+        assert toggle_metrics["overflow"] is False, toggle_metrics
 
         composer.set_viewport_size({"width": 390, "height": 844})
         composer.locator("#composer-options").evaluate("details => { details.open = false; }")

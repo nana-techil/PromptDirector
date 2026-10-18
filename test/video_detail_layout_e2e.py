@@ -33,7 +33,8 @@ def layout_snapshot(page) -> dict:
         """gallery => {
           const video = gallery.querySelector('.detail-video');
           const caption = gallery.querySelector('.detail-visual-caption');
-          const label = caption?.querySelector(':scope > span:first-child');
+          // The workspace wraps the caption's leading label and media navigation in a context row.
+          const label = caption?.querySelector('.detail-media-context > span:first-child, :scope > span:first-child');
           const buttons = [...(caption?.querySelectorAll('button') ?? [])];
           const videoRect = video.getBoundingClientRect();
           const captionRect = caption.getBoundingClientRect();
@@ -149,8 +150,13 @@ def main() -> None:
             library.screenshot(path=str(Path(evidence_dir) / 'video-detail-desktop.png'))
 
         gallery_box=library.locator('.detail-visual-gallery').bounding_box()
-        assert abs(gallery_box['y']+gallery_box['height']/2-450)<3,gallery_box
-        # A short landscape frame must sit in the middle instead of sticking to the top.
+        # Confirmed 2026-10-16/17 workspace wording: the media row starts directly below the
+        # fixed case header and fills the remaining content height (no floating page-center row).
+        header_box=library.locator('.detail-header-section').bounding_box()
+        assert abs(gallery_box['y']-(header_box['y']+header_box['height']))<2,(gallery_box,header_box)
+        assert abs(gallery_box['y']+gallery_box['height']-900)<2,gallery_box
+        # A short landscape frame must stay balanced inside the fixed stage (no jump from the
+        # row height change) while the tools hug the real frame bottom.
         library.locator('.detail-video').evaluate("v=>{v.style.aspectRatio='16 / 9';v.style.maxHeight='360px'}")
         library.wait_for_function("()=>document.querySelector('.detail-video').getBoundingClientRect().height<=360")
         balanced=library.locator('.detail-visual-gallery').bounding_box()
@@ -160,7 +166,9 @@ def main() -> None:
         if evidence_dir: library.screenshot(path=str(Path(evidence_dir)/'video-detail-landscape-layout.png'))
         library.locator('.detail-video').evaluate("v=>{v.style.aspectRatio='180 / 320';v.style.removeProperty('max-height')}")
         desktop = layout_snapshot(library)
-        assert desktop["safetyBand"] == 1, desktop
+        # The workspace removed the separate dividing line: tools sit right against the frame,
+        # so the separation is geometric (captionTop >= videoBottom) rather than a 1px band.
+        assert desktop["safetyBand"] == 0, desktop
         assert desktop["captionTop"] >= desktop["videoBottom"], desktop
         assert desktop["labelFontSize"] == 11, desktop
         assert desktop["buttonHeights"] and min(desktop["buttonHeights"]) >= 36, desktop
@@ -171,7 +179,7 @@ def main() -> None:
         library.set_viewport_size({"width": 390, "height": 844})
         expect(library.locator(".detail-visual-caption")).to_be_visible()
         mobile = layout_snapshot(library)
-        assert mobile["safetyBand"] == 1, mobile
+        assert mobile["safetyBand"] == 0, mobile
         assert mobile["captionTop"] >= mobile["videoBottom"], mobile
         assert mobile["buttonHeights"] and min(mobile["buttonHeights"]) >= 44, mobile
         assert not mobile["buttonsOverlap"], mobile

@@ -200,7 +200,8 @@ def main() -> None:
                 assert library.locator("#result-count").is_visible()
                 assert library.locator("#gallery-view-controls").is_hidden()
                 assert library.locator("#share-count").inner_text() == "已选 0"
-                assert library.locator("#selection-select-filtered").inner_text() == "全选当前（6500）"
+                assert library.locator("#selection-select-filtered").inner_text() == "全选"
+                assert library.locator("#selection-select-filtered").get_attribute("aria-label") == "全选当前筛选结果，共 6500 个案例"
                 assert_wall_transition_stable(library, sample_wall_transition(library, "#share-cancel"))
                 assert_wall_stable(library, browse_wall, wall_geometry(library))
                 assert_wall_transition_stable(library, sample_wall_transition(library, "#select-cases"))
@@ -261,11 +262,14 @@ def main() -> None:
                     assert_columns_fill_width(library)
                 library.set_viewport_size({"width": 1666, "height": 900})
                 settle_layout(library)
-                before_toggle = library.evaluate("document.querySelectorAll('.case-card').length")
+                before_toggle = library.locator('#result-count').inner_text()
                 library.locator("#toggle-filters").click()
                 library.wait_for_timeout(260)
                 assert_columns_fill_width(library)
-                assert library.evaluate("document.querySelectorAll('.case-card').length") >= before_toggle
+                # Hiding the filter sidebar widens the gallery, so the number of cards
+                # mounted for the viewport may change; the matched case set must not.
+                assert library.locator('#result-count').inner_text() == before_toggle, 'toggling filters must not change the matched case set'
+                assert library.evaluate("document.querySelectorAll('.case-card').length") >= 1, 'the gallery must keep rendering cases'
 
                 stable_positions = library.evaluate(
                     """() => Object.fromEntries([...document.querySelectorAll('.case-card')].slice(0, 12).map((card) => {

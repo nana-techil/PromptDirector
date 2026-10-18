@@ -43,15 +43,15 @@ test("image details reserve an in-flow action row below the large image", async 
   assert.match(actions, /flex-wrap:\s*wrap/);
 });
 
-test("detail titles stay fully readable and project task actions wrap without overlap", async () => {
+test("detail titles use one line while project task actions wrap without overlap", async () => {
   const source = await readFile(cssUrl, "utf8");
   const title = rule(source, ".detail-title");
   const heading = rule(source, ".gallery-heading.project-selection-mode");
   const actions = rule(source, ".project-selection-actions");
 
-  assert.match(title, /overflow-wrap:\s*anywhere/);
+  assert.match(title, /white-space:\s*nowrap/);
   assert.doesNotMatch(title, /-webkit-line-clamp/);
-  assert.doesNotMatch(title, /text-overflow:\s*ellipsis/);
+  assert.match(title, /text-overflow:\s*ellipsis/);
   assert.match(heading, /flex-wrap:\s*wrap/);
   assert.match(actions, /flex-wrap:\s*wrap/);
 });
@@ -108,8 +108,9 @@ test("case navigation stays in the fixed detail shell outside variable media and
   assert.match(html, /id="detail-navigation"/);
   assert.match(stage, /position:\s*relative/);
   assert.match(navigation, /position:\s*absolute/);
-  assert.match(navigation, /top:\s*50%/);
-  assert.match(navigation, /width:\s*100%/);
+  assert.doesNotMatch(navigation, /top:\s*50%|width:\s*100%/);
+  assert.doesNotMatch(html, /case-navigation-label/);
+  assert.match(rule(source, ".detail-drawer"), /--detail-navigation-gutter:\s*0px/);
   assert.match(navigation, /z-index:\s*[2-9]/);
   assert.doesNotMatch(script, /append\(elements\.detailNavigation\)|prepend\(elements\.detailNavigation\)|item\.append\(navigation\)/);
   const toolbar = html.slice(html.indexOf('<header id="drawer-toolbar"'), html.indexOf('</header>', html.indexOf('<header id="drawer-toolbar"')));
@@ -151,14 +152,15 @@ test("text-only posts retain their reader while structured articles show only ge
   assert.match(rule(styles, ".unplaced-media-shelf"), /grid-template-columns:/);
 });
 
-test("media switching preserves the scroll anchor and no longer sizes the shared stage from an image", async () => {
+test("media switching preserves the scroll anchor and fits controls to the visible media", async () => {
   const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   const gallery = script.slice(script.indexOf("async function createDetailMediaGallery"), script.indexOf("function refreshActiveDetailAssetSections"));
   assert.doesNotMatch(gallery, /lockedImageStageHeight|lockedImageStageWidth/);
   assert.match(gallery, /captureDetailScrollAnchor/);
   assert.match(gallery, /restoreDetailScrollAnchor/);
   assert.match(gallery, /trigger\.disabled \? mediaNavigation : trigger\)\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(gallery, /stage\.style\.removeProperty\('height'\)/);
+  assert.match(gallery, /Math\.min\(gallery\.clientWidth \* height \/ width/);
+  assert.match(gallery, /--detail-stage-height/);
   assert.match(gallery, /event\.stopPropagation\(\)/);
 });
 
@@ -176,12 +178,11 @@ test("case detail shell and transparent media stage follow the active UI theme",
   const html = await readFile(new URL("../extension/library.html", import.meta.url), "utf8");
   const drawer = rule(source, ".detail-drawer");
   const body = rule(source, ".detail-body");
-  assert.match(foundation, /--viewer-bg:\s*#ffffff/);
+  assert.match(foundation, /--viewer-bg:\s*var\(--ui-surface\)/);
   assert.match(foundation, /--viewer-checker-a:\s*#eef1ef/);
   assert.match(foundation, /--viewer-checker-b:\s*#d6dcd8/);
-  assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-bg:\s*#000000/);
   assert.match(foundation, /:root\[data-theme="dark"\][\s\S]*--viewer-checker-a:\s*#17191c/);
-  assert.match(foundation, /:root\[data-theme="system"\][\s\S]*--viewer-bg:\s*#000000/);
+  assert.doesNotMatch(foundation, /--viewer-bg:\s*#(?:000000|ffffff)/);
   assert.match(drawer, /background:\s*var\(--viewer-bg\)/);
   assert.match(body, /background:\s*var\(--card\)/);
   assert.doesNotMatch(source, /\.detail-visual-gallery\.is-(?:image|video)-detail \.detail-visual-caption\s*\{[^}]*background:\s*#[0-9a-f]+/i);

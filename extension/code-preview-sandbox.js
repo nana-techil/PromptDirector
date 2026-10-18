@@ -1,0 +1,72 @@
+// Manifest sandbox: opaque origin, no extension APIs. This page accepts only
+// document data from its parent; it exposes no command bridge to the library.
+const frame = document.getElementById('preview');
+function fitPreview(contain = false) {
+  const body = document.body;
+  if (!body) return;
+  const originalZoom = body.style.zoom, originalMinHeight = body.style.minHeight;
+  function fit() {
+    body.style.zoom = originalZoom; body.style.minHeight = originalMinHeight;
+    const width = innerWidth, height = Math.max(innerHeight, body.getBoundingClientRect().height);
+    // Centered fixed-width demos can overflow on both sides; scrollWidth alone
+    // misses the inaccessible left half. Preserve the source's own layout.
+    const boxes = [...body.children].filter(node => !['SCRIPT', 'STYLE'].includes(node.tagName)).map(node => node.getBoundingClientRect());
+    const overflow = Math.max(0, ...boxes.map(box => Math.max(-box.left, box.right - width)));
+    const contentWidth = Math.max(body.scrollWidth, width + overflow * 2);
+    const overflowY = Math.max(0, ...boxes.map(box => Math.max(-box.top, box.bottom - innerHeight)));
+    const contentHeight = Math.max(body.scrollHeight, innerHeight + overflowY * 2);
+    const ratio = contain ? Math.min(1, width / contentWidth, innerHeight / contentHeight) : Math.min(1, width / contentWidth);
+    if (ratio < 1 && width > 0 && innerHeight > 0) {
+      body.style.zoom = String(ratio); body.style.minHeight = `${(contain ? innerHeight : height) / ratio}px`;
+    }
+  }
+  addEventListener('resize', fit);
+  // Offscreen frames can have their animation callbacks throttled. Preparation
+  // must finish without waiting for a visible paint; interaction still waits for it.
+  fit();
+  parent.postMessage({ type: 'code-preview-prepared' }, '*');
+  requestAnimationFrame(() => {
+    fit();
+    requestAnimationFrame(() => parent.postMessage({ type: 'code-preview-ready' }, '*'));
+  });
+}
+function installPreviewTheme(initial) {
+  const apply = theme => {
+    if (!theme || !/^#[a-f0-9]{3,8}$/i.test(theme.background) || !/^#[a-f0-9]{3,8}$/i.test(theme.color)) return;
+    for (const root of [document.documentElement, document.body]) {
+      root.style.setProperty('background-color', theme.background, 'important');
+      root.style.setProperty('color', theme.color, 'important');
+      root.style.colorScheme = theme.scheme === 'dark' ? 'dark' : 'light';
+    }
+  };
+  apply(initial);
+  addEventListener('message', event => { if (event.source === parent && event.data?.type === 'code-preview-theme') apply(event.data.theme); });
+}
+// Theme every canvas in the nested preview, including the otherwise transparent
+// outer document which Chromium can paint first when a hidden frame returns.
+function applyHostTheme(theme) {
+  if (!theme || !/^#[a-f0-9]{3,8}$/i.test(theme.background)) return;
+  for (const root of [document.documentElement, document.body, frame]) {
+    root.style.backgroundColor = theme.background;
+    root.style.colorScheme = theme.scheme === 'dark' ? 'dark' : 'light';
+  }
+}
+window.addEventListener('message', event => {
+  if (event.source === frame.contentWindow && event.data?.type === 'code-preview-error') {
+    parent.postMessage({ type: 'code-preview-error' }, '*'); return;
+  }
+  if (event.source === frame.contentWindow && event.data?.type === 'code-preview-prepared') {
+    parent.postMessage({ type: 'code-preview-prepared' }, '*'); return;
+  }
+  if (event.source === frame.contentWindow && event.data?.type === 'code-preview-ready') {
+    parent.postMessage({ type: 'code-preview-ready' }, '*'); return;
+  }
+  if (event.source === parent && event.data?.type === 'code-preview-theme') { applyHostTheme(event.data.theme); frame.contentWindow.postMessage(event.data, '*'); return; }
+  if (event.source !== parent || event.data?.type !== 'code-preview' || typeof event.data.html !== 'string') return;
+  applyHostTheme(event.data.theme);
+  const policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'";
+  const monitor = `<script>window.addEventListener('error',()=>parent.postMessage({type:'code-preview-error'},'*'));window.addEventListener('unhandledrejection',()=>parent.postMessage({type:'code-preview-error'},'*'));window.addEventListener('load',()=>{(${fitPreview.toString()})(${event.data.contain === true});(${installPreviewTheme.toString()})(${JSON.stringify(event.data.theme || {}).replace(/</g, '\\u003c')});});</script>`;
+  const previewStyle = `<style>${event.data.compact === true ? 'html,body{overflow:hidden!important}' : ''}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}</style>`;
+  frame.srcdoc = `<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${monitor}${event.data.html}${previewStyle}`;
+});
+parent.postMessage({ type: 'code-preview-host-ready' }, '*');

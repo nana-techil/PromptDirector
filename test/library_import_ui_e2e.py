@@ -6,7 +6,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect
 
-from e2e_support import ai_configuration_fixture, base_entry, extension_session
+from e2e_support import apply_retained_recovery, ai_configuration_fixture, base_entry, extension_session
 
 
 def wait_for_confirmation(page, supported: str) -> None:
@@ -196,17 +196,16 @@ def main() -> None:
             expect(library.locator("#feedback")).to_contain_text("导入完成")
             library.locator("#add-menu > summary").click()
             library.locator("#add-media").click()
-            library.locator("#import-last-job").click()
-            library.locator("#import-recovery-actions > summary").click()
-            expect(library.locator("#import-undo")).to_be_visible()
-            expect(library.locator("#import-view-project")).to_be_visible()
-            library.locator("#import-view-project").click()
+            expect(library.locator("#import-last-job")).to_be_hidden()
+            expect(library.locator("#import-recovery-actions, #import-undo")).to_have_count(0)
+            library.locator("#import-close").click()
+            library.locator(".project-filter", has_text="Import Review").click()
             expect(library.locator("#import-dialog")).not_to_be_visible()
             expect(library.locator(".project-filter", has_text="Import Review")).to_have_attribute("aria-pressed", "true")
 
             rtf_card = library.locator(".case-card").filter(has_text="notes.rtf")
             rtf_card.click()
-            expect(library.locator(".detail-visual-gallery.is-document-detail")).to_be_visible()
+            expect(library.locator(".article-document-reader")).to_be_visible()
             expect(library.locator(".markdown-reader")).to_contain_text("RTF import")
             rtf_text = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => value.entries.find(item => item.title === 'notes.rtf')?.text || '')")
             assert "\\rtf" not in rtf_text and "RTF import" in rtf_text, rtf_text
@@ -216,7 +215,7 @@ def main() -> None:
             markdown_card = library.locator(".case-card").filter(has_text="new-note.md")
             expect(markdown_card).to_have_count(1)
             markdown_card.click()
-            expect(library.locator(".detail-visual-gallery.is-document-detail")).to_be_visible()
+            expect(library.locator(".article-document-reader")).to_be_visible()
             expect(library.locator("#detail-drawer")).to_have_attribute("data-entry-id", library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => value.entries.find(item => item.title === 'new-note.md').id)"))
             expect(library.locator(".markdown-reader")).to_contain_text("END-OF-DOCUMENT")
             expect(library.locator("#detail-drawer > #detail-navigation")).to_be_visible()
@@ -234,28 +233,32 @@ def main() -> None:
                 }"""
             )
             assert not document_toolbar["navEditorOverlap"] and not document_toolbar["closeEditorOverlap"], document_toolbar
-            long_document = library.locator(".detail-visual-gallery.is-document-detail .detail-document").evaluate(
+            long_document = library.locator(".article-document-reader").evaluate(
                 """stage => {
-                  const before = {clientHeight: stage.clientHeight, scrollHeight: stage.scrollHeight};
-                  stage.scrollTop = stage.scrollHeight;
-                  return {...before, scrollTop: stage.scrollTop, hasEnd: stage.textContent.includes('END-OF-DOCUMENT')};
+                  let scroller=stage;
+                  while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /auto|scroll/.test(getComputedStyle(scroller).overflowY))) scroller=scroller.parentElement;
+                  if (!scroller) return {error:'No scrollable document surface'};
+                  const before = {clientHeight: scroller.clientHeight, scrollHeight: scroller.scrollHeight};
+                  scroller.scrollTop = scroller.scrollHeight;
+                  const end=[...stage.querySelectorAll('*')].reverse().find(e=>e.textContent.includes('END-OF-DOCUMENT'));
+                  const r=end?.getBoundingClientRect(), viewport=scroller.getBoundingClientRect();
+                  return {...before, scrollTop: scroller.scrollTop, hasEnd: Boolean(end), endVisible: r && r.top>=Math.max(0,viewport.top) && r.bottom<=Math.min(innerHeight,viewport.bottom)};
                 }"""
             )
             assert long_document["scrollHeight"] > long_document["clientHeight"], long_document
-            assert long_document["scrollTop"] > 0 and long_document["hasEnd"], long_document
+            assert long_document["scrollTop"] > 0 and long_document["hasEnd"] and long_document["endVisible"], long_document
             library.screenshot(path="/tmp/promptdirector-long-document-detail.png")
             library.locator("#detail-close").click()
 
             library.locator("#add-menu > summary").click()
             library.locator("#add-media").click()
-            expect(library.locator("#import-last-job")).to_be_visible()
-            library.locator("#import-last-job").click()
-            library.locator("#import-recovery-actions > summary").click()
-            library.locator("#import-undo").click()
-            expect(library.locator("#import-undo")).to_be_hidden()
+            expect(library.locator("#import-last-job")).to_be_hidden()
+            job_id = library.evaluate("async () => (await chrome.runtime.sendMessage({type:'GET_STATE'})).importJobs.items.at(-1).id")
+            apply_retained_recovery(library, 'UNDO_IMPORT_JOB', job_id)
+            expect(library.locator("#import-undo")).to_have_count(0)
             remaining_ids = library.evaluate("() => chrome.runtime.sendMessage({type: 'GET_STATE'}).then(value => (value.entries || []).map(item => item.id))")
             assert remaining_ids == ["entry:duplicate"], remaining_ids
-            library.locator("#import-cancel").click()
+            library.locator("#import-close").click()
 
             library.locator("#add-menu > summary").click()
             library.locator("#add-media").click()
@@ -360,7 +363,8 @@ def main() -> None:
                 "projectCombobox": import_project_menu,
                 "startPayloadFields": sorted(payload.keys()),
                 "refreshRestoredActiveJob": True,
-                "actions": ["cancel", "retry", "undo", "view-project"],
+                "actions": ["cancel", "retry", "view-project"],
+                "retainedImportRecovery": True,
             })
 
 

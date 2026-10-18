@@ -1,3 +1,6 @@
+import { COMPOSER_STATE_REVISION_KEY, COMPOSER_TOOLS_KEY, createComposerToolStorage } from './composer-tool-storage.js';
+import { assistantChatViews } from './assistant-chat-view.js';
+import { COMPOSER_DRAFTS_KEY, withComposerDrafts, withAssistantChatDrafts } from './composer-session-drafts.js';
 import { LIBRARY_VIEW_SUMMARY_KEY, LIBRARY_VIEW_SUMMARY_SOURCES, updateLibraryViewSummary, composerSessionSummaries } from './library-view-summary.js';
 import { jsonBytes, startPhase } from "./perf-trace.js";
 import { assertLibraryWritable } from "./library-version-guard.js";
@@ -30,11 +33,20 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
   if (!["get", "set", "remove"].every(name => typeof backend?.[name] === "function") || typeof lock !== "function") {
     throw new Error("资料读写接口缺少存储或写入协调能力。");
   }
+  const toolStorage = createComposerToolStorage({ backend, revision, cleanup: async keys => {
+    if (keys.length) await backend.remove(keys).catch(error => console.warn('Tool journal cleanup deferred', error.name));
+  } });
   const withRevision = update => touchesCaseLibrary(Object.keys(update))
     ? { ...update, [CASE_LIBRARY_REVISION_KEY]: revision() } : update;
   const withSummary = async update => {
     update = withRevision(update);
-    if (Object.hasOwn(update, 'composerSessions')) update = { ...update, composerSessionSummaries: composerSessionSummaries(update.composerSessions) };
+    if (Object.hasOwn(update, 'composerSessions') || Object.hasOwn(update, COMPOSER_DRAFTS_KEY)) {
+      update = { ...update, [COMPOSER_STATE_REVISION_KEY]: revision() };
+    }
+    if (Object.hasOwn(update, 'composerSessions')) {
+      const sessions = update.composerSessions;
+      update = { ...update, composerSessions: sessions, [COMPOSER_DRAFTS_KEY]: {}, composerSessionSummaries: composerSessionSummaries(sessions), assistantChatViews: assistantChatViews(sessions) };
+    }
     if (!LIBRARY_VIEW_SUMMARY_SOURCES.some(key => Object.hasOwn(update, key))) return update;
     const stored = await backend.get(LIBRARY_VIEW_SUMMARY_KEY);
     return { ...update, [LIBRARY_VIEW_SUMMARY_KEY]: updateLibraryViewSummary(update[LIBRARY_VIEW_SUMMARY_KEY] || stored[LIBRARY_VIEW_SUMMARY_KEY], update) };
@@ -92,9 +104,26 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     }
     throw Object.assign(new Error("资料库正在连续写入，暂时读不到一致的案例；请稍后重试"), { code: "CASE_RECORDS_BUSY" });
   };
+  const readComposerDrafts = async keys => {
+    const names = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : Object.keys(keys || {});
+    const wantsSessions = keys == null || names.includes('composerSessions');
+    const wantsViews = keys == null || names.includes('assistantChatViews');
+    const requested = keys == null ? keys : wantsSessions || wantsViews ? [...new Set([...names, COMPOSER_DRAFTS_KEY, ...(wantsSessions ? [COMPOSER_TOOLS_KEY] : [])])] : keys;
+    const stored = await backend.get(requested);
+    if (wantsSessions && Object.hasOwn(stored, 'composerSessions')) {
+      await toolStorage.join(stored);
+      stored.composerSessions = withComposerDrafts(stored.composerSessions, stored[COMPOSER_DRAFTS_KEY]);
+    }
+    if (keys == null) toolStorage.strip(stored);
+    else if (!names.includes(COMPOSER_TOOLS_KEY)) delete stored[COMPOSER_TOOLS_KEY];
+    if (wantsViews && Object.hasOwn(stored, 'assistantChatViews')) stored.assistantChatViews = withAssistantChatDrafts(stored.assistantChatViews, stored[COMPOSER_DRAFTS_KEY]);
+    if (!names.includes(COMPOSER_DRAFTS_KEY)) delete stored[COMPOSER_DRAFTS_KEY];
+    if (keys && !Array.isArray(keys) && typeof keys === 'object') for (const [key, value] of Object.entries(keys)) if (!Object.hasOwn(stored, key)) stored[key] = value;
+    return stored;
+  };
   const read = async (keys, readonlyEntries = false) => {
     if (keys == null) {
-      const all = await backend.get(keys);
+      const all = await readComposerDrafts(keys);
       if (!all[CASE_INDEX_KEY]) {
         if (readonlyEntries) freezeCaseSnapshot(all[ENTRIES_KEY]);
         return Object.fromEntries(Object.entries(all).filter(([key]) => !isCaseRecordKey(key) && !isBrowseKey(key) && key !== CASE_INDEX_KEY));
@@ -108,8 +137,8 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     }
     const defaults = typeof keys === 'object' && !Array.isArray(keys) ? keys : null;
     const names = typeof keys === 'string' ? [keys] : defaults ? Object.keys(defaults) : keys;
-    if (!names.includes(ENTRIES_KEY)) return backend.get(keys);
-    const fetch = () => backend.get([...new Set([...names, CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY])]);
+    if (!names.includes(ENTRIES_KEY)) return readComposerDrafts(keys);
+    const fetch = () => readComposerDrafts([...new Set([...names, CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY])]);
     const stored = await fetch();
     const result = stored[CASE_INDEX_KEY] ? await withCases(stored, true, fetch, readonlyEntries) : stored;
     if (!names.includes(CASE_INDEX_KEY)) delete result[CASE_INDEX_KEY];
@@ -125,7 +154,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     if (!names || !names.includes(ENTRIES_KEY)) throw new Error('分批读取需要指定案例列表');
     if (typeof backend.getKeys !== 'function') { yield { requiresFullRead: true }; return; }
     const [stored, storageKeys] = await Promise.all([
-      backend.get([...new Set([...names.filter(key => key !== ENTRIES_KEY), 'schemaVersion', CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, ...(useBrowseIndex ? [BROWSE_PROJECTION_META_KEY] : [])])]),
+      readComposerDrafts([...new Set([...names.filter(key => key !== ENTRIES_KEY), 'schemaVersion', CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, ...(useBrowseIndex ? [BROWSE_PROJECTION_META_KEY] : [])])]),
       backend.getKeys()
     ]);
     const indexed = indexedCaseIds(stored[CASE_INDEX_KEY]);
@@ -313,66 +342,92 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
     caseCache = { revision: update[CASE_LIBRARY_REVISION_KEY], ids: plan.ids, values: plan.values,
       orphanKeys: await cleanup([...new Set(leftovers)]) };
   };
-  const updateCase = (entryId, transform, { keys = [], metadata = () => ({}) } = {}) => lock(async () => {
+  const updateCases = (entryIds, transform, { keys = [], metadata = () => ({}) } = {}) => lock(async () => {
     await assertWritable(backend);
-    const key = caseRecordKey(entryId);
-    const stored = await backend.get([...new Set([CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, BROWSE_PROJECTION_META_KEY, key, ...keys])]);
-    const indexed = indexedCaseIds(stored[CASE_INDEX_KEY]);
+    const ids = [...new Set(entryIds)];
+    const stored = await backend.get([...new Set([CASE_INDEX_KEY, CASE_LIBRARY_REVISION_KEY, BROWSE_PROJECTION_META_KEY, ...ids.map(caseRecordKey), ...keys])]);
+    const indexed = new Set(indexedCaseIds(stored[CASE_INDEX_KEY]) ?? []);
     let entries;
-    let current;
-    if (indexed?.includes(entryId)) {
-      if (!Object.hasOwn(stored, key)) throw Object.assign(new Error('案例记录读取不到，资料没有改动'), { code: 'CASE_RECORDS_MISSING', missingIds: [entryId] });
-      current = stored[key];
-    } else {
-      // Old libraries and cases added by an older version retain the established merge/migration.
+    if (ids.some(id => !indexed.has(id))) {
+      // Retain the established old-library merge path, once per batch.
       const plain = await backend.get(ENTRIES_KEY);
-      if (!plain[ENTRIES_KEY]?.some(entry => entry.id === entryId)) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
-      const legacy = indexed ? await read([ENTRIES_KEY, ...keys]) : plain;
-      entries = legacy[ENTRIES_KEY] ?? [];
-      current = entries.find(entry => entry.id === entryId);
-      Object.assign(stored, legacy);
-      if (!current) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
+      if (plain[ENTRIES_KEY]?.some(entry => ids.includes(entry.id) && !indexed.has(entry.id))) {
+        const legacy = indexed.size ? await read([ENTRIES_KEY, ...keys]) : plain;
+        entries = legacy[ENTRIES_KEY] ?? [];
+        Object.assign(stored, legacy);
+      }
     }
-    const next = await transform(structuredClone(current));
-    if (!next || next.id !== entryId) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
-    if (sameCaseValue(current, next)) return { entry: structuredClone(next), changed: false };
+    const legacyById = entries && new Map(entries.map(entry => [entry.id, entry]));
+    const results = [], records = {};
+    for (const id of ids) {
+      const current = entries ? legacyById.get(id) : indexed.has(id) ? stored[caseRecordKey(id)] : null;
+      if (!current && indexed.has(id)) throw Object.assign(new Error('案例记录读取不到，资料没有改动'), { code: 'CASE_RECORDS_MISSING', missingIds: [id] });
+      const next = await transform(current ? structuredClone(current) : null, id);
+      // Batch callers can skip a concurrently removed or changed record without losing other results.
+      if (!next) continue;
+      if (!current) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
+      if (next.id !== id) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
+      const changed = !sameCaseValue(current, next);
+      results.push({ entry: structuredClone(next), changed });
+      if (changed) records[caseRecordKey(id)] = next;
+    }
+    if (!Object.keys(records).length) return results;
     const extra = await metadata(stored);
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)
       || Object.keys(extra).some(name => touchesCaseLibrary([name]) || name === CASE_INDEX_KEY || name === CASE_LIBRARY_REVISION_KEY || isCaseRecordKey(name) || isBrowseKey(name))) throw new Error('案例附加更新内容无效');
-    if (entries) await write(await withSummary({ ...extra, [ENTRIES_KEY]: entries.map(entry => entry.id === entryId ? next : entry) }));
+    if (entries) await write(await withSummary({ ...extra, [ENTRIES_KEY]: entries.map(entry => records[caseRecordKey(entry.id)] ?? entry) }));
     else {
       const nextRevision = revision();
-      const snapshot = structuredClone(next);
-      await backend.set({ ...extra, [key]: snapshot, [caseBrowseKey(entryId)]: caseBrowseProjection(snapshot), [CASE_LIBRARY_REVISION_KEY]: nextRevision,
+      await backend.set({ ...extra, ...records, ...browseRecords(Object.values(records)), [CASE_LIBRARY_REVISION_KEY]: nextRevision,
         ...(validBrowseMarker(stored[BROWSE_PROJECTION_META_KEY], stored[CASE_LIBRARY_REVISION_KEY]) ? { [BROWSE_PROJECTION_META_KEY]: browseMarker(nextRevision) } : {}) });
-      updateCachedCases({ [key]: { newValue: snapshot }, [CASE_LIBRARY_REVISION_KEY]: { oldValue: stored[CASE_LIBRARY_REVISION_KEY], newValue: nextRevision } });
+      updateCachedCases({ ...Object.fromEntries(Object.entries(records).map(([key, value]) => [key, { newValue: value }])),
+        [CASE_LIBRARY_REVISION_KEY]: { oldValue: stored[CASE_LIBRARY_REVISION_KEY], newValue: nextRevision } });
     }
-    return { entry: structuredClone(next), changed: true };
+    return results;
   });
+  const updateCase = async (entryId, transform, options) => (await updateCases([entryId], async current => {
+    if (!current) throw Object.assign(new Error('没有找到这条案例'), { code: 'CASE_NOT_FOUND' });
+    const next = await transform(current);
+    if (!next) throw Object.assign(new Error('案例编号不能在编辑时改变，资料没有改动'), { code: 'CASE_ID_INVALID' });
+    return next;
+  }, options))[0];
+  const writeWithSummary = async values => {
+    const replacement = Object.hasOwn(values, 'composerSessions') ? await toolStorage.replacement() : null;
+    await write(await withSummary({ ...values, ...replacement?.update }));
+    if (replacement?.obsolete.length) await backend.remove(replacement.obsolete).catch(error => console.warn('Tool journal cleanup deferred', error.name));
+  };
   return Object.freeze({
     get: read,
+    prepareComposerConfirmation: () => lock(async () => { await assertWritable(backend); await toolStorage.confirmationVersion(); }),
+    getComposerToolState: id => toolStorage.get(id),
+    updateComposerToolState: (id, transform, markDirty) => lock(async () => {
+      await assertWritable(backend);
+      return toolStorage.update(id, transform, markDirty);
+    }),
     // View readers may share frozen case records; editing callers keep the mutable get contract.
     getSnapshot: keys => read(keys, true),
     getSnapshotBatches,
     updateCase,
+    updateCases,
     // Available before our minimum Chrome version; never load values to enumerate keys.
     getKeys: () => backend.getKeys(),
     set: values => lock(async () => {
       await assertWritable(backend);
-      await write(await withSummary(values));
+      await writeWithSummary(values);
     }),
     remove: keys => lock(async () => {
       await assertWritable(backend);
       const removed = typeof keys === 'string' ? [keys] : keys;
+      const toolReplacement = removed.includes('composerSessions') ? await toolStorage.replacement() : null;
       // Removing the case list removes every case record with its index.
       const caseKeys = removed.includes(ENTRIES_KEY) && typeof backend.getKeys === 'function'
         ? (await backend.getKeys()).filter(key => isCaseRecordKey(key) || isBrowseKey(key) || key === CASE_INDEX_KEY) : [];
       if (caseKeys.length) caseCache = null;
       // Invalidate derived values in the same lock. The next reader rebuilds
       // them from the retained source instead of advertising a deleted undo.
-      return backend.remove([...new Set([...removed, ...caseKeys,
+      return backend.remove([...new Set([...removed, ...caseKeys, ...(toolReplacement ? [COMPOSER_TOOLS_KEY, COMPOSER_STATE_REVISION_KEY, ...toolReplacement.obsolete] : []),
         ...(removed.some(key => LIBRARY_VIEW_SUMMARY_SOURCES.includes(key)) ? [LIBRARY_VIEW_SUMMARY_KEY] : []),
-        ...(removed.includes('composerSessions') ? ['composerSessionSummaries'] : []),
+        ...(removed.includes('composerSessions') ? ['composerSessionSummaries', 'assistantChatViews', COMPOSER_DRAFTS_KEY] : []),
         ...(touchesCaseLibrary(removed) ? [CASE_LIBRARY_REVISION_KEY] : [])
       ])]);
     }),
@@ -382,7 +437,7 @@ export function createLibraryStorage({ backend, changes, lock, revision = () => 
       await assertWritable(backend);
       const update = await transform(await read(keys));
       if (!update || typeof update !== "object" || Array.isArray(update)) throw new Error("资料更新内容无效。");
-      await write(await withSummary(update));
+      await writeWithSummary(update);
     }),
     subscribe: listener => {
       if (!changes) throw new Error("资料变化通知不可用。");
@@ -423,11 +478,11 @@ export function createLibraryCommitter({ storage, syncedKeys, syncMetaKey, markD
       done({ bytes: () => jsonBytes(update) });
     }
   };
-  commit.updateCase = async (entryId, transform, options = {}) => {
+  for (const method of ['updateCase', 'updateCases']) commit[method] = async (entryId, transform, options = {}) => {
     const done = startPhase('background', 'writeCase');
     const sync = !isSyncApplying() && options.markSyncDirty !== false && syncedKeys.has(ENTRIES_KEY);
     try {
-      return await storage.updateCase(entryId, transform, sync ? {
+      return await storage[method](entryId, transform, sync ? {
         keys: [syncMetaKey], metadata: stored => ({ [syncMetaKey]: markDirty(stored[syncMetaKey], options.dirtyAssetIds) })
       } : {});
     } finally { done(); }
@@ -436,10 +491,11 @@ export function createLibraryCommitter({ storage, syncedKeys, syncMetaKey, markD
   async function commitLibraryUpdate(update, options) {
     const payload = { ...update };
     const affectsSync = Object.keys(payload).some(key => syncedKeys.has(key));
-    if (isSyncApplying() || options.markSyncDirty === false || !affectsSync) return storage.set(payload);
-    return storage.update(syncMetaKey, stored => ({
-      ...payload,
-      [syncMetaKey]: markDirty(stored[syncMetaKey], options.dirtyAssetIds)
-    }));
+    const sync = !isSyncApplying() && options.markSyncDirty !== false && affectsSync;
+    if (!sync && !options.guard) return storage.set(payload);
+    return storage.update([...new Set([...(sync ? [syncMetaKey] : []), ...(options.guard?.keys ?? [])])], stored => {
+      options.guard?.check(stored);
+      return { ...payload, ...(sync ? { [syncMetaKey]: markDirty(stored[syncMetaKey], options.dirtyAssetIds) } : {}) };
+    });
   }
 }

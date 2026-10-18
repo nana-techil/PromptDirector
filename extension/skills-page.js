@@ -26,7 +26,7 @@ import {
   buildCuratedSkillSnapshot,
   buildCuratedSkillSubmissionArchive
 } from "./curated-skill-package.js";
-import { CURATED_SKILL_SUBMISSION_URL } from "./curated-config.js";
+import { curatedSubmissionUrl } from "./curated-config.js";
 import {
   analyzeCreativeSkillVisualBatch,
   anonymousSkillSources,
@@ -1396,7 +1396,7 @@ async function downloadCuratedSubmission() {
     saveAs: true,
     failureMessage: "精选 Skill 投稿包下载失败"
   });
-  await chrome.tabs.create({ url: CURATED_SKILL_SUBMISSION_URL });
+  await chrome.tabs.create({ url: curatedSubmissionUrl(currentLocale(), "skills") });
   setFeedback(elements.skillSubmissionFeedback, "投稿包已下载，并已打开 GitHub 投稿页。请手动上传、核对并提交；不会自动发布。 ");
 }
 

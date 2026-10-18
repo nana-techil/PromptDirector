@@ -77,12 +77,22 @@ def main():
               const {saveMediaBlob,getMediaBlob}=await import('./media-store.js');
               const next={...asset,id:'conflict:'+action};await saveMediaBlob(next.id,await getMediaBlob(asset.id));
               const {sendWithGenerationPromptConfirmation}=await import('./image-generation-confirmation.js');
-              window.conflictResult=null;window.pendingConflict=sendWithGenerationPromptConfirmation({type:'CREATE_MEDIA_CASE',asset:next,title:'Conflict '+action,text:'已有原始提示词'}).then(result=>window.conflictResult=result);
+              window.conflictResult=null;window.conflictError=null;
+              window.pendingConflict=sendWithGenerationPromptConfirmation({type:'CREATE_MEDIA_CASE',asset:next,title:'Conflict '+action,text:'已有原始提示词'})
+                .then(result=>window.conflictResult=result)
+                .catch(error=>window.conflictError={name:error.name,message:error.message});
             }""",{'asset':prepared,'action':action})
+            # The dialog follows a background request, not the evaluate call.
+            # Use the normal operation timeout and expose an early response or
+            # rejection instead of reporting every outcome as a missing dialog.
+            page.wait_for_function("() => document.querySelector('#promptdirector-app-dialog')?.open || window.conflictResult !== null || window.conflictError !== null")
+            pending=page.evaluate('({result:window.conflictResult,error:window.conflictError})')
+            assert pending == {'result':None,'error':None}, pending
             dialog=page.locator('#promptdirector-app-dialog')
             expect(dialog).to_be_visible();expect(dialog).to_contain_text('已有原始提示词');expect(dialog).to_contain_text('雨夜书店')
             dialog.get_by_role('button',name=action,exact=True).click()
-            page.wait_for_function('() => window.conflictResult !== null')
+            page.wait_for_function('() => window.conflictResult !== null || window.conflictError !== null')
+            assert page.evaluate('window.conflictError') is None
             result=page.evaluate('window.conflictResult');assert result['ok'],result
             assert result['entry']['text']=='已有原始提示词'
             assert bool(result['entry']['mediaPrompts']) == (action=='覆盖')

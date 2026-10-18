@@ -1,4 +1,5 @@
 import { createReferenceWindow } from './composer-reference-window.js';
+import { bindDiagnosticControls } from './diagnostic-controls.js';
 import { createMediaStage } from './staged-media.js';
 import { createLibraryViewReader } from './library-view-state.js';
 import { setTaskFeedbackState } from "./task-feedback.js";
@@ -64,7 +65,7 @@ import {
 import { applyComposerServiceResult, planComposerSession, prepareComposerTurnStart } from "./composer-turn-core.js";
 import { sessionHasVideoReferences } from "./composer-video-references.js";
 import { createComposerImageWorkspace } from "./composer-image-workspace.js";
-import { composerAssemblyLayers } from "./composer-agent.js";
+import { composerAssemblyLayers, agentInstructionFor } from "./composer-agent.js";
 import {
   createComposerActiveTurn,
   createLatestCheckpointWriter,
@@ -108,15 +109,15 @@ import {
   translateUiMessage
 } from "./i18n.js";
 
-await initializeUi();
+const uiPreferences = await initializeUi();
 bindUiPreferenceReload();
-bindTransientMenus(document, ".composer-options, .composer-session-menu, .composer-toolbar-menu");
+bindTransientMenus(document, ".composer-options, .composer-toolbar-menu");
 
 const elements = Object.fromEntries([
   "composer-shell", "composer-nav", "composer-nav-open", "composer-nav-close", "composer-new", "composer-session-list",
   "composer-direction", "composer-direction-trigger", "composer-direction-icon", "composer-reference-inputs-trigger",
   "composer-reference-inputs", "composer-send-images-field", "composer-send-videos-field", "composer-send-images", "composer-send-videos",
-  "composer-title", "composer-save-state", "composer-platform", "composer-output-language", "composer-route", "composer-production-review", "composer-reference-open", "composer-reference-count",
+  "composer-title", "composer-save-state", "composer-production-review", "composer-reference-open", "composer-reference-count",
   "composer-applied-skills", "composer-skill-menu", "composer-assembly-open", "composer-timeline", "composer-aliases", "composer-instruction", "composer-action", "composer-feedback", "composer-send-note",
   "composer-attachment-files", "composer-attachment-local", "composer-library-search", "composer-temp-reference-row", "composer-temp-references", "composer-temp-reference-save-all",
   "composer-model-trigger", "composer-model-label", "composer-model-menu", "composer-model-dynamic", "composer-model-flash", "composer-model-pro", "composer-model-openai", "composer-model-openai-label", "composer-model-compatible", "composer-model-compatible-label", "composer-model-xai", "composer-model-xai-label", "composer-thinking", "composer-create-image", "composer-create-media-label", "composer-create-image-note", "composer-generation-settings", "composer-generation-settings-title", "composer-image-size-field", "composer-image-size", "composer-image-quality-field", "composer-image-quality", "composer-image-reference-mode-field", "composer-image-reference-mode", "composer-video-duration-field", "composer-video-duration", "composer-generation-parameter-note",
@@ -124,6 +125,11 @@ const elements = Object.fromEntries([
   "composer-case-selection-count", "composer-reference-search", "composer-reference-project-filter", "composer-case-list", "composer-selection-strip",
   "composer-reference-clear", "composer-reference-apply", "composer-reference-feedback", "composer-assembly-dialog", "composer-assembly-close", "composer-assembly-content",
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
+
+bindDiagnosticControls({
+  controls: [elements.composerDiagnosticExport, elements.composerAssemblyOpen], preferences: uiPreferences,
+  onDisable: () => { if (elements.composerAssemblyDialog.open) elements.composerAssemblyDialog.close(); }
+});
 
 let entries = [];
 let physicalEntries = [];
@@ -282,9 +288,6 @@ function bindEvents() {
     event.preventDefault();
     safely(() => addTempReferences(files))();
   });
-  elements.composerPlatform.addEventListener("change", safely(updateComposerPreferences));
-  elements.composerOutputLanguage.addEventListener("change", safely(updateComposerPreferences));
-  elements.composerRoute.addEventListener("change", safely(updateComposerPreferences));
   elements.composerProductionReview.addEventListener("change", safely(updateComposerPreferences));
   document.querySelectorAll('input[name="composer-type"]').forEach((input) => input.addEventListener("change", safely(async () => {
     await updateComposerPreferences();
@@ -337,6 +340,13 @@ function bindEvents() {
     for (const url of thumbnailUrls.values()) URL.revokeObjectURL(url);
   });
   getLibraryStorage().subscribe((changes) => {
+    const draft = changes.composerSessionDrafts?.newValue?.[composerSession?.id];
+    if (draft && !activeOperation && draft.chatRevision > (composerSession.chatRevision || 0)
+      && elements.composerInstruction.value === (composerSession.currentInstruction || '')) {
+      composerSession = { ...composerSession, ...draft };
+      elements.composerInstruction.value = draft.currentInstruction;
+      resizeComposerInput(); renderSendState();
+    }
     if (changes.aiProviderRegistry || changes.aiTaskAssignments || changes.aiPreferences) safely(refreshComposerServiceSettings)();
     if (changes.creativeRuns || changes.creativeJobs || changes.composerSessions || changes.entries || changes.compoundCases || changes.creativeExperimentSettings || changes.creativeSkills) {
       if (!composerInitializationComplete) creativeStateRefreshPending = true;
@@ -352,11 +362,20 @@ async function refreshCreativeResultState() {
   const nextPhysicalEntries = response.entries ?? physicalEntries;
   const nextCompoundCases = normalizeCompoundCases(response.compoundCases ?? compoundCases, nextPhysicalEntries);
   const nextEntries = materializeLogicalCases(nextPhysicalEntries, nextCompoundCases);
+  sessionSummaries = response.composerSessionSummaries ?? sessionSummaries;
   creativeRuns = response.creativeRuns ?? creativeRuns;
   creativeJobs = response.creativeJobs ?? creativeJobs;
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
   creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
   if (!await syncCreativeJobState(revision)) return;
+  if (composerSession?.assistantState && !activeOperation) {
+    const sessionId = composerSession.id;
+    const shared = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId });
+    if (revision !== creativeStateRefreshRevision) return;
+    if (shared?.ok && composerSession?.id === sessionId && shared.session.chatRevision > composerSession.chatRevision) {
+      composerSession = shared.session;
+    }
+  }
   renderActiveState();
   renderSlashSkillMenu();
 
@@ -425,7 +444,6 @@ async function initializeComposer() {
   creativeJobs = response.creativeJobs ?? creativeJobs;
   creativeExperimentSettings = response.creativeExperimentSettings ?? creativeExperimentSettings;
   creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
-  elements.composerDiagnosticExport.hidden = response.uiPreferences?.analysisDiagnostics !== true;
 
   const params = new URLSearchParams(location.search);
   const requestedProjectId = params.get("project");
@@ -449,6 +467,7 @@ async function initializeComposer() {
       composerSession = createComposerSession(recovered);
       composerSession = await saveSession(composerSession).catch(() => composerSession);
     }
+    if (composerSession.assistantState) elements.composerInstruction.value = composerSession.currentInstruction || '';
   }
   if (!composerSession) {
     const requestedIds = uniqueIds((params.get("references") ?? "").split(","));
@@ -476,8 +495,8 @@ async function createNewSession(referenceIds = [], focus = true) {
   composerSession = createComposerSession({
     title: targetType === "video" ? t("未命名视频提示词") : t("未命名图片提示词"),
     targetType,
-    targetPlatform: composerSettings.lastTargetPlatform,
-    outputLanguage: composerSettings.outputLanguage,
+    targetPlatform: "",
+    outputLanguage: "auto",
     routeMode: "auto",
     imageReferenceMode: "text_only",
     videoReferenceMode: "text_only",
@@ -504,9 +523,6 @@ function renderComposer() {
     input.checked = input.value === composerSession.targetType;
   });
   elements.composerTitle.textContent = composerSession.title;
-  elements.composerPlatform.value = composerSession.targetPlatform;
-  elements.composerOutputLanguage.value = composerSession.outputLanguage;
-  elements.composerRoute.value = composerSession.routeMode;
   elements.composerProductionReview.checked = composerSession.productionReviewEnabled;
   elements.composerProductionReview.disabled = !["auto", "compose"].includes(composerSession.routeMode);
   renderComposerAiProfile();
@@ -814,8 +830,6 @@ async function selectSlashSkill(skill) {
 }
 
 function renderSessions() {
-  const openMenus = new Set([...elements.composerSessionList.querySelectorAll(".composer-session-menu[open]")]
-    .map(menu => menu.closest(".composer-session-item")?.dataset.sessionId));
   const summaries = new Map(sessionSummaries.map((summary) => [summary.id, summary]));
   const current = sessionSummaryFromCurrent();
   if (current) summaries.set(current.id, current);
@@ -833,13 +847,13 @@ function renderSessions() {
     section.dataset.sessionGroup = group.id;
     section.append(rawTextEl("h3", "composer-session-group-label", t(group.label)));
     const list = el("div", "composer-session-group-list");
-    list.append(...group.items.map(summary => renderSessionRow(summary, openMenus.has(summary.id))));
+    list.append(...group.items.map(summary => renderSessionRow(summary)));
     section.append(list);
     return section;
   }));
 }
 
-function renderSessionRow(summary, menuOpen = false) {
+function renderSessionRow(summary) {
     const row = el("div", "composer-session-item");
     row.dataset.sessionId = summary.id;
     row.setAttribute("aria-current", String(summary.id === composerSession?.id));
@@ -850,24 +864,17 @@ function renderSessionRow(summary, menuOpen = false) {
     load.append(rawTextEl("strong", "", summary.title));
     if (running) load.append(rawTextEl("small", "composer-session-running", operationLabel(activeOperation.phase)));
     load.addEventListener("click", safely(() => loadComposerSession(summary.id)));
-    const menu = el("details", "composer-session-menu");
-    menu.open = menuOpen;
-    const trigger = rawTextEl("summary", "", "…");
-    trigger.setAttribute("aria-label", t("更多操作：{title}", { title: summary.title }));
-    const panel = el("div", "composer-session-menu-panel");
-    panel.setAttribute("role", "menu");
-    const remove = rawTextEl("button", "composer-session-delete quiet-danger", t("删除"));
+    const remove = el("button", "icon-button composer-session-delete quiet-danger");
     remove.type = "button";
     remove.disabled = running;
-    remove.setAttribute("role", "menuitem");
+    remove.title = t("删除");
+    remove.setAttribute("aria-label", `${t("删除")}：${summary.title}`);
+    remove.append(createUiIcon("x"));
     remove.addEventListener("click", (event) => {
       event.stopPropagation();
-      menu.open = false;
       safely(() => deleteSession(summary.id))();
     });
-    panel.append(remove);
-    menu.append(trigger, panel);
-    row.append(load, menu);
+    row.append(load, remove);
     return row;
 }
 
@@ -1761,7 +1768,12 @@ function renderComposerAiProfile() {
   elements.composerCreateMediaLabel.textContent = t(videoTask ? "创建视频" : "创建图片");
   elements.composerCreateImage.checked = composerSession?.outputMode === (videoTask ? "create_video" : "create_image");
   elements.composerCreateImage.disabled = Boolean(activeOperation) || !mediaAvailability.available;
-  elements.composerCreateImageNote.textContent = translateUiMessage(mediaAvailability.message);
+  const availabilityMessage = activeOperation ? t("生成期间不能修改当前对话设置") : translateUiMessage(mediaAvailability.message);
+  elements.composerCreateImageNote.textContent = availabilityMessage;
+  const createMediaLabel = elements.composerCreateImage.closest('label');
+  createMediaLabel.title = availabilityMessage;
+  if (elements.composerCreateImage.disabled) createMediaLabel.tabIndex = 0;
+  else createMediaLabel.removeAttribute('tabindex');
   elements.composerProductionReview.disabled = Boolean(activeOperation) || !["auto", "compose"].includes(composerSession?.routeMode);
   renderImageGenerationSettings();
 }
@@ -2010,27 +2022,18 @@ async function updateComposerPreferences() {
     return composerFeedback(t("生成期间不能修改当前对话设置"), true);
   }
   const previousType = composerSession.targetType;
-  const previousRouteMode = composerSession.routeMode;
   const previousReviewEnabled = composerSession.productionReviewEnabled;
-  const previousOutputLanguage = composerSession.outputLanguage;
-  const previousTargetPlatform = composerSession.targetPlatform;
   const targetType = selectedTargetType();
   const previousDefault = previousType === "video" ? t("未命名视频提示词") : t("未命名图片提示词");
   const nextTitle = composerSession.title === previousDefault
     ? (targetType === "video" ? t("未命名视频提示词") : t("未命名图片提示词"))
     : composerSession.title;
   const keepExecution = previousType === targetType
-    && previousRouteMode === elements.composerRoute.value
-    && previousReviewEnabled === elements.composerProductionReview.checked
-    && previousOutputLanguage === elements.composerOutputLanguage.value
-    && previousTargetPlatform === elements.composerPlatform.value.trim();
+    && previousReviewEnabled === elements.composerProductionReview.checked;
   composerSession = createComposerSession({
     ...composerSession,
     title: nextTitle,
     targetType,
-    targetPlatform: elements.composerPlatform.value.trim(),
-    outputLanguage: elements.composerOutputLanguage.value,
-    routeMode: elements.composerRoute.value,
     productionReviewEnabled: elements.composerProductionReview.checked,
     currentInstruction: keepExecution ? composerSession.currentInstruction : "",
     retrievedSources: keepExecution ? composerSession.retrievedSources : [],
@@ -2040,8 +2043,6 @@ async function updateComposerPreferences() {
   const response = await chrome.runtime.sendMessage({
     type: "UPDATE_COMPOSER_SETTINGS",
     action: "preferences",
-    outputLanguage: composerSession.outputLanguage,
-    lastTargetPlatform: composerSession.targetPlatform,
     productionReviewEnabled: composerSession.productionReviewEnabled
   });
   if (response?.ok) composerSettings = normalizeComposerSettings(response.composerSettings);
@@ -2054,6 +2055,7 @@ async function loadComposerSession(sessionId) {
   const response = await chrome.runtime.sendMessage({ type: "GET_COMPOSER_SESSION", sessionId });
   if (!response?.ok) return composerFeedback(response?.message || t("没有找到这份创作草稿"), true);
   composerSession = response.session;
+  if (composerSession.assistantState && !currentComposerOperation()) elements.composerInstruction.value = composerSession.currentInstruction || '';
   replaceComposerSessionUrl(sessionId);
   elements.composerShell.classList.remove("nav-open");
   closeReferenceWorkspace();
@@ -2789,7 +2791,7 @@ function freezeComposerAssemblySnapshot(session, {
     outputMode: session.outputMode,
     outputLanguage: payload.outputLanguage,
     productionReviewEnabled: session.productionReviewEnabled,
-    agentInstruction: composerSettings.agentInstruction.text,
+    agentInstruction: agentInstructionFor(composerSettings, payload.outputLanguage),
     taskMethod,
     userRequest,
     skills: session.appliedSkills.map((skill, index) => ({

@@ -19,7 +19,7 @@ const CONTENT_LABELS = Object.freeze({
   "content:reference": ["资料文档", "Reference"]
 });
 
-export const SHARE_PREVIEW_HTML_FILENAME = "打开分享包.html";
+export const SHARE_PREVIEW_HTML_FILENAME = "index.html";
 export const SHARE_PREVIEW_RUNTIME_FILENAME = "share-preview-runtime.js";
 export const SHARE_PREVIEW_MASONRY_FILENAME = "share-preview-masonry.js";
 export const SHARE_PREVIEW_FOUNDATION_FILENAME = "share-preview-foundation.css";
@@ -91,19 +91,19 @@ export function renderSharePreviewHtml(
   </aside>
 
   <main class="gallery-shell">
-    <section id="case-grid" class="case-grid" aria-label="Shared cases">${cards}</section>
+    <section id="case-grid" class="case-grid" data-aria-zh="分享案例" data-aria-en="Shared cases" aria-label="${locale === "en" ? "Shared cases" : "分享案例"}">${cards}</section>
     <section id="empty-state" class="empty-state" hidden><strong data-zh="没有匹配的案例" data-en="No matching cases">${locale === "en" ? "No matching cases" : "没有匹配的案例"}</strong><p data-zh="调整搜索或内容类型。" data-en="Adjust the search or content type.">${locale === "en" ? "Adjust the search or content type." : "调整搜索或内容类型。"}</p></section>
   </main>
 
   <footer class="app-footer"><strong>PromptDirector</strong><span data-zh="提示词导演，你的视觉创作私人灵感库。" data-en="PromptDirector, your private visual inspiration library.">${locale === "en" ? "PromptDirector, your private visual inspiration library." : "提示词导演，你的视觉创作私人灵感库。"}</span></footer>
 
   <section id="detail-view" class="detail-view" aria-hidden="true" hidden>
-    <nav class="detail-toolbar" aria-label="Case navigation">
+    <nav class="detail-toolbar" data-aria-zh="案例导航" data-aria-en="Case navigation" aria-label="${locale === "en" ? "Case navigation" : "案例导航"}">
       <div class="detail-navigation">
-        <button id="detail-prev" class="icon-button" type="button" aria-label="上一条" title="上一条">${icon("chevron-left")}</button>
-        <button id="detail-next" class="icon-button" type="button" aria-label="下一条" title="下一条">${icon("chevron-right")}</button>
+        <button id="detail-prev" class="icon-button" type="button" data-aria-zh="上一条" data-aria-en="Previous case" aria-label="${locale === "en" ? "Previous case" : "上一条"}" title="${locale === "en" ? "Previous case" : "上一条"}">${icon("chevron-left")}</button>
+        <button id="detail-next" class="icon-button" type="button" data-aria-zh="下一条" data-aria-en="Next case" aria-label="${locale === "en" ? "Next case" : "下一条"}" title="${locale === "en" ? "Next case" : "下一条"}">${icon("chevron-right")}</button>
       </div>
-      <button id="detail-close" class="icon-button" type="button" aria-label="关闭详情" title="关闭详情">${icon("x")}</button>
+      <button id="detail-close" class="icon-button" type="button" data-aria-zh="关闭详情" data-aria-en="Close details" aria-label="${locale === "en" ? "Close details" : "关闭详情"}" title="${locale === "en" ? "Close details" : "关闭详情"}">${icon("x")}</button>
     </nav>
     <div id="detail-stack" class="detail-stack">${details}</div>
   </section>
@@ -171,8 +171,14 @@ export function renderSharePreviewRuntimeJs() {
   const applyLocale = (value) => {
     const locale = value === "en" ? "en" : "zh-CN";
     root.lang = locale;
+    document.title = document.querySelector("h1").textContent + (locale === "en" ? " | Shared cases" : " | 分享案例");
     root.dataset.locale = locale;
     localeSelect.value = locale;
+    for (const item of document.querySelectorAll("[data-aria-zh][data-aria-en]")) {
+      const label = locale === "en" ? item.dataset.ariaEn : item.dataset.ariaZh;
+      item.setAttribute("aria-label", label);
+      if (item.hasAttribute("title")) item.title = label;
+    }
     search.placeholder = locale === "en" ? "Search cases" : "搜索案例";
     for (const item of document.querySelectorAll("[data-zh][data-en]")) {
       item.textContent = locale === "en" ? item.dataset.en : item.dataset.zh;
@@ -272,7 +278,8 @@ export function renderSharePreviewRuntimeJs() {
     if (event.key === "ArrowLeft") moveDetail(-1);
     if (event.key === "ArrowRight") moveDetail(1);
   });
-  applyLocale(root.dataset.locale);
+  const preferredLanguage = navigator.languages?.[0] || navigator.language;
+  applyLocale(preferredLanguage ? (/^zh(?:-|$)/i.test(preferredLanguage) ? "zh-CN" : "en") : root.dataset.locale);
   applyTheme(root.dataset.theme);
   applyFilters();
 })();\n`;
@@ -283,7 +290,7 @@ function renderCaseTile(entry, index, taxonomy, facetCatalog, className = "case-
   const primary = primaryMediaAsset(entry);
   const contentId = entry?.classification?.pathIds?.[0] || "";
   const searchValue = searchText(entry, taxonomy, facetCatalog);
-  return `<button class="${className}" type="button" data-entry-id="${escapeAttribute(entry.id)}" data-open-entry="${escapeAttribute(entry.id)}" data-content-type="${escapeAttribute(contentId)}" data-search="${escapeAttribute(searchValue)}" aria-label="${escapeAttribute(`查看案例：${title}`)}">${renderTileMedia(entry, primary, title)}${entry.mediaAssets.filter((asset) => asset.usage !== "poster").length > 1 ? `<span class="media-count">${entry.mediaAssets.filter((asset) => asset.usage !== "poster").length}</span>` : ""}</button>`;
+  return `<button class="${className}" type="button" data-entry-id="${escapeAttribute(entry.id)}" data-open-entry="${escapeAttribute(entry.id)}" data-content-type="${escapeAttribute(contentId)}" data-search="${escapeAttribute(searchValue)}" data-aria-zh="${escapeAttribute(`查看案例：${title}`)}" data-aria-en="${escapeAttribute(`View case: ${title}`)}" aria-label="${escapeAttribute(`View case: ${title}`)}">${renderTileMedia(entry, primary, title)}${entry.mediaAssets.filter((asset) => asset.usage !== "poster").length > 1 ? `<span class="media-count">${entry.mediaAssets.filter((asset) => asset.usage !== "poster").length}</span>` : ""}</button>`;
 }
 
 function renderTileMedia(entry, primary, title) {

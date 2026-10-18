@@ -4,11 +4,27 @@ import assert from "node:assert/strict";
 import {
   articleDocumentText,
   articleBlockIsMarkdown,
+  articleDocumentForReading,
   finalizeArticleDocumentAssets,
   normalizeArticleDocument,
   removeArticleDocumentAsset,
   remapArticleDocumentAssets
 } from "../extension/article-document.js";
+
+test('reading a Markdown file projects one article body without rewriting its text, file or stored structure', () => {
+  const text = '# 原文\n\n```js\n  preserve();\n```\n';
+  const entry = { text, primaryMediaId: 'md', mediaAssets: [{ id: 'md', kind: 'document', mimeType: 'text/markdown' }] };
+  const original = structuredClone(entry);
+  const view = articleDocumentForReading(entry);
+  assert.equal(view.blocks.length, 1);
+  assert.equal(view.blocks[0].text, text);
+  assert.equal(articleBlockIsMarkdown(view.blocks[0]), true);
+  assert.deepEqual(entry, original);
+  const plain = articleDocumentForReading({ text });
+  assert.equal(articleBlockIsMarkdown(plain.blocks[0]), false, 'Markdown-looking prose without a format remains literal');
+  const structured = { blocks: [{ id: 'quote', kind: 'quote', text: '原文' }] };
+  assert.equal(articleDocumentForReading({ articleDocument: structured }), structured);
+});
 
 test("Markdown body retains code indentation and hard breaks instead of paragraph cleanup", () => {
   const text = "# 方法\n\n段落  \n换行\n\n```js\n  const x = 1;\n    run(x);\n```";
