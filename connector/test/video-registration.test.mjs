@@ -59,18 +59,26 @@ test('Windows uses the real registry to restore a failed second view without clo
     const before = await next.snapshot();
     for (const laterWriter of [false, true]) {
       const failure = new Error('Injected second-view readback failure');
+      let afterExternal;
       await assert.rejects(registerVideoViews('new-component.json', { ...next,
         async write(view) {
           await next.write(view);
           if (view === 'Registry64') {
-            if (laterWriter) await external.write('Registry32');
+            if (laterWriter) {
+              await external.write('Registry32');
+              // HKCU Software may be shared by both views on this Windows.
+              afterExternal = await next.snapshot();
+            }
             throw failure;
           }
         }
       }), error => error === failure);
       const actual = await next.snapshot();
-      assert.deepEqual(actual[0], laterWriter ? present('later-component.json') : before[0]);
-      assert.deepEqual(actual[1], before[1]);
+      if (laterWriter) assert.equal(afterExternal[0].value, 'later-component.json');
+      for (const index of [0, 1]) {
+        assert.deepEqual(actual[index], afterExternal?.[index].value === 'later-component.json'
+          ? afterExternal[index] : before[index]);
+      }
     }
   } finally {
     for (const registry of [old, next, external]) for (const view of views) await registry.restoreIfCurrent(view, '', { exists: false });

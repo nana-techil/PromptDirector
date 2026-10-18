@@ -94,7 +94,7 @@ export function windowsVideoRegistry(plan, { keyName = 'Software\\Google\\Chrome
   if (!process.env.SystemRoot) throw new Error('Windows system directory is unavailable.');
   const script = `$ErrorActionPreference='Stop'
 $name=$env:PROMPTDIRECTOR_VIDEO_REGISTRY_KEY
-if ($env.PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'snapshot') {
+if ($env:PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'snapshot') {
  $snapshots=@()
  foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32,[Microsoft.Win32.RegistryView]::Registry64)) {
   $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser,$view)
@@ -119,13 +119,13 @@ if ($env.PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'snapshot') {
  $view=[Enum]::Parse([Microsoft.Win32.RegistryView],$env:PROMPTDIRECTOR_VIDEO_REGISTRY_VIEW)
  $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser,$view)
  try {
-  if ($env.PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'write') {
+  if ($env:PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'write') {
    $key=$base.CreateSubKey($name)
    try {
-    $key.SetValue('',$env.PROMPTDIRECTOR_VIDEO_MANIFEST,[Microsoft.Win32.RegistryValueKind]::String)
-    if ($key.GetValue('') -cne $env.PROMPTDIRECTOR_VIDEO_MANIFEST) { throw 'Video registration readback mismatch' }
+    $key.SetValue('',$env:PROMPTDIRECTOR_VIDEO_MANIFEST,[Microsoft.Win32.RegistryValueKind]::String)
+    if ($key.GetValue('') -cne $env:PROMPTDIRECTOR_VIDEO_MANIFEST) { throw 'Video registration readback mismatch' }
    } finally { $key.Dispose() }
-  } elseif ($env.PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'restore') {
+  } elseif ($env:PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'restore') {
    $key=$base.OpenSubKey($name,$true)
    if ($null -ne $key) {
     $deleteEmpty=$false
