@@ -47,6 +47,11 @@ def main():
             run.context.route(CDN+'/**',media)
             run.context.route('https://pbs.twimg.com/**',lambda r:r.fulfill(body=fixture_png(r.request.url),content_type='image/png'))
             collector=run.open_page('collector.html');run.seed_storage(collector,{'entries':[]})
+            # The sidebar attempts automatic page capture after its async restore.
+            # Let that attempt observe the collector's own tab before the X page
+            # becomes the active tab; otherwise it adds an extra capture pass here.
+            expect(collector.locator('#start-state')).to_be_visible(timeout=15000)
+            collector.wait_for_timeout(1200)
             source=run.context.new_page();source.goto(WORK,wait_until='networkidle');source.bring_to_front()
             batch=collector.evaluate("async()=>{const r=await chrome.runtime.sendMessage({type:'START_PAGE_CAPTURE',mode:'loaded'});if(!r.ok)throw Error(r.message);return r.batch;}")
             candidate=batch['candidates'][0]
