@@ -11,10 +11,10 @@ concurrency:
   group: release-safety-${{ github.ref }}
   cancel-in-progress: true
 
-# Four independent runners divide the existing suite without sharing profiles,
+# Eight independent runners divide the existing suite without sharing profiles,
 # ports or media memory. This is processing concurrency, not a product quota.
 env:
-  CI_BROWSER_SHARDS: 4
+  CI_BROWSER_SHARDS: 8
   PYTHONUTF8: "1"
 
 defaults:
