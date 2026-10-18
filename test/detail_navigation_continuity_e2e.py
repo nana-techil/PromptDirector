@@ -35,6 +35,8 @@ def main():
         p.locator('.tag-editor-compact > button').click()
         p.get_by_role('button', name='保存标签', exact=True).click()
         expect(p.locator('.tag-editor-compact .tag-editor-row')).to_be_hidden()
+        # Open immediately after the local save: the scheduled workspace re-arrange must
+        # re-show the already-open popover instead of leaving a hidden menu (2026-10-18 fix).
         p.locator('.detail-project-menu > summary').click()
         panel=p.locator('.detail-project-menu .detail-project-popover')
         expect(panel).to_be_visible()
@@ -119,9 +121,11 @@ def main():
         expect(p.locator('.prompt-read-body').first).to_be_hidden()
         p.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
         palette=p.locator('.detail-palette'); tools=p.locator('#detail-drawer .detail-media-tools')
-        pb=palette.bounding_box();tb=tools.bounding_box()
-        assert palette.evaluate("e=>!!e.closest('.detail-media-tools')")
-        assert tb['x']<=pb['x'] and pb['x']+pb['width']<=tb['x']+tb['width'], (pb,tb)
+        pb=palette.bounding_box();tb=tools.bounding_box();row=p.locator('.detail-visual-caption').bounding_box()
+        assert palette.evaluate("e=>e.parentElement.classList.contains('detail-visual-caption')")
+        # The colour strip shares the one media toolbar row, centred between label and actions.
+        assert pb['x']>=row['x'] and pb['x']+pb['width']<=tb['x'], (pb,tb,row)
+        assert abs(pb['y']+pb['height']/2-(tb['y']+tb['height']/2))<2 and pb['y']>=row['y'] and pb['y']+pb['height']<=row['y']+row['height'], (pb,tb,row)
         assert p.locator('.detail-create-action').bounding_box()['y']<300
         img=p.locator('.detail-image').bounding_box();caption=p.locator('.detail-visual-caption').bounding_box()
         assert abs(img['y']+img['height']-caption['y'])<2

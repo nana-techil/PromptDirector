@@ -60,7 +60,7 @@ def main(mode='all'):
             field=org.get_by_role('textbox',name='添加标签',exact=True);field.fill('拖动后的标签');field.press('Enter');expect(field).to_have_value('')
             p.wait_for_function("()=>import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries')).then(s=>s.entries.find(e=>e.id==='case').customLabels.includes('拖动后的标签'))")
             field.press('Escape');p.get_by_role('button',name='关闭详情',exact=True).click()
-            p.locator('#open-settings').click();dialog=p.locator('#settings-dialog');before=dialog.bounding_box();header=dialog.locator('.ui-dialog-header').bounding_box()
+            p.locator('#open-settings').click();dialog=p.locator('#settings-dialog');p.evaluate("async()=>await Promise.all(document.querySelector('#settings-dialog').getAnimations().map(a=>a.finished.catch(()=>{})))");before=dialog.bounding_box();header=dialog.locator('.ui-dialog-header').bounding_box()
             for delta in [-100,-200]:
                 header=dialog.locator('.ui-dialog-header').bounding_box()
                 p.mouse.move(header['x']+60,header['y']+25);p.mouse.down();p.mouse.move(header['x']+60+delta,header['y']+45,steps=5);p.mouse.up()

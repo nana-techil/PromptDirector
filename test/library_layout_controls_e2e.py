@@ -45,7 +45,9 @@ def main():
   # Zoom an already loaded deep window. The visible case must stay at the same screen position.
   for _ in range(4):
    page.locator('#case-list .case-card').last.scroll_into_view_if_needed();page.wait_for_timeout(100)
-  anchor=page.locator('#case-list .case-card').evaluate_all("els=>{const e=els.find(e=>{const r=e.getBoundingClientRect();return r.top>=100&&r.bottom<innerHeight});return {id:e.dataset.entryId,top:e.getBoundingClientRect().top}}")
+  # The virtual gallery restores the current reading case, i.e. the topmost visible card;
+  # pick it by visual order instead of DOM record order.
+  anchor=page.locator('#case-list .case-card').evaluate_all("els=>{const e=els.map(e=>({e,top:e.getBoundingClientRect().top})).filter(({e,top})=>top>=100&&e.getBoundingClientRect().bottom<innerHeight).sort((a,b)=>a.top-b.top)[0].e;return {id:e.dataset.entryId,top:e.getBoundingClientRect().top}}")
   page.locator('#gallery-size').fill('25');page.locator('#gallery-size').dispatch_event('change');page.wait_for_timeout(150)
   box=page.locator(f'[data-entry-id="{anchor["id"]}"]').bounding_box()
   assert abs(box['y']-anchor['top'])<100,(anchor,box)
@@ -58,7 +60,7 @@ def main():
   assert page.locator('#case-list .case-card').first.bounding_box()['width']>initial
   for _ in range(3):
    page.locator('#case-list .case-card').last.scroll_into_view_if_needed();page.wait_for_timeout(100)
-  image_anchor=page.locator('#case-list .case-card').evaluate_all("els=>{const e=els.find(e=>{const r=e.getBoundingClientRect();return r.bottom>56&&r.top<innerHeight});return {id:e.dataset.entryId,top:e.getBoundingClientRect().top}}")
+  image_anchor=page.locator('#case-list .case-card').evaluate_all("els=>{const e=els.map(e=>({e,top:e.getBoundingClientRect().top,bottom:e.getBoundingClientRect().bottom})).filter(({top,bottom})=>bottom>56&&top<innerHeight).sort((a,b)=>a.top-b.top)[0].e;return {id:e.dataset.entryId,top:e.getBoundingClientRect().top}}")
   page.locator('#gallery-size').fill('57');page.locator('#gallery-size').dispatch_event('change');page.wait_for_timeout(250)
   image_box=page.locator(f'[data-entry-id="{image_anchor["id"]}"]').bounding_box()
   assert abs(image_box['y']-image_anchor['top'])<2,(image_anchor,image_box)
@@ -81,8 +83,14 @@ def main():
      if state in ['project','analysis']:
       if not page.locator('#sidebar-projects-body').is_visible():page.locator('[data-sidebar-module="projects"] .sidebar-module-toggle').click()
       menu=page.locator('[data-collection-id="p"] .project-menu');menu.locator('summary').click();menu.get_by_role('button',name='管理案例' if state=='project' else '批量分析',exact=True).click()
-     dims=page.evaluate("""()=>{const mid=e=>{const r=e.getBoundingClientRect();return r.y+r.height/2};return {bar:mid(document.querySelector('.topbar')),title:mid(document.querySelector('#library-title')),count:mid(document.querySelector('#result-count')),overflow:document.documentElement.scrollWidth>innerWidth+1}}""")
-     assert abs(dims['title']-dims['bar'])<2 and abs(dims['count']-dims['bar'])<2,dims
+     dims=page.evaluate("""()=>{const mid=e=>{const r=e.getBoundingClientRect();return r.y+r.height/2};const bar=document.querySelector('.topbar').getBoundingClientRect();return {bar:bar.y+bar.height/2,barHeight:bar.height,title:mid(document.querySelector('#library-title')),count:mid(document.querySelector('#result-count')),overflow:document.documentElement.scrollWidth>innerWidth+1}}""")
+     # One row at every width/state; narrow management keeps the selection actions instead
+     # of the library title/count (confirmed replacement of the global action group).
+     assert dims['barHeight']<=60,dims
+     if width<=640 and state=='manage':
+      assert page.evaluate("()=>{const copy=document.querySelector('.gallery-heading-copy');return getComputedStyle(copy).display==='none'&&!document.querySelector('#share-bar').hidden}")
+     else:
+      assert abs(dims['title']-dims['bar'])<2 and abs(dims['count']-dims['bar'])<2,dims
      assert not dims['overflow'],(width,state,dims)
      positions.append({'theme':theme,'width':width,'state':state,**dims})
      if state=='browse':

@@ -39,7 +39,13 @@ def main():
   p.locator('.detail-quick-organization input[aria-label=添加标签]').press('Escape')
   expect(p.locator('.detail-quick-organization .tag-editor-row')).to_be_hidden()
   expect(p.locator('#detail-drawer')).to_have_attribute('aria-hidden','false')
-  p.locator('.detail-project-menu > summary').click();p.locator('.detail-new-project input').fill('汽车KV')
+  # Open the project menu immediately after the local label save: the scheduled workspace
+  # re-arrange must keep the open popover visible (fixed 2026-10-18).
+  p.locator('.detail-project-menu > summary').click()
+  project_popover=p.locator('.detail-project-menu .detail-project-popover')
+  expect(project_popover).to_be_visible()
+  assert project_popover.evaluate("e=>e.matches(':popover-open')")
+  p.locator('.detail-new-project input').fill('汽车KV')
   p.evaluate("()=>{window.projectDraftInput=document.querySelector('.detail-new-project input')}")
   p.get_by_role('button',name='新建并加入',exact=True).click()
   expect(p.locator('.detail-project-summary-text')).to_have_text('汽车KV')
@@ -63,14 +69,17 @@ def main():
   tab=p.get_by_role('tab',name='原始提示词',exact=True);tab.focus();tab.press('End');expect(p.get_by_role('tab',name='当前媒体',exact=True)).to_be_focused()
   p.get_by_role('tab',name='当前媒体',exact=True).press('Home');expect(tab).to_be_focused()
   def measure():
-   return p.evaluate('''()=>{const bar=document.querySelector('.detail-visual-caption'), nav=bar.querySelector('.detail-media-navigation'), section=document.querySelector('.media-prompt-section');const r=e=>e.getBoundingClientRect();const visible=[...section.children].filter(e=>e.getClientRects().length);const create=section.querySelector('.detail-core-actions'), prior=visible[visible.indexOf(create)-1];const buttons=[...bar.querySelectorAll('button')];return{center:r(nav).x+r(nav).width/2,barCenter:r(bar).x+r(bar).width/2,gap:prior?r(create).top-r(prior).bottom:null,height:r(bar).height,rows:[...new Set(buttons.map(e=>Math.round(r(e).top)))],stage:r(document.querySelector('.detail-visual-stage')).height}}''')
+   return p.evaluate('''()=>{const bar=document.querySelector('.detail-visual-caption'), nav=bar.querySelector('.detail-media-navigation'), cluster=nav.parentElement;const r=e=>e.getBoundingClientRect();const footer=document.querySelector('.detail-workspace-footer'), create=footer?.querySelector(':scope > .detail-core-actions'), prior=create?[...footer.children][[...footer.children].indexOf(create)-1]:null;const buttons=[...bar.querySelectorAll('button')];return{center:r(nav).x+r(nav).width/2,offset:r(nav).x-r(cluster).x,clusterLeft:r(cluster).x,barLeft:r(bar).x,barCenter:r(bar).x+r(bar).width/2,gap:prior?r(create).top-r(prior).bottom:null,height:r(bar).height,rows:[...new Set(buttons.map(e=>Math.round(r(e).top)))],stage:r(document.querySelector('.detail-visual-stage')).height}}''')
   result=[]
   for width in [1440,900,390]:
    p.set_viewport_size({'width':width,'height':900});p.get_by_role('button',name='上一项媒体',exact=True).click() if p.get_by_role('button',name='上一项媒体',exact=True).is_enabled() else None
    expect(p.locator('.detail-video')).to_be_visible();a=measure()
    p.get_by_role('button',name='下一项媒体',exact=True).click();expect(p.locator('.detail-image')).to_be_visible();b=measure()
-   assert abs(a['center']-b['center'])<1 and abs(a['center']-a['barCenter'])<1,(width,a,b)
-   assert abs(a['gap']-b['gap'])<1 and a['height']==b['height'] and abs(a['stage']-b['stage'])<1,(width,a,b)
+   # Media switching stays put: navigation keeps its place in the leading media-label cluster.
+   assert abs(a['offset']-b['offset'])<1 and abs(a['center']-b['center'])<5,(width,a,b)
+   # Navigation is anchored at the caption's leading edge, leaving the remaining width to tools.
+   assert a['clusterLeft']-a['barLeft']<=14 and a['center']<a['barCenter'],(width,a,b)
+   assert abs(a['gap']-b['gap'])<1 and a['gap'] is not None and a['height']==b['height'] and abs(a['stage']-b['stage'])<1,(width,a,b)
    assert len(a['rows'])==1 and len(b['rows'])==1,(width,a,b)
    result.append({'width':width,'video':a,'image':b})
    p.screenshot(path=str(out/f'mixed-detail-{width}.png'))

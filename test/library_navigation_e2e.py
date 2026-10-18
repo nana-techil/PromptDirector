@@ -92,7 +92,9 @@ def main() -> None:
         expect(resizer).to_have_attribute("aria-valuenow", "260")
         saved_width = library.evaluate("async () => (await chrome.storage.local.get('uiPreferences')).uiPreferences.sidebarWidth")
         assert saved_width == 260, saved_width
-        expect(library.locator("#content-filters .content-filter-option")).to_have_count(8)
+        # 2026-10-17 confirmed a ninth content type: 代码案例 joins the eight original types.
+        expect(library.locator("#content-filters .content-filter-option")).to_have_count(9)
+        expect(library.locator('#content-filters .content-filter-option[data-content-filter-id="content:code-case"]')).to_have_count(1)
         expect(library.locator("#content-filters")).not_to_contain_text("全部")
         expect(library.locator("#facet-filters .facet-filter-body .filter-option", has_text="全部")).to_have_count(0)
 

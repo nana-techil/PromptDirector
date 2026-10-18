@@ -93,10 +93,16 @@ def main() -> None:
 
         open_task_settings(library)
         open_library_analysis(library)
+        # Confirmed 2026-10-18 rule: development diagnostics stay off by default. The task
+        # tools are offered for this open batch, yet the copy action still requires the switch.
+        expect(library.locator('#copy-analysis-diagnostics')).to_be_hidden()
+        assert library.evaluate("async () => (await chrome.storage.local.get('uiPreferences')).uiPreferences.diagnosticsEnabled") is False
         before_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         library.locator(".advanced-reanalysis > summary").click()
         library.locator("#preview-analysis-reanalyze").click()
         assert "3 次请求" in copy_analysis_diagnostics(library)
+        expect(library.locator('#copy-analysis-diagnostics')).to_be_visible()
+        assert library.evaluate("async () => (await chrome.storage.local.get('uiPreferences')).uiPreferences.diagnosticsEnabled") is True
         assert "全部成功前只暂存" in copy_analysis_diagnostics(library)
         after_preview = library.evaluate("async () => import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get(['entries', 'facetCatalog', 'batchJob', 'analysisRebuildStaging']))")
         assert json.dumps(after_preview, sort_keys=True, ensure_ascii=False) == json.dumps(before_preview, sort_keys=True, ensure_ascii=False)

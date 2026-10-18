@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -72,17 +73,18 @@ def main() -> None:
     ) as session:
         setup = session.open_page("collector.html")
         setup.evaluate(
-            """async ({entry, png}) => {
+            """async ({png}) => {
               const {saveMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
               const bytes = Uint8Array.from(atob(png), value => value.charCodeAt(0));
               for (let index = 1; index <= 15; index += 1) {
                 await saveMediaBlob(`multi-image-${index}`, new Blob([bytes], {type: 'image/png'}), {checkCapacity: false});
               }
-              await chrome.storage.local.clear();
-              await chrome.storage.local.set({schemaVersion: 24, entries: [entry]});
             }""",
-            {"entry": entry, "png": PNG_BASE64},
+            {"png": PNG_BASE64},
         )
+        # Seed through the shared flow so the first state migration settles before the
+        # fixture lands; otherwise the per-media prompt is dropped as pre-migration data.
+        session.seed_storage(setup, {"entries": [entry]})
 
         library = session.open_page("library.html", wait_until="networkidle")
         expect(library.locator(".case-card")).to_have_count(1)
@@ -92,10 +94,13 @@ def main() -> None:
         library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".entry-editor-inline textarea:visible")).to_have_count(0)
         expect(library.locator(".entry-editor-inline .entry-original-editor")).to_have_count(0)
+        # The case editor is a floating panel above the reading pane; close it before using
+        # the prompt tabs it covers, exactly as an outside click would.
+        library.locator(".entry-editor-inline > summary").click()
+        expect(library.locator(".entry-editor-inline .entry-editor-body")).to_be_hidden()
         library.get_by_role("tab", name="当前媒体", exact=True).click()
         expect(library.get_by_role("button", name="添加当前媒体提示词", exact=True)).to_be_visible()
         library.get_by_role("tab", name="原始提示词", exact=True).click()
-        library.locator(".entry-editor-inline > summary").click()
         expect(library.locator(".original-prompt-panel").get_by_role("button", name="编辑原始提示词", exact=True)).to_be_visible()
         expect(library.locator(".original-prompt-panel h3")).to_have_text("原始提示词")
         stable_before = library.evaluate(
@@ -117,7 +122,7 @@ def main() -> None:
         )
         for index in (14, 6, 11):
             library.locator(".detail-visual-thumb").nth(index).click()
-        assert "12/15" in library.locator(".detail-visual-caption > span").first.get_attribute("title")
+        assert "12/15" in library.locator(".detail-visual-caption .detail-media-context > span").first.get_attribute("title")
         stable_after = library.evaluate(
             """() => {
               const gallery = document.querySelector('.detail-visual-gallery[data-stability-probe="same-gallery"]');
@@ -161,7 +166,9 @@ def main() -> None:
         assert_action_is_reachable(library, "此媒体移入回收站")
 
         library.get_by_role("button", name="设为主图").click()
-        expect(library.locator(".detail-visual-caption")).to_contain_text("主要媒体")
+        # The row shows the format; the primary position stays in the label's tooltip.
+        expect(library.locator(".detail-visual-caption .detail-media-context > span").first).to_have_attribute(
+            "title", re.compile("主要媒体"))
         state = library.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
         assert state["entries"][0]["primaryMediaId"] == "multi-image-15"
         expect(library.locator(".case-card img[data-visual-id]")).to_have_attribute("data-visual-id", "multi-image-15")
@@ -188,6 +195,8 @@ def main() -> None:
         expect(library.locator(".workspace")).to_have_class("workspace")
         library.locator("#open-trash").click()
         expect(library.locator("#trash-dialog")).to_be_visible()
+        # Measure the settled dialog: the shared open animation scales it for 200ms.
+        library.evaluate("async()=>await Promise.all(document.querySelector('#trash-dialog').getAnimations().map(a=>a.finished.catch(()=>{})))")
         expect(library.locator(".trash-item")).to_have_count(2)
         expect(library.locator(".trash-item-cover img")).to_have_count(2)
         expect(library.locator(".trash-item-copy strong")).to_have_text(["多图案例", "多图案例"])

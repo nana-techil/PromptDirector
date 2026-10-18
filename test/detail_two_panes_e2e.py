@@ -21,7 +21,7 @@ def main():
             p.locator('.case-card').click()
             expect(p.locator('.detail-image')).to_be_visible()
             assert p.locator('.detail-header-section .detail-palette').count()==0
-            expect(p.locator('.detail-media-tools .detail-palette')).to_be_visible()
+            expect(p.locator('.detail-visual-caption > .detail-palette')).to_be_visible()
             assert p.locator('.detail-visual-rail').count()==0
             assert p.locator('.detail-visual-caption').bounding_box()['height']<65
             assert p.locator('.detail-workspace-footer').evaluate('e=>e.parentElement.classList.contains("detail-body")')

@@ -87,7 +87,12 @@ def main(modes):
                   const cards=[...document.querySelectorAll('#case-list .case-card')];
                   window.pdFirstCards=cards;window.pdFirstImages=cards.map(card=>card.querySelector('img[data-visual-id]'));
                   window.pdStableImages=pdFirstImages.filter(image=>image.complete&&image.naturalWidth>1);
-                  window.pdFirstPositions=cards.map(card=>({x:card.getBoundingClientRect().x,y:card.getBoundingClientRect().y}));
+                  const listRect=document.querySelector('#case-list').getBoundingClientRect();
+                  window.pdListTop=listRect.top;
+                  // Positions are compared inside the gallery: the transient startup notice is
+                  // intentionally removed once the rest of the library is readable (2026-10-16),
+                  // so the gallery may move up as a whole, but no card may move within it.
+                  window.pdFirstPositions=cards.map(card=>{const rect=card.getBoundingClientRect();return{x:rect.x-listRect.x,y:rect.y-listRect.y}});
                   window.pdSourceChanges=[];window.pdWrongPrefixes=[];
                   window.pdSourceObserver=new MutationObserver(changes=>{
                     for(const change of changes)if(pdStableImages.includes(change.target))pdSourceChanges.push(change.target.closest('.case-card')?.dataset.entryId);
@@ -105,9 +110,11 @@ def main(modes):
                 after=page.evaluate('''()=>{
                   const first=[...document.querySelectorAll('#case-list .case-card')].slice(0,24);
                   const retained=first.slice(0,pdFirstCards.length);
+                  const listRect=document.querySelector('#case-list').getBoundingClientRect();
                   return{ids:first.map(card=>card.dataset.entryId),sameNodes:retained.every((card,i)=>card===pdFirstCards[i]),
                     sameImages:retained.every((card,i)=>card.querySelector('img[data-visual-id]')===pdFirstImages[i]),
-                    samePositions:retained.every((card,i)=>Math.abs(card.getBoundingClientRect().x-pdFirstPositions[i].x)<1&&Math.abs(card.getBoundingClientRect().y-pdFirstPositions[i].y)<1),
+                    samePositions:retained.every((card,i)=>{const rect=card.getBoundingClientRect();return Math.abs(rect.x-listRect.x-pdFirstPositions[i].x)<1&&Math.abs(rect.y-listRect.y-pdFirstPositions[i].y)<1}),
+                    listTopBefore:pdListTop,listTopAfter:listRect.top,
                     srcChanges:pdSourceChanges,wrongPrefixes:pdWrongPrefixes,
                     replacedIds:retained.filter((card,i)=>card!==pdFirstCards[i]).map(card=>card.dataset.entryId)};
                 }''')
