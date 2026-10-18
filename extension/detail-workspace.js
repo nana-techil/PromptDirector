@@ -87,6 +87,9 @@ export function arrangeDetailWorkspace(body) {
   body.classList.remove('ui-scrollbar');
   primary.classList.add('detail-workspace');
   reading.scrollTop = body.detailReadingTop || 0;
+  // A menu opened while the sections were being re-arranged lost its popover when
+  // its node was detached; re-show it now that the new layout is connected.
+  for (const details of body.querySelectorAll('details[open]')) details.syncPopoverMenu?.();
   const focused = body.workspaceFocus;
   if (focused) restoreWorkspaceFocus(body, focused);
   delete body.workspaceFocus;

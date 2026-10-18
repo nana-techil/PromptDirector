@@ -74,9 +74,13 @@ export function bindPopoverMenu(details, panel, { actionMenu = true, preferAbove
     window.addEventListener('resize', close, { signal: events.signal });
     document.addEventListener('scroll', event => { if (!panel.contains(event.target)) close(); }, { signal: events.signal, capture: true });
   };
+  // Re-arranging the detail body moves this menu node; the browser hides an open
+  // popover while `details.open` stays true. The owner re-syncs after re-attach.
+  details.syncPopoverMenu = sync;
   details.addEventListener('toggle', sync);
   return () => {
     events?.abort(); details.removeEventListener('toggle', sync);
+    if (details.syncPopoverMenu === sync) delete details.syncPopoverMenu;
     if (panel.matches(':popover-open')) panel.hidePopover();
   };
 }
