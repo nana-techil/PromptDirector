@@ -115,13 +115,29 @@ def main():
             for width in [320,390,900]:
                 page.set_viewport_size({'width':width,'height':844})
                 tools_box = None
+                tools_header = None
                 for opened in [False,True]:
                     if opened:page.locator('#open-capture-assistant').click()
                     button=page.locator('#open-capture-assistant')
                     expect(button).to_be_visible()
                     bounds=button.bounding_box()
-                    if not opened:tools_box=bounds
-                    else:assert all(abs(bounds[key]-tools_box[key])<1 for key in ('x','y','width','height')), (tools_box,bounds)
+                    header_box=button.evaluate("node=>{const box=node.closest('header').getBoundingClientRect();return {x:box.x,y:box.y,width:box.width,height:box.height}}")
+                    if not opened:
+                        tools_box=bounds
+                        tools_header=header_box
+                        expect(page.locator('#capture-assistant-new')).to_be_hidden()
+                    else:
+                        # The chat header adds the explicit 新对话 action before the same
+                        # toggle; the header box and the toggle's vertical geometry do not jump.
+                        assert all(abs(bounds[key]-tools_box[key])<1 for key in ('y','height')), (tools_box,bounds)
+                        # The assistant view uses its own tighter page padding, so only
+                        # the header's origin and height must stay put while controls reflow.
+                        assert all(abs(header_box[key]-tools_header[key])<1 for key in ('x','y','height')), (tools_header,header_box)
+                        fresh=page.locator('#capture-assistant-new')
+                        expect(fresh).to_be_visible()
+                        fresh_box=fresh.bounding_box()
+                        assert fresh_box['x']+fresh_box['width']<=bounds['x'], ('新对话',fresh_box,'toggle',bounds)
+                        assert bounds['y']>=header_box['y'] and bounds['y']+bounds['height']<=header_box['y']+header_box['height']
                     geometry=button.evaluate("""node=>{const box=node.getBoundingClientRect(),header=node.closest('header').getBoundingClientRect();const text=node.lastChild;const range=document.createRange();range.selectNodeContents(text);const label=range.getBoundingClientRect();return {label:[label.left,label.right],box:[box.left,box.right],header:[header.left,header.right],brand:node.closest('header').querySelector('.brand').getBoundingClientRect().right}}""")
                     assert geometry['label'][0]>=geometry['box'][0] and geometry['label'][1]<=geometry['box'][1], geometry
                     assert geometry['box'][1]<=geometry['header'][1] and geometry['brand']<=geometry['box'][0],geometry

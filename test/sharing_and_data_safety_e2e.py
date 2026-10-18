@@ -191,8 +191,11 @@ def main() -> None:
         expect(offline.locator("#feedback")).to_have_text("提示词已复制")
         offline.locator(".case-detail:visible button[data-media-index='1']").click()
         expect(offline.locator(".case-detail:visible .detail-media-panel[data-media-index='1']")).to_be_visible()
-        # A mixed image/video/document case must not recommend an image-only case.
-        expect(offline.locator(".case-detail:visible .related-section")).to_have_count(0)
+        # Similarity now compares across media compositions (f5cb0c5), while the
+        # offline package still only recommends cases included in the same export.
+        related = offline.locator(".case-detail:visible .related-section .related-card")
+        expect(related).to_have_count(1)
+        expect(related.first).to_have_attribute("data-entry-id", "share-two")
         offline.locator("#detail-close").click()
         expect(offline.locator("#detail-view")).to_be_hidden()
         offline.set_viewport_size({"width": 390, "height": 844})
@@ -525,6 +528,9 @@ def main() -> None:
         expect(exact_confirm).to_contain_text("自动建立回退点")
         exact_confirm.locator("button[type='submit']").click()
         expect(library.locator("#data-safety-feedback")).to_contain_text("完整恢复已按预检方案完成", timeout=15_000)
+        # The rollback entry is offered inside the 恢复资料库 choice dialog (1.27 settings).
+        library.locator("#restore-folder-backup").click()
+        expect(library.locator("#promptdirector-app-dialog")).to_contain_text("恢复资料库", timeout=15_000)
         expect(library.locator("#restore-library-replacement-point")).to_be_visible(timeout=15_000)
         exact_state = library.evaluate(
             """async () => {
@@ -551,7 +557,7 @@ def main() -> None:
 
         library.locator("#restore-library-replacement-point").click()
         rollback_dialog = library.locator("#promptdirector-app-dialog")
-        expect(rollback_dialog).to_contain_text("回退上次精确恢复")
+        expect(rollback_dialog).to_contain_text("撤销上次整库替换")
         rollback_dialog.locator("button[type='submit']").click()
         expect(library.locator("#data-safety-feedback")).to_contain_text("已回退到上一次精确替换前的资料库", timeout=15_000)
         rollback_state = library.evaluate(

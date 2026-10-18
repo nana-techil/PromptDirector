@@ -13,7 +13,7 @@ import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from playwright.sync_api import expect
-from e2e_support import EXTENSION_DIR, ai_configuration_fixture, extension_session
+from e2e_support import EXTENSION_DIR, ai_configuration_fixture, enable_analysis_diagnostics, extension_session
 from page_capture_e2e import fixture_png
 PNG = fixture_png('original-artwork')
 
@@ -202,7 +202,12 @@ def main(receipt_only=False):
                     let delta,finish;
                     const tool=(name,args)=>{delta={tool_calls:[{index:0,id:crypto.randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]};finish='tool_calls';};
                     const prepared=results.find(m=>m.name==='prepare_capture')?.data||results.find(m=>m.name==='save_capture')?.data||current;
-                    if(captureAI.premature&&!results.some(m=>m.name==='declare_task'))tool('declare_task',{mode:'act',goal:'Save the requested case',steps:[{operation:'prepare_capture'},{operation:'read_capture',part:'page'},{operation:'update_capture'},{operation:'save_capture'}]});
+                    // 1.27 asks the model to resolve a prepared-but-unsaved preview via a
+                    // runtimeCheck turn. Answer it as a semantic "preview only" reply so the
+                    // same task terminates instead of re-entering the held final branch.
+                    const runtimeCheck=String(instruction||'').trim().startsWith('{"runtimeCheck"');
+                    if(runtimeCheck&&!captureAI.premature)tool('declare_task',{mode:'respond',goal:'预览已就绪，尚未保存',steps:[],reply:'**已选择原文和原图。** 可以直接保存。'});
+                    else if(captureAI.premature&&!results.some(m=>m.name==='declare_task'))tool('declare_task',{mode:'act',goal:'Save the requested case',steps:[{operation:'prepare_capture'},{operation:'read_capture',part:'page'},{operation:'update_capture'},{operation:'save_capture'}]});
                     else if(/怎么|如何|how|先不要采集/iu.test(instruction) && !/保存这些附件/u.test(instruction)){delta={content:'点击“帮我采集”得到预览，再选择项目保存。也可以直接说“保存到镜头参考”。'};finish='stop';}
                     else if(/保存这些附件/u.test(instruction) && !prepared) tool('prepare_capture',{requestId:'attachment-preview',tabId:page.tabId});
                     else if(/保存这些附件/u.test(instruction) && !results.find(m=>m.name==='update_capture')) {
@@ -232,7 +237,7 @@ def main(receipt_only=False):
                         selections:[{candidateId:'assistant-candidate',includeText:true,selectedMediaIds:media.map(m=>m.id)}],saveMode:'multiple',
                         ...(captureAI.premature?{task:{objective:'Save the requested case',candidateIds:['assistant-candidate'],outcome:'save',state:'active'}}:{})});
                     }else{
-                      if(captureAI.hold)await new Promise((resolve,reject)=>{captureAI.release=resolve;init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true})});
+                      if(captureAI.hold){captureAI.hold=false;await new Promise((resolve,reject)=>{captureAI.release=resolve;init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true})});}
                       delta={content:captureAI.premature?'已保存全部 FORGED_SAVED_REPLY':'**已选择原文和原图。** 可以直接保存。'};finish='stop';
                     }
                     const events=[{model:'fixture-observed-model',choices:[{index:0,delta,finish_reason:null}]},{choices:[{index:0,delta:{},finish_reason:finish}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}}];
@@ -275,11 +280,18 @@ def main(receipt_only=False):
                 panel.locator('#open-capture-assistant').click()
                 expect(panel.locator('#capture-assistant-panel')).to_be_hidden()
                 web.goto(origin + '/other'); worker.evaluate('captureAI.release()')
+                # The already-running task continues independently: the product's
+                # completion check asks the model once more before accepting the
+                # preview, with no new user turn and no replay of earlier tools.
+                for _ in range(200):
+                    if worker.evaluate('captureAI.requests.length')==request_count+1: break
+                    panel.wait_for_timeout(50)
+                assert worker.evaluate('captureAI.requests.length')==request_count+1, 'releasing the held reply must continue the same task exactly once'
                 panel.locator('#open-capture-assistant').click()
                 expect(panel.locator('.capture-assistant-user')).not_to_have_count(0,timeout=30000)
-                expect(panel.locator('#capture-assistant-send')).to_be_enabled()
+                expect(panel.locator('#capture-assistant-send')).to_be_enabled(timeout=30000)
                 expect(panel.locator('.capture-assistant-preview')).to_have_count(0)
-                assert worker.evaluate('captureAI.requests.length')==request_count
+                assert worker.evaluate('captureAI.requests.length')==request_count+1, 'reopening the panel must not re-request AI'
                 web.goto(origin + '/work')
                 panel.locator('#open-capture-assistant').click();panel.locator('#open-capture-assistant').click()
                 expect(panel.locator('.capture-assistant-assistant').last).to_contain_text('已选择原文')
@@ -339,6 +351,8 @@ def main(receipt_only=False):
                 expect(panel.locator('.capture-assistant-user')).to_have_count(0)
                 wait_preview(panel)
                 assert worker.evaluate('captureAI.requests.length')==before_reset
+                enable_analysis_diagnostics(panel)
+                expect(panel.locator('#capture-assistant-diagnostic')).to_be_visible()
                 with panel.expect_download() as downloaded:
                     panel.locator('#capture-assistant-diagnostic').click()
                     panel.get_by_role('button',name='导出',exact=True).click()
@@ -496,6 +510,15 @@ def main(receipt_only=False):
                     raise
                 show_tools(panel);expect(panel.locator('#page-capture-list')).to_contain_text('Assistant creative reference');show_chat(panel)
                 panel.screenshot(path=str(out/'capture-chat-adapter-recovered-zh-dark-390.png'))
+                panel.evaluate("""() => {
+                  window.__saveReceipts=[];
+                  const inner=chrome.runtime.sendMessage.bind(chrome.runtime);
+                  chrome.runtime.sendMessage=async message=>{
+                    const response=await inner(message);
+                    if(message.type==='GET_CAPTURE_SAVE_TASK'&&response?.task?.result)window.__saveReceipts.push(response.task.result);
+                    return response;
+                  };
+                }""")
                 show_tools(panel);panel.locator('#page-capture-save').click()
                 expect(panel.locator('#feedback')).to_contain_text('部分',timeout=30000);show_chat(panel)
                 try: wait_preview(panel)
@@ -507,7 +530,12 @@ def main(receipt_only=False):
                 partial=next(item for item in partial_state['entries'] if item['url']==origin+'/failed')
                 assert 'Exact shadow prompt' in partial['text']
                 assert any(asset['kind']=='image' and asset['storageMode']=='managed' for asset in partial['mediaAssets'])
-                assert any(asset['kind']=='video' and asset['storageMode']=='reference' for asset in partial['mediaAssets'])
+                # A failed original is retained as pending retry material, never stored as a
+                # fake reference player (1.27 keeps failed originals out of new cases).
+                save_receipt=panel.evaluate('()=>window.__saveReceipts.at(-1)')
+                assert save_receipt and save_receipt['results'][0]['status']=='partial', save_receipt
+                assert not any(asset['kind']=='video' for asset in partial['mediaAssets']), partial['mediaAssets']
+                assert save_receipt['results'][0]['pendingMediaIds'], save_receipt
                 panel.screenshot(path=str(out/'capture-chat-partial-zh-dark-390.png'))
                 # Narrow/wide, English/light and Chinese/dark inspect the actual
                 # implementation. No copied prototype or installed daily data.

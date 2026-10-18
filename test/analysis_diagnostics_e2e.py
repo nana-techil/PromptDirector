@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from playwright.sync_api import expect
+from playwright.sync_api import expect, TimeoutError as PlaywrightTimeoutError
 
 from e2e_support import copy_analysis_diagnostics, ai_configuration_fixture, base_entry, extension_session, wait_for_async_condition
 
@@ -59,7 +59,11 @@ def main() -> None:
         menu.get_by_role('button', name='批量分析', exact=True).click()
 
         expect(library.locator("#analysis-diagnostics, #show-analysis-diagnostics, .task-diagnostics")).to_have_count(0)
+        # Development diagnostics stay hidden during normal use; the shared helper
+        # enables the persisted preference and then uses the real support action.
+        expect(library.locator("#copy-analysis-diagnostics")).to_be_hidden()
         diagnostic = copy_analysis_diagnostics(library)
+        expect(library.locator("#copy-analysis-diagnostics")).to_be_visible()
         assert f"PromptDirector {extension_version}" in diagnostic
         prompt_version = library.evaluate("async () => (await import('./deepseek.js')).ANALYSIS_PROMPT_VERSION")
         assert f"Analysis v{prompt_version}" in diagnostic
@@ -75,7 +79,8 @@ def main() -> None:
         expect(library.locator("#batch-status-badge")).to_contain_text("已完成")
         # Completed selection tasks may close their dialog; reopen support in its scoped context.
         if library.locator('#text-batch-dialog').is_visible():
-            library.locator('#text-batch-close').click()
+            try: library.locator('#text-batch-close').click(timeout=3000)
+            except PlaywrightTimeoutError: assert not library.locator('#text-batch-dialog').is_visible()
         menu.locator('summary').click()
         menu.get_by_role('button', name='批量分析', exact=True).click()
         assert "模型请求 2 次" in copy_analysis_diagnostics(library)
@@ -92,6 +97,9 @@ def main() -> None:
         menu.locator('summary').click()
         menu.get_by_role('button', name='批量分析', exact=True).click()
         expect(library.locator("#show-analysis-diagnostics")).to_have_count(0)
+        # The enabled preference persists across reload; the action is reachable again
+        # as soon as the batch dialog reopens.
+        expect(library.locator("#copy-analysis-diagnostics")).to_be_visible()
         assert "模型请求 2 次" in copy_analysis_diagnostics(library)
         assert worker.evaluate("analysisFixtureCalls") == 2
         print({"requests": 2, "diagnostics_default_hidden": True, "persisted_correction_diagnostics": True})

@@ -25,7 +25,10 @@ def main():
             assets=[{'id':'image-one','kind':'image','storageMode':'managed','mimeType':'image/png','width':1,'height':1,'byteSize':len(png)},
                     {'id':'image-two','kind':'image','storageMode':'managed','mimeType':'image/png','width':1,'height':1,'byteSize':len(png)},
                     {'id':'video-one','kind':'video','storageMode':'managed','mimeType':'video/mp4','width':320,'height':180,'durationMs':2400,'byteSize':len(original_video)}]
-            run.seed_storage(page,{'entries':[{'id':'case-one','title':'同步审片案例','text':'原始资料原文保持','url':'https://example.com/source','savedAt':'2026-10-01T00:00:00Z','mediaAssets':assets,'primaryMediaId':'image-one','customLabels':['人工标签']}]})
+            # 1.27 only shows the 当前媒体 tab when per-media prompts differ from the
+            # case original (hasDistinctMediaPrompts), so the fixture keeps both scopes.
+            run.seed_storage(page,{'entries':[{'id':'case-one','title':'同步审片案例','text':'原始资料原文保持','url':'https://example.com/source','savedAt':'2026-10-01T00:00:00Z','mediaAssets':assets,'primaryMediaId':'image-one','customLabels':['人工标签'],
+                'mediaPrompts':[{'assetId':'image-one','source':'manual','text':'图片一当前媒体提示词'},{'assetId':'video-one','source':'manual','text':'视频一当前媒体提示词'}]}]})
             page.evaluate("""async ({png,video})=>{const {saveMediaBlob}=await import('./media-store.js');
                 for(const id of ['image-one','image-two'])await saveMediaBlob(id,new Blob([new Uint8Array(png)],{type:'image/png'}));
                 await saveMediaBlob('video-one',new Blob([new Uint8Array(video)],{type:'video/mp4'}));}""",{'png':list(png),'video':original_video})
@@ -84,7 +87,9 @@ def main():
             assert page.locator('.detail-visual-stage video').evaluate('(v)=>!v.draggable')
             assert page.locator('.detail-visual-stage video').evaluate('(v)=>!v.controls')
             assert page.locator('.detail-visual-stage .review-timeline input').count()==1
-            assert page.locator('#detail-prev').is_hidden() and page.locator('#detail-next').is_hidden()
+            # Single case: the always-mounted case navigation has no target in the review layout.
+            expect(page.locator('#detail-prev')).to_be_disabled()
+            expect(page.locator('#detail-next')).to_be_disabled()
             assert page.locator('#add-menu #open-temporary-review').count()==1
             assert page.locator('#temporary-review-file').count()==1
             assert page.locator('.review-range-controls').evaluate('(bar)=>Boolean(bar.closest(".detail-visual-caption"))')

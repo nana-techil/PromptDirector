@@ -155,6 +155,12 @@ def main():
             prompt_section = page.locator('.media-prompt-section').first
             prompt_section.locator('[data-prompt-tab="shared"][aria-selected="true"]').wait_for()
             prompt_section.get_by_text('保留人工正文', exact=True).wait_for()
+            # The detail opens on the case's default preview media (the video for this
+            # video content role). Switch the shared content-info picker to the analysed
+            # image whose manual prompt and external reconstruction must stay separate.
+            page.locator('.detail-visual-thumb').nth(0).click()
+            prompt_section = page.locator('.media-prompt-section').first
+            prompt_section.locator('[data-prompt-tab="shared"][aria-selected="true"]').wait_for()
             prompt_section.locator('[data-prompt-tab="media"]').click()
             prompt_section.get_by_text('保留原始提示词', exact=True).wait_for()
             prompt_section.locator('[data-prompt-tab="ai"]').click()

@@ -289,18 +289,32 @@ def scroll_to_case(page, entry_id: str) -> None:
     raise AssertionError(f'Case {entry_id} was not reachable through the gallery')
 
 
+def enable_analysis_diagnostics(page: Page) -> None:
+    """Persist the confirmed development-diagnostics preference before a task opens.
+
+    The diagnostics copy action is intentionally hidden in normal use; enabling it
+    from the settings switch writes ``uiPreferences.diagnosticsEnabled``. Tests must
+    do this before the analysis dialog opens, because the surrounding task tools are
+    only offered while that dialog is open or a job has failed.
+    """
+    response = page.evaluate('''async () => chrome.runtime.sendMessage({
+      type: 'UPDATE_UI_PREFERENCES', preferences: {diagnosticsEnabled: true}
+    })''')
+    assert response and response.get('ok'), response
+
+
 def copy_analysis_diagnostics(page: Page) -> str:
     """Use the visible support action without depending on the system clipboard."""
-    if page.locator('#copy-analysis-diagnostics').is_hidden():
-        open_task_settings(page)
-        page.locator('[data-settings-tab="general"]').click()
-        page.locator('#ui-diagnostics').check()
-        page.locator('[data-settings-tab="tasks"]').click()
+    button = page.locator('#copy-analysis-diagnostics')
+    if button.is_hidden():
+        # Never close the caller's analysis dialog: diagnostics live inside it.
+        enable_analysis_diagnostics(page)
+        button.wait_for(state='visible')
     page.evaluate('''() => {
       window.copiedAnalysisDiagnostics = null;
       navigator.clipboard.writeText = async text => { window.copiedAnalysisDiagnostics = text; };
     }''')
-    page.locator('#copy-analysis-diagnostics').click()
+    button.click()
     page.wait_for_function('window.copiedAnalysisDiagnostics !== null')
     return page.evaluate('window.copiedAnalysisDiagnostics')
 
