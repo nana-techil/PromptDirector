@@ -18,20 +18,32 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 test('a pending title edit and later classification preserve both edits in the capture draft', async () => {
   const requests = [];
   let titleChanged;
+  let stored = { id: 'draft', title: 'old', contentTypeId: 'old-type' };
   const context = vm.createContext({
-    draft: { id: 'draft', title: 'old', contentTypeId: 'old-type' }, metadataUpdates: Promise.resolve(true),
+    draft: { ...stored }, metadataUpdates: Promise.resolve(true),
     elements: { draftTitle: { value: 'new-title', addEventListener: (type, handler) => { titleChanged = handler; } } },
     chrome: { runtime: { sendMessage: message => new Promise(resolve => requests.push({ message, resolve })) } },
     render: noop, showFeedback: noop
   });
-  vm.runInContext(actualFunction('collector.js', 'updateDraft') + '\n' + actualFunction('collector.js', 'updateCaptureMetadata'), context);
+  vm.runInContext(actualFunction('collector.js', 'updateDraftMetadata') + '\n' + actualFunction('collector.js', 'updateCaptureMetadata'), context);
   vm.runInContext(source('collector.js').split('\n').find(line => line.startsWith('elements.draftTitle.addEventListener')), context);
   titleChanged();
   const later = context.updateCaptureMetadata({ contentTypeId: 'new-type', contentTypeExplicit: true });
   await tick();
-  while (requests.length) { const { message, resolve } = requests.shift(); resolve({ ok: true, draft: message.draft }); await tick(); }
+  while (requests.length) {
+    const { message, resolve } = requests.shift();
+    assert.equal(message.type, 'UPDATE_CAPTURE_DRAFT_METADATA', 'metadata edits use the patch channel');
+    assert.equal(message.draft, undefined, 'metadata edits must not resend a whole draft snapshot');
+    assert.ok(!('fragments' in message.patch) && !('visuals' in message.patch), 'patches carry metadata only');
+    // Simulate the capture workspace merging the patch into the latest stored draft.
+    stored = { ...stored, ...message.patch };
+    resolve({ ok: true, draft: { ...stored } });
+    await tick();
+  }
   await later;
-  assert.equal(context.draft.title, 'new-title', 'saving classification must not restore a stale title');
+  assert.equal(stored.title, 'new-title', 'saving classification must not restore a stale title');
+  assert.equal(stored.contentTypeId, 'new-type');
+  assert.equal(context.draft.title, 'new-title');
   assert.equal(context.draft.contentTypeId, 'new-type');
 });
 

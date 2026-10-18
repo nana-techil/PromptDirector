@@ -1230,6 +1230,8 @@ async function handleMessage(message, interaction = {}) {
       return enqueue(async () => disconnectSyncFolder());
     case "UPDATE_CAPTURE_DRAFT":
       return enqueueCapture(async () => captureRuntime.dispatch("persist-draft", { draft: message.draft }));
+    case "UPDATE_CAPTURE_DRAFT_METADATA":
+      return enqueueCapture(async () => captureRuntime.dispatch("persist-draft-metadata", { patch: message.patch }));
     case "ADD_ACTIVE_SELECTION_TO_DRAFT":
       return enqueueCapture(async () => captureRuntime.dispatch("add-active-selection", { tabId: message.tabId }));
     case "TRY_ACTIVE_SELECTION_TO_DRAFT":

@@ -16,6 +16,30 @@ test("capture uses its injected library storage even when browser storage is una
   assert.equal(stored.captureDraft.fragments[0].text, '按活动资料库保存');
 });
 
+test("metadata writes merge into the latest draft instead of restoring a stale snapshot", async () => {
+  const stored = {
+    captureDraft: {
+      id: "draft", title: "新标题",
+      fragments: [{ id: "late", text: "Agent 稍后加入的内容", sourceUrl: "https://example.com" }],
+      contentTypeId: "old-type"
+    }
+  };
+  const workspace = createCaptureWorkspace({
+    chromeApi: fakeChrome(stored), captureDraftStorageKey: "captureDraft",
+    ensureOffscreenDocument: async () => undefined, deleteVisual: async () => undefined
+  });
+  // A page holding an older/empty draft sends only its metadata patch; newer
+  // content written meanwhile must survive.
+  const result = await workspace.dispatch("persist-draft-metadata", {
+    patch: { contentTypeId: "new-type", contentTypeExplicit: true }
+  });
+  assert.equal(result.ok, true);
+  assert.equal(stored.captureDraft.fragments[0].text, "Agent 稍后加入的内容");
+  assert.equal(stored.captureDraft.title, "新标题");
+  assert.equal(stored.captureDraft.contentTypeId, "new-type");
+  assert.equal(stored.captureDraft.contentTypeExplicit, true);
+});
+
 test("capture workspace persists a selected fragment behind one dispatch interface", async () => {
   const stored = {};
   const chromeApi = fakeChrome(stored);

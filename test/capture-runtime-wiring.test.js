@@ -30,7 +30,7 @@ test("reading library state never starts synchronization", async () => {
 test("draft edits and save share one lightweight queue so the last capture cannot miss the commit", async () => {
   const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
   for (const messageType of [
-    "UPDATE_CAPTURE_DRAFT", "UPDATE_CAPTURE_FRAGMENT", "REMOVE_CAPTURE_FRAGMENT",
+    "UPDATE_CAPTURE_DRAFT", "UPDATE_CAPTURE_DRAFT_METADATA", "UPDATE_CAPTURE_FRAGMENT", "REMOVE_CAPTURE_FRAGMENT",
     "REMOVE_CAPTURE_VISUAL", "CANCEL_CAPTURE_DRAFT", "COMMIT_CAPTURE_DRAFT"
   ]) {
     const start = source.indexOf(`case "${messageType}"`);

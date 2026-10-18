@@ -2039,23 +2039,24 @@ async function sendDraftAction(button, type, payload = {}) {
   });
 }
 
-async function updateDraft(value) {
+async function updateDraftMetadata(patch) {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "UPDATE_CAPTURE_DRAFT", draft: value });
-    if (!response?.ok) throw new Error(response?.message || "标题更新失败");
+    const response = await chrome.runtime.sendMessage({ type: "UPDATE_CAPTURE_DRAFT_METADATA", patch });
+    if (!response?.ok) throw new Error(response?.message || "保存设置未更新");
     draft = response.draft;
     render();
-    return draft;
+    return true;
   } catch (error) {
-    showFeedback(error.message || "标题更新失败", true);
-    return null;
+    showFeedback(error.message || "保存设置未更新", true);
+    return false;
   }
 }
 
 function updateCaptureMetadata(patch) {
-  // Merge into the latest draft when this edit reaches the queue, so quickly
-  // selecting a project and adding tags cannot restore a stale draft snapshot.
-  metadataUpdates = metadataUpdates.then(async () => Boolean(draft && await updateDraft({ ...draft, ...patch })));
+  // The capture workspace merges this patch into the latest stored draft.
+  // Sending a whole in-memory draft from a stale page could overwrite newer
+  // content meanwhile written by another page, the Agent or the side panel.
+  metadataUpdates = metadataUpdates.then(async () => Boolean(draft && await updateDraftMetadata(patch)));
   return metadataUpdates;
 }
 
