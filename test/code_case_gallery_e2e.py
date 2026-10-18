@@ -7,7 +7,11 @@ from code_case_e2e import DEMO
 
 def main():
     out=Path(os.environ.get('PD_E2E_ARTIFACT_DIR','/tmp/pd-code-gallery'));out.mkdir(parents=True,exist_ok=True)
-    with extension_session('pd-code-gallery-',viewport={'width':1280,'height':844}) as run:
+    # Many nested sandboxed previews attach and detach while the gallery virtualizes.
+    # Keeping those frames in-process avoids a Playwright driver race (frameAttached
+    # assertion) seen only on slower CI runners; sandboxing and scripts stay enabled.
+    with extension_session('pd-code-gallery-',viewport={'width':1280,'height':844},
+            extra_args=['--disable-features=IsolateOrigins,site-per-process']) as run:
         panel=run.open_page('collector.html')
         html=Path(os.environ['PD_CODE_GALLERY_HTML']).read_text() if os.environ.get('PD_CODE_GALLERY_HTML') else DEMO
         source='Original CSS and React remain intact.\n\n```promptdirector-preview-html\n'+html+'\n```'
@@ -37,8 +41,12 @@ def main():
             expect(demo.locator('#state')).to_have_text('Build')
             demo.get_by_role('button',name='Ship').click();expect(demo.locator('#state')).to_have_text('Ship')
         assert not library.locator('.detail-drawer.open').count()
+        # Let every mounted preview finish loading before navigating the page, so no
+        # frame attaches mid-navigation (the same Playwright driver race).
+        library.wait_for_function("()=>[...document.querySelectorAll('.code-case-frame')].every(f=>f.hidden||!f.getAttribute('src')||f.dataset.previewReady)")
         for locale,theme in [('zh-CN','dark'),('en','light')]:
             if locale=='en':
+                library.wait_for_function("()=>[...document.querySelectorAll('.code-case-frame')].every(f=>f.hidden||!f.getAttribute('src')||f.dataset.previewReady)")
                 with library.expect_navigation():library.evaluate("async()=>chrome.storage.local.set({uiPreferences:{locale:'en',theme:'light',motion:'reduced'}})")
                 expect(card.locator('.code-case-frame')).to_have_attribute('data-preview-ready','true')
             for width in [1280,390]:
