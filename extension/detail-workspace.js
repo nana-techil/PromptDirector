@@ -1,10 +1,38 @@
 // Arrange existing detail sections without recreating editors, players or drafts.
+function restoreWorkspaceFocus(body, focused) {
+  // Another control already holds focus inside the re-arranged body: never steal it.
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== body && body.contains(active)) return;
+  if (focused.node?.isConnected) {
+    focused.node.focus({ preventScroll: true });
+    if (focused.selection && typeof focused.node.setSelectionRange === 'function') focused.node.setSelectionRange(...focused.selection);
+    return;
+  }
+  if (!focused.ariaLabel) return;
+  const scopes = focused.promptKey
+    ? [...body.querySelectorAll('[data-prompt-key]')].filter(node => node.dataset.promptKey === focused.promptKey)
+    : [body];
+  for (const scope of scopes) {
+    const target = [...scope.querySelectorAll('[aria-label]')]
+      .find(node => node.getAttribute('aria-label') === focused.ariaLabel && node.getClientRects().length);
+    if (!target) continue;
+    target.focus({ preventScroll: true });
+    if (focused.selection && typeof target.setSelectionRange === 'function') target.setSelectionRange(...focused.selection);
+    return;
+  }
+}
+
 export function unwrapDetailWorkspace(body) {
   const primary = body?.parentElement;
   if (!primary?.classList.contains('detail-workspace')) return;
   const focused = document.activeElement;
   if (primary.contains(focused)) {
-    body.workspaceFocus = { node: focused, selection: focused.tagName === 'TEXTAREA' ? [focused.selectionStart, focused.selectionEnd] : null };
+    // Re-arranging detaches every section before re-appending it, so the focused
+    // node itself may be replaced while the section is refreshed. Keep a semantic
+    // identity as well, and restore focus on the equivalent new control.
+    body.workspaceFocus = { node: focused, selection: focused.tagName === 'TEXTAREA' ? [focused.selectionStart, focused.selectionEnd] : null,
+      promptKey: focused.closest('[data-prompt-key]')?.dataset.promptKey || '',
+      ariaLabel: focused.getAttribute('aria-label') || '' };
   }
   const reading = body.querySelector(':scope > .detail-reading');
   const footer = primary.querySelector('.detail-workspace-footer');
@@ -60,10 +88,7 @@ export function arrangeDetailWorkspace(body) {
   primary.classList.add('detail-workspace');
   reading.scrollTop = body.detailReadingTop || 0;
   const focused = body.workspaceFocus;
-  if (focused?.node.isConnected) {
-    focused.node.focus({ preventScroll: true });
-    if (focused.selection) focused.node.setSelectionRange(...focused.selection);
-  }
+  if (focused) restoreWorkspaceFocus(body, focused);
   delete body.workspaceFocus;
   let quiet;
   reading.addEventListener('scroll', () => {
