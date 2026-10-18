@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='pd-native-sender-') as tmp:
   file=ext/'user-screenshot.png';file.write_bytes(png)
   obj=rpc('Runtime.evaluate',{'expression':"document.querySelector('#capture-assistant-panel input[type=file]')"})['result']['objectId']
   rpc('DOM.setFileInputFiles',{'objectId':obj,'files':[str(file)]})
-  for _ in range(200):
+  for _ in range(600):
    if evaluate("document.querySelector('.capture-assistant-composer .capture-assistant-attachments')?.textContent.includes('user-screenshot.png')"):break
    p.wait_for_timeout(50)
   status=evaluate("document.querySelector('#capture-assistant-status').textContent")
@@ -55,9 +55,23 @@ with tempfile.TemporaryDirectory(prefix='pd-native-sender-') as tmp:
    if evaluate("chrome.tabs.query({}).then(tabs=>tabs.some(tab=>tab.url?.endsWith('/library.html')))"):break
    p.wait_for_timeout(50)
   assert evaluate("chrome.tabs.query({}).then(tabs=>tabs.some(tab=>tab.url?.endsWith('/library.html')))") or any(t['url'].endswith('/library.html') for t in cdp.send('Target.getTargets')['targetInfos']), {'targets':cdp.send('Target.getTargets')['targetInfos'],'feedback':evaluate("document.querySelector('#feedback')?.textContent"),'errors':run.page_errors}
+  # The side panel re-attaches to the newly opened library tab; poll the same
+  # panel/conversation facts instead of sampling one slow CI frame.
+  for _ in range(600):
+   if evaluate("chrome.runtime.getContexts({contextTypes:['SIDE_PANEL']}).then(contexts=>contexts.some(context=>context.documentUrl.endsWith('/collector.html')))"):break
+   p.wait_for_timeout(50)
   assert evaluate("chrome.runtime.getContexts({contextTypes:['SIDE_PANEL']}).then(contexts=>contexts.some(context=>context.documentUrl.endsWith('/collector.html')))")
+  for _ in range(600):
+   if evaluate("document.querySelector('#capture-assistant-panel')?.hidden===false"):break
+   p.wait_for_timeout(50)
   assert evaluate("document.querySelector('#capture-assistant-panel').hidden") is False
+  for _ in range(600):
+   if evaluate("document.querySelector('.capture-assistant-composer .capture-assistant-attachments')?.textContent.includes('user-screenshot.png')"):break
+   p.wait_for_timeout(50)
   assert evaluate("document.querySelector('.capture-assistant-composer .capture-assistant-attachments').textContent.includes('user-screenshot.png')")
+  for _ in range(200):
+   if evaluate("chrome.storage.local.get('captureAssistantDialog').then(value=>value.captureAssistantDialog.activeId)")==before:break
+   p.wait_for_timeout(50)
   assert evaluate("chrome.storage.local.get('captureAssistantDialog').then(value=>value.captureAssistantDialog.activeId)")==before
   out=Path(os.environ.get('PD_E2E_ARTIFACT_DIR','/tmp/pd-native-sidepanel'));out.mkdir(parents=True,exist_ok=True)
   shot=rpc('Page.captureScreenshot',{'format':'png'})['data'];(out/'native-sidepanel-attachment.png').write_bytes(base64.b64decode(shot))
