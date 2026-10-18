@@ -154,7 +154,9 @@ def main() -> None:
         },
     }]
     video_entry["primaryMediaId"] = "zhipu-video"
-    local_video_entry = base_entry("zhipu-local-video-entry", "GLM 本地视频边界", "本地测试视频", "content:reference")
+    # A creative video case, not a reference/tutorial: reference roles now always render the article reader
+    # (case-presentation.js) and expose no video-analysis entry point.
+    local_video_entry = base_entry("zhipu-local-video-entry", "GLM 本地视频边界", "本地测试视频", "content:video-case")
     local_video_entry["mediaAssets"] = [{
         "id": "zhipu-local-video",
         "kind": "video",
@@ -175,7 +177,8 @@ def main() -> None:
         run.seed_storage(setup, {
             "schemaVersion": 24,
             "entries": [image_entry, video_entry, local_video_entry],
-            "uiPreferences": {"locale": "zh-CN", "theme": "light", "motion": "none", "analysisDiagnostics": True},
+            # 1.27 unifies developer diagnostics under the diagnosticsEnabled preference.
+            "uiPreferences": {"locale": "zh-CN", "theme": "light", "motion": "none", "diagnosticsEnabled": True},
         })
         configured = setup.evaluate(
             """async ({tasks, endpoint}) => {

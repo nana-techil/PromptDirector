@@ -9,7 +9,17 @@ from e2e_support import extension_session, base_entry
 def wheel_end(page, selector, name):
     region = page.locator(selector)
     expect(region).to_be_visible()
-    point = region.evaluate("""e=>{const r=e.getBoundingClientRect();return {x:r.left+Math.min(40,r.width/2),y:Math.max(0,r.top)+Math.min(40,(Math.min(innerHeight,r.bottom)-Math.max(0,r.top))/2)}}""")
+    point = region.evaluate("""e=>{
+      const r=e.getBoundingClientRect();
+      const top=Math.max(0,r.top), bottom=Math.min(innerHeight,r.bottom), left=Math.max(0,r.left), right=Math.min(innerWidth,r.right);
+      // Overlays (detail navigation, sticky toolbars) are siblings of the scroller, so a wheel there never
+      // reaches it. Pick a visible point whose real hit target lives inside this scrollable region.
+      const points=[];
+      for(const fx of [0.5,0.2,0.8])for(const fy of [0.5,0.3,0.7])points.push([left+(right-left)*fx,top+(bottom-top)*fy]);
+      points.push([left+Math.min(40,(right-left)/2),top+40]);
+      for(const [x,y] of points){const hit=document.elementFromPoint(x,y);if(hit&&e.contains(hit))return {x,y};}
+      return {x:left+Math.min(40,(right-left)/2),y:top+Math.min(40,(bottom-top)/2)};
+    }""")
     page.mouse.move(point['x'],point['y'])
     for up in [True,False]:
         metrics=region.evaluate('e=>({height:e.scrollHeight,client:e.clientHeight})')
