@@ -127,7 +127,7 @@ def main():
                         page.wait_for_timeout(150)
                         assert static_frame == page.locator('#organize-detail-progress').screenshot(), 'Reduced motion must stop the waiting bar'
                         page.emulate_media(reduced_motion="no-preference")
-                        assert page.locator('#organize-detail-progress').evaluate("e => getComputedStyle(e).height") == '4px'
+                        assert page.locator('#organize-detail-progress').evaluate("e => getComputedStyle(e).height === getComputedStyle(e).getPropertyValue('--ui-progress-height').trim()")
                         page.evaluate("""async () => {
                           const {setTaskFeedbackState, setTaskProgress} = await import('/task-feedback.js');
                           const status = document.querySelector('#organize-detail-status');

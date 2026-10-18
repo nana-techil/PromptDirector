@@ -44,7 +44,7 @@ with extension_session('pd-hidden-scroll-',viewport={'width':1440,'height':900})
     before=prompt.evaluate('e=>e.scrollTop')
     page.keyboard.press('PageDown')
     page.wait_for_function('(before)=>document.querySelector("[data-scroll-probe]").scrollTop>before',arg=before)
-    assert page.locator('#detail-drawer').evaluate("e=>[e,...e.querySelectorAll('*')].every(n=>getComputedStyle(n).scrollbarWidth===(n.matches('.ui-scrollbar, textarea:not([readonly]):not([disabled]), [contenteditable]:not([contenteditable=\"false\"])')?'thin':'none'))")
+    assert page.locator('#detail-drawer').evaluate("e=>[e,...e.querySelectorAll('*')].every(n=>getComputedStyle(n).scrollbarWidth===(n.matches('.detail-reading, .ui-scrollbar, textarea:not([readonly]):not([disabled]), [contenteditable]:not([contenteditable=\"false\"])')?'thin':'none'))")
     page.screenshot(path=str(Path(tempfile.gettempdir()) / 'promptdirector-hidden-scroll.png'))
     page.locator('#detail-close').click()
     # The shared opt-in preserves a draggable track for wide content and editors.

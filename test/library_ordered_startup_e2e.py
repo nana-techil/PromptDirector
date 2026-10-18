@@ -82,6 +82,7 @@ def main(modes):
                     page.locator('button[data-sort-column="added"]').click()
                     expect(page.locator('#case-list .case-card')).to_have_count(len(expected_partial))
                     page.wait_for_function('''()=>{const image=document.querySelector('#case-list .case-card img[data-visual-id]');return image?.complete&&image.naturalWidth>1}''')
+                page.evaluate("async()=>{await Promise.all(document.getAnimations().filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished.catch(()=>{})));await new Promise(requestAnimationFrame)}")
                 before=page.evaluate('''expected=>{
                   const cards=[...document.querySelectorAll('#case-list .case-card')];
                   window.pdFirstCards=cards;window.pdFirstImages=cards.map(card=>card.querySelector('img[data-visual-id]'));

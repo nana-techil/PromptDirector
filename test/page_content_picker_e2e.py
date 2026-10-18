@@ -12,13 +12,13 @@ def main():
         page.goto('https://wchao6891.github.io/picker-fixture')
         page.set_content('<nav>Navigation must not be saved</nav><main><h1>Video title</h1><div id="comments"></div></main>')
         page.evaluate('''()=>{const root=document.querySelector('#comments').attachShadow({mode:'open'});root.innerHTML='<div class="comment"><p>用户指定的完整评论提示词，必须可以手动选中保存。</p><p>另一条评论内容。</p></div>';}''')
-        picker=(ROOT/'extension/page-content-picker.js').read_text().replace('export function','function',1)
-        page.add_script_tag(content=picker)
+        setup=run.open_page('collector.html')
+        picker=setup.evaluate("async()=>String((await import('./page-content-picker.js')).pickPageContent)")
+        page.add_script_tag(content='window.pickPageContent = ('+picker+');')
         page.evaluate('()=>{window.picked=pickPageContent();}')
         page.locator('#comments p').first.click()
         selected=page.evaluate('()=>window.picked')
         assert '用户指定' in selected['html'] and 'Navigation' not in selected['html'] and '另一条' not in selected['html'],selected
-        setup=run.open_page('collector.html')
         capture=setup.evaluate("async()=>String((await import('./page-capture.js')).collectPageCaptureSnapshot)")
         result=page.evaluate('async ({source,html})=>await (0,eval)(`(${source})`)({manualContentHtml:html,sessionId:"manual"})',{'source':capture,'html':selected['html']})
         candidate=result['candidates'][0]

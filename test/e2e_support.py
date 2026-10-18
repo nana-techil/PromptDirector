@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Page, Playwright, TimeoutError as PlaywrightTimeoutError, sync_playwright
 
@@ -172,7 +173,11 @@ def launch_context(
     # Playwright routing disables native HTTP cache. Cache tests block external
     # DNS at launch instead, retaining actual conditional requests to loopback.
     if network_blocked and not preserve_http_cache:
-        context.route("https://**/*", lambda route: route.abort("blockedbyclient"))
+        # Real local TLS fixtures still exercise fetch/streaming while CI blocks
+        # external services. Match the hostname, never a URL prefix.
+        context.route("https://**/*", lambda route: route.continue_()
+                      if urlparse(route.request.url).hostname in {"127.0.0.1", "localhost", "::1"}
+                      else route.abort("blockedbyclient"))
     return context
 
 
@@ -286,6 +291,11 @@ def scroll_to_case(page, entry_id: str) -> None:
 
 def copy_analysis_diagnostics(page: Page) -> str:
     """Use the visible support action without depending on the system clipboard."""
+    if page.locator('#copy-analysis-diagnostics').is_hidden():
+        open_task_settings(page)
+        page.locator('[data-settings-tab="general"]').click()
+        page.locator('#ui-diagnostics').check()
+        page.locator('[data-settings-tab="tasks"]').click()
     page.evaluate('''() => {
       window.copiedAnalysisDiagnostics = null;
       navigator.clipboard.writeText = async text => { window.copiedAnalysisDiagnostics = text; };

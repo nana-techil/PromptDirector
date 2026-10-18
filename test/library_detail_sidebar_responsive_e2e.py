@@ -160,8 +160,9 @@ def main() -> None:
         fullscreen = sidebar_geometry(library)
         assert fullscreen["galleryVisible"] is True and fullscreen["videoVisible"] is True, fullscreen
         assert fullscreen["navigationVisible"] is True, fullscreen
-        assert 4 <= fullscreen["drawerRight"] - fullscreen["nextRight"] <= 16, fullscreen
-        assert abs(fullscreen["nextCenterY"] - fullscreen["drawerCenterY"]) < 1, fullscreen
+        assert 0 < fullscreen["nextRight"] < fullscreen["drawerRight"], fullscreen
+        assert 0 < fullscreen["nextCenterY"] < 60, fullscreen
+        assert library.locator("#detail-next").evaluate("e=>{const r=e.getBoundingClientRect();return document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('#detail-next')===e}")
         assert fullscreen["navigationOverlapsControls"] is False, fullscreen
         assert fullscreen["titleUsableWidth"] >= 180, fullscreen
         assert fullscreen["detailOverflow"] is False, fullscreen

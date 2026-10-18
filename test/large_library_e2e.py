@@ -200,7 +200,8 @@ def main() -> None:
                 assert library.locator("#result-count").is_visible()
                 assert library.locator("#gallery-view-controls").is_hidden()
                 assert library.locator("#share-count").inner_text() == "已选 0"
-                assert library.locator("#selection-select-filtered").inner_text() == "全选当前（6500）"
+                assert library.locator("#selection-select-filtered").inner_text() == "全选"
+                assert library.locator("#selection-select-filtered").get_attribute("aria-label") == "全选当前筛选结果，共 6500 个案例"
                 assert_wall_transition_stable(library, sample_wall_transition(library, "#share-cancel"))
                 assert_wall_stable(library, browse_wall, wall_geometry(library))
                 assert_wall_transition_stable(library, sample_wall_transition(library, "#select-cases"))

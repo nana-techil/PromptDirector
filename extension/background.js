@@ -9561,7 +9561,7 @@ function synchronizedStatePayload(current, synced) {
     entries,
     trashState: normalizeTrashState(synced.trashState ?? current.trashState),
     compoundCases: normalizeCompoundCases(synced.compoundCases ?? current.compoundCases, entries),
-    taxonomy: synced.taxonomy ?? current.taxonomy,
+    taxonomy: normalizeTaxonomy(synced.taxonomy ?? current.taxonomy),
     facetCatalog: synced.facetCatalog ?? current.facetCatalog,
     classificationRules: synced.classificationRules ?? current.classificationRules,
     organizerState: normalizeOrganizerState(

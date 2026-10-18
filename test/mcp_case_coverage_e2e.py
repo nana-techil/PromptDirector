@@ -70,18 +70,20 @@ def main():
             payload = drag(f'.case-card[data-entry-id="{compound_id}"]')
             assert not payload['cancelled'], payload
             assert payload['data']['text/plain'].startswith('blob:'), payload
-            assert '#pd-reference=' in payload['data']['text/html'], payload
+            assert payload['data']['text/html'].startswith('<img src="blob:'), payload
+            assert '#pd-reference=' not in payload['data']['text/plain'], payload
             resolved = call('resolve_reference', {'reference': payload['data']['application/x-promptdirector-reference']})
             assert resolved['caseId'] == compound_id and resolved['assetId'] == '', resolved
-            named_link = page.evaluate('''html => new DOMParser().parseFromString(html,'text/html').querySelector('a').href''', payload['data']['text/html'])
-            assert call('resolve_reference', {'reference': named_link})['caseId'] == compound_id
+            original_url = page.evaluate('''html => new DOMParser().parseFromString(html,'text/html').querySelector('img').src''', payload['data']['text/html'])
+            assert original_url == payload['data']['text/plain'], payload
             assert sorted(a['assetId'] for a in resolved['media']) == ['clip', 'image', 'poster', 'second'], resolved
             assert payload['data']['downloadurl'].startswith('image/png:原图.png:blob:'), payload
             card.click()
             page.locator('.detail-image').first.wait_for()
             media_payload = drag('.detail-image')
             assert media_payload['data']['text/plain'].startswith('blob:'), media_payload
-            assert '>原图.png</a>' in media_payload['data']['text/html'], media_payload
+            assert 'alt="原图.png"' in media_payload['data']['text/html'], media_payload
+            assert media_payload['data']['downloadurl'].startswith('image/png:原图.png:blob:'), media_payload
             resolved_image = call('resolve_reference', {'reference': media_payload['data']['application/x-promptdirector-reference']})
             assert resolved_image['assetId'] == 'image'
             internal = page.evaluate('''async input => chrome.runtime.sendMessage({type:'CASE_OPERATION',operation:'organize_case',input})''',

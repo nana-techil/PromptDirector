@@ -181,10 +181,16 @@ def main() -> None:
             library.locator("#toolbar-more > summary").click()
         library.locator("#add-menu > summary").click()
         library.locator("#add-media").click()
+        expect(library.locator("#import-last-job")).to_be_hidden()
+        # Completed imports disappear; failed items remain reachable in English.
+        library.evaluate("""async()=>{const {getLibraryStorage}=await import('./library-storage.js');const store=getLibraryStorage();const {importJobs}=await store.get('importJobs');const job=importJobs.items[0];job.status='failed';job.items.push({id:'failed-item',status:'failed',name:'Failed sample.png',error:'Fixture download failed'});await store.set({importJobs});}""")
+        library.reload(wait_until="networkidle")
+        if not library.locator("#add-menu > summary").is_visible(): library.locator("#toolbar-more > summary").click()
+        library.locator("#add-menu > summary").click(); library.locator("#add-media").click()
         expect(library.locator("#import-last-job")).to_be_visible()
         library.locator("#import-last-job").click()
         import_dialog = library.locator("#import-dialog")
-        expect(import_dialog.locator("#import-job-title")).to_have_text("Import complete")
+        expect(import_dialog.locator("#import-job-title")).to_have_text("Some imports failed")
         assert_no_visible_chinese(import_dialog, "completed import job")
         library.locator("#import-close").click()
 

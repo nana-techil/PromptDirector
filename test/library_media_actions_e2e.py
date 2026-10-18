@@ -64,6 +64,7 @@ def main() -> None:
         for index in range(1, 16)
     ]
     entry["primaryMediaId"] = "multi-image-1"
+    entry["mediaPrompts"] = [{"assetId":"multi-image-2","source":"manual","text":"第二张图片独立提示词"}]
 
     with extension_session(
         "prompt-director-media-actions-",

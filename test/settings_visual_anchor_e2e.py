@@ -11,7 +11,7 @@ MAX_ANCHOR_SHIFT_PX = 1
 
 
 def settle(page) -> None:
-    page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
+    page.evaluate("async()=>{await Promise.all(document.getAnimations().filter(a=>Number.isFinite(a.effect?.getComputedTiming().endTime)).map(a=>a.finished.catch(()=>{})));await new Promise(requestAnimationFrame)}")
 
 
 def settings_metrics(page) -> dict:
@@ -61,7 +61,8 @@ def assert_anchor_stable(baseline: dict, current: dict, label: str, viewport: di
 
 def exercise_settings(page, viewport: dict) -> None:
     page.set_viewport_size(viewport)
-    page.locator("#open-settings").dispatch_event("click")
+    page.locator("#open-settings").click()
+    page.locator('[data-settings-tab="general"]').click()
     expect(page.locator("#settings-dialog")).to_be_visible()
     settle(page)
     baseline = settings_metrics(page)

@@ -27,7 +27,7 @@ def main():
         page.locator('[data-analysis-kind="composer"]').click()
         agent = page.locator('#composer-agent-instruction')
         method = page.locator('#composer-task-method')
-        expect(agent).to_have_value(re.compile(r'^You are the creative assistant'))
+        expect(agent).to_have_value(re.compile(r'^You are the PromptDirector plugin assistant'))
         for task in ['compose.image', 'compose.video', 'analyze_materials', 'chat']:
             page.locator('#composer-task-key').select_option(task)
             assert not re.search(r'[\u3400-\u9fff]', method.input_value())
@@ -43,7 +43,7 @@ def main():
           const {createInstructionSnapshot}=await import('./composer.js');
           return createInstructionSnapshot(settings,'compose','video','en');
         }""", state)
-        assert snapshot['agentInstruction'].startswith('You are the creative assistant')
+        assert snapshot['agentInstruction'].startswith('You are the PromptDirector plugin assistant')
         assert 'video prompt ready for generation' in snapshot['taskMethod']
         artifact_dir = os.environ.get('PROMPTDIRECTOR_E2E_ARTIFACT_DIR')
         for width, height, theme in [(1440, 960, 'dark'), (390, 844, 'light')]:
@@ -51,7 +51,7 @@ def main():
             if theme == 'light':
                 page.locator('[data-settings-tab="general"]').click()
                 with page.expect_navigation(wait_until='networkidle'):
-                    page.locator('#ui-theme').select_option(theme)
+                    page.locator('#ui-theme').uncheck()
                 page.locator('#open-settings').click()
                 page.locator('[data-settings-tab="rules"]').click()
                 page.locator('[data-analysis-kind="composer"]').click()

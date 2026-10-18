@@ -25,7 +25,7 @@ def main():
             skill:{callName:'完整方法',description:'后台工具回归',skillMarkdown:'保留完整方法正文'}});
           if (!response.ok) throw Error(response.message);
           const {createComposerSession}=await import('./composer.js');
-          await chrome.storage.local.set({composerSessions:[createComposerSession({id:'bridge-session',
+          await (await import('./library-storage.js')).getLibraryStorage().set({composerSessions:[createComposerSession({id:'bridge-session',
             libraryTools:{candidates:[{caseId:'bridge-case',title:'工具读取案例'}]},
             messages:[{id:'request',role:'user',content:'读取参考'},
                       {id:'other-request',role:'user',content:'另一个任务'}],

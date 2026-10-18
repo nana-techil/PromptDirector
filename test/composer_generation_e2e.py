@@ -119,7 +119,7 @@ def main() -> None:
             setup,
             {
                 "schemaVersion": 24,
-                "uiPreferences": {"locale": "zh-CN"},
+                "uiPreferences": {"locale": "zh-CN", "diagnosticsEnabled": True},
                 "entries": [entry, jimeng_character, retrieved_case, retrieved_guide, text_scene, text_character],
                 **ai_configuration_fixture(
                     providers={
@@ -200,7 +200,7 @@ def main() -> None:
                 return
             if payload.get("stream"):
                 execution_payload = composer_request_payload(payload)
-                execution_route = execution_payload.get("route", "compose")
+                execution_route = execution_payload.get("route", "auto")
                 user_text = json.dumps(execution_payload.get("messages", []), ensure_ascii=False)
                 latest_user_text = next(
                     (item.get("content", "") for item in reversed(execution_payload.get("messages", [])) if item.get("role") == "user"),
@@ -219,7 +219,7 @@ def main() -> None:
                         route.fulfill(status=200, content_type="text/event-stream", body="data: " + json.dumps({"model": "deepseek-v4-flash", "choices": [{"delta": {"tool_calls": calls}, "finish_reason": "tool_calls"}]}) + "\n\ndata: [DONE]\n\n")
                         return
                 if execution_route == "auto":
-                    resolved_route = "analyze_materials" if "分析资料" in user_text else "compose"
+                    resolved_route = "analyze_materials" if "分析资料" in latest_user_text else "chat" if "解释这个概念" in latest_user_text else "compose"
                 else:
                     resolved_route = execution_route
                 if "角色应该是什么气质" in latest_user_text:
@@ -377,7 +377,6 @@ def main() -> None:
         assert composer.locator(".composer-message.user", has_text="流式中断后复用规划").count() == 1
 
         composer.locator("#composer-new").click()
-        select_composer_setting(composer, "#composer-route", "auto")
         composer.locator("#composer-instruction").fill("分析资料中的光线差异")
         composer.locator("#composer-action").click()
         expect(composer.locator(".composer-message.analysis .composer-message-text")).to_contain_text("资料分析结果")
@@ -386,7 +385,6 @@ def main() -> None:
         assert composer.locator(".composer-message.prompt").count() == 0
 
         composer.locator("#composer-new").click()
-        select_composer_setting(composer, "#composer-route", "chat")
         composer.locator("#composer-options summary").click()
         expect(composer.locator("#composer-production-review")).to_be_disabled()
         composer.locator("#composer-options summary").click()
@@ -399,7 +397,6 @@ def main() -> None:
         assert composer.locator(".composer-message.plan").count() == 0
 
         composer.locator("#composer-new").click()
-        select_composer_setting(composer, "#composer-route", "compose")
         select_composer_setting(composer, "#composer-output-language", "en")
         composer.locator("#composer-instruction").fill("生成东方庭院")
         composer.locator("#composer-action").click()
@@ -407,7 +404,6 @@ def main() -> None:
 
         composer.locator("#composer-new").click()
         set_composer_direction(composer, "video")
-        select_composer_setting(composer, "#composer-route", "compose")
         select_composer_setting(composer, "#composer-output-language", "zh-CN")
         composer.locator("#composer-instruction").fill("生成庭院人物行走视频")
         composer.locator("#composer-action").click()
@@ -417,7 +413,6 @@ def main() -> None:
 
         composer.locator("#composer-new").click()
         set_composer_direction(composer, "image")
-        select_composer_setting(composer, "#composer-route", "auto")
         composer.locator("#composer-instruction").fill("角色应该是什么气质")
         question_requests_before = len(requests)
         composer.locator("#composer-action").click()

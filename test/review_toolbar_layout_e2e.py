@@ -45,7 +45,7 @@ def main():
         expect(page.locator('.detail-visual-rail')).to_be_hidden();one_row()
         page.get_by_role('button',name='下一项媒体',exact=True).click()
         expect(page.locator('.detail-image')).to_be_visible();one_row()
-        expect(page.locator('.detail-media-tools .detail-palette .swatch')).to_have_count(7)
+        expect(page.locator('.detail-visual-caption > .detail-palette .swatch')).to_have_count(7)
         page.locator('#detail-review-toggle').click()
         expect(page.locator('.detail-visual-rail')).to_be_visible()
         page.get_by_role('button',name='切换侧栏详情',exact=True).click()

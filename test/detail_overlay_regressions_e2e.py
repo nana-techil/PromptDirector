@@ -66,7 +66,7 @@ def main(mode='all'):
                 p.mouse.move(header['x']+60,header['y']+25);p.mouse.down();p.mouse.move(header['x']+60+delta,header['y']+45,steps=5);p.mouse.up()
             after=dialog.bounding_box();assert abs(after['x']-before['x'])>150,(before,after)
             if out:p.screenshot(path=str(out/'settings-drag.png'))
-            p.locator('#settings-close').click();p.locator('#open-settings').click();reopened=dialog.bounding_box();assert abs(reopened['x']-before['x'])<2,(before,reopened)
+            p.locator('#settings-close').click();p.locator('#open-settings').click();p.evaluate("async()=>await Promise.all(document.querySelector('#settings-dialog').getAnimations().map(a=>a.finished.catch(()=>{})))");reopened=dialog.bounding_box();assert abs(reopened['x']-before['x'])<2,(before,reopened)
             p.locator('#settings-close').click()
             p.locator('.case-card[data-entry-id=picture]').click();p.locator('.detail-image').click()
             expect(p.locator('#detail-drawer')).to_have_class(re.compile('.*is-reviewing.*'))

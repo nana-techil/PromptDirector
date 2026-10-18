@@ -9,10 +9,14 @@ def composer_request_payload(body):
         if message.get('role')!='user': continue
         content=message.get('content','')
         if not isinstance(content,list) or not content: continue
-        text=content[0].get('text','')
-        try: payload=json.loads(text)
-        except (ValueError,TypeError): continue
-        if not isinstance(payload,dict) or 'targetType' not in payload or 'route' not in payload: continue
+        payload = None
+        for part in content:
+            try: value = json.loads(part.get('text', ''))
+            except (ValueError, TypeError): continue
+            if isinstance(value, dict) and {'targetType', 'agentVersion', 'methodVersion'} <= value.keys():
+                payload = value
+                break
+        if payload is None: continue
         assert 'messages' not in payload, 'Execution history must use provider-native roles'
         payload['messages']=[{'role':m['role'],'content':m['content']} for m in messages[:index] if m.get('role') in ['user','assistant']]
         if content[-1].get('type') in ['text','input_text'] and len(content)>1:

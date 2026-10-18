@@ -44,6 +44,8 @@ def main() -> None:
             return navigator.storage.getDirectory();
           };
         }""")
+        page.locator("#open-settings").click()
+        page.locator('[data-settings-tab="general"]').click()
         page.locator("#create-folder-backup").click()
         expect(page.locator("#data-safety-feedback")).to_contain_text("完整备份已完成", timeout=30000)
         proof = page.evaluate("""async () => {
