@@ -30,7 +30,9 @@ def injected(path,name):
     text=text[start:]
     end=text.find('\nexport ',10)
     if end>=0:text=text[:end]
-    return text.replace('export ','',1)
+    # End with a newline so a trailing documentation comment cannot swallow the
+    # caller expression appended after the injected function source.
+    return text.replace('export ','',1).rstrip()+'\n'
 
 
 def main():

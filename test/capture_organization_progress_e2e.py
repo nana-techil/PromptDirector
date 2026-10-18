@@ -13,6 +13,29 @@ from pathlib import Path
 from playwright.sync_api import expect
 from e2e_support import extension_session
 
+def emulate_capture_page_window(run):
+    """The capture sidebar is a panel of the captured page's browser window.
+
+    E2E loads collector.html as a standalone tab, so the panel's own tab is the
+    active one. While a durable save task exists, report that task's source page
+    as the active tab, matching the real side panel context (whose host
+    permission exposes the captured page URL).
+    """
+    run.context.add_init_script("""
+      (() => {
+        if (location.protocol !== 'chrome-extension:' || !location.pathname.endsWith('/collector.html')) return;
+        const query = chrome.tabs.query.bind(chrome.tabs);
+        chrome.tabs.query = async info => {
+          if (!info || !info.active) return query(info);
+          const { captureSaveTask, captureSaveInput } = await chrome.storage.local.get(['captureSaveTask', 'captureSaveInput']);
+          const input = captureSaveTask && (captureSaveTask.input || captureSaveInput);
+          const batch = input && input.batch;
+          if (!batch || !batch.sourceUrl) return query(info);
+          return [{ id: 999, windowId: 1, active: true, status: 'complete', url: batch.sourceUrl }];
+        };
+      })();
+    """)
+
 
 def main(on_download=None):
     out = Path(os.environ.get('PD_E2E_ARTIFACT_DIR') or tempfile.mkdtemp(prefix='pd-capture-progress-'))

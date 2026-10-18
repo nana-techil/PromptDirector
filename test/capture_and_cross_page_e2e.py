@@ -57,7 +57,11 @@ def main() -> None:
               return chrome.sidePanel.getOptions({tabId: tab.id});
             }"""
         )
-        assert panel_options["enabled"] is False
+        # 1.27.0 keeps the unified assistant side panel available on the library
+        # tab instead of disabling it there; the toolbar action still opens the
+        # panel rather than replacing the collector page.
+        assert panel_options["enabled"] is True
+        assert library.evaluate("async () => chrome.sidePanel.getPanelBehavior()")["openPanelOnActionClick"] is False
         internal_page_count = len(session.context.pages)
         library.locator("#open-curated").click()
         expect(library).to_have_url(f"chrome-extension://{session.extension_id}/curated.html")

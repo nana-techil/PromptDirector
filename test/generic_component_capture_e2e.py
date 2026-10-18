@@ -2,6 +2,7 @@
 from pathlib import Path
 from playwright.sync_api import expect
 from e2e_support import extension_session
+from generic_capture_template_details_e2e import injected
 from page_capture_e2e import PNG
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ with extension_session('pd-component-capture-') as run:
     page = run.context.new_page()
     page.goto(ORIGIN + '/work')
     extract = panel.evaluate("async()=>String((await import('./page-capture.js')).collectPageCaptureSnapshot)")
-    picker = (ROOT / 'extension/page-content-picker.js').read_text().replace('export function', 'function', 1)
+    picker = injected('page-content-picker.js', 'pickPageContent')
     page.add_script_tag(content=picker)
     def capture(options):
         return page.evaluate('async ({source,options}) => await (0,eval)(`(${source})`)(options)', {'source': extract, 'options': options})

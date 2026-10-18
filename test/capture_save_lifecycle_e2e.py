@@ -2,10 +2,11 @@
 import hashlib
 import json
 from playwright.sync_api import expect
-from capture_organization_progress_e2e import main as with_download
+from capture_organization_progress_e2e import emulate_capture_page_window, main as with_download
 
 
 def scenario(run, page, worker, out, video):
+    emulate_capture_page_window(run)
     page.close()
     page=run.open_page('collector.html')
     expect(page.locator('#feedback')).to_contain_text('49%',timeout=10000)

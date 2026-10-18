@@ -1,9 +1,13 @@
 """Visible library cards must play animated originals, including with a stale still thumbnail."""
 import base64
+import json
+import re
 import sys
 from pathlib import Path
 from playwright.sync_api import expect
 from e2e_support import extension_session, base_entry
+
+ORIGIN = 'https://wchao6891.github.io'
 
 def assert_animates(image, page, label):
     first=image.screenshot()
@@ -15,6 +19,18 @@ def assert_animates(image, page, label):
     raise AssertionError(label+': displayed pixels do not animate')
 
 with extension_session('pd-animation-preview-', viewport={'width':1440,'height':900}) as run:
+    # The capture sidebar is a panel of the captured page's window, so real focus
+    # stays on the source page. E2E loads the sidebar as its own tab; pin its
+    # active-tab lookup to the page it is capturing so the preview belongs to it.
+    run.context.add_init_script("""
+      (() => {
+        if (location.protocol !== 'chrome-extension:' || !location.pathname.endsWith('/collector.html')) return;
+        const query = chrome.tabs.query.bind(chrome.tabs);
+        chrome.tabs.query = async info => info && info.active
+          ? [{ id: 999, windowId: 1, active: true, status: 'complete', url: %s }]
+          : query(info);
+      })();
+    """ % json.dumps(ORIGIN + '/animations'))
     setup=run.open_page('collector.html')
     files=[{'name':Path(p).name,'data':base64.b64encode(Path(p).read_bytes()).decode()} for p in sys.argv[1:]]
     if not files:
@@ -50,12 +66,12 @@ with extension_session('pd-animation-preview-', viewport={'width':1440,'height':
     for i,f in enumerate(files):
         card=page.locator('[data-entry-id="animation-'+str(i)+'"].case-card');expect(card).to_be_visible()
         image=card.locator('img').first
-        expect(image).to_have_attribute('src',__import__('re').compile('blob:'))
+        expect(image).to_have_attribute('src',re.compile('blob:'))
         captured=image.evaluate('async image=>{const b=await (await fetch(image.src)).blob();return new Promise(resolve=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(",")[1]);r.readAsDataURL(b)})}')
         assert captured==f['data'],f['name']+': the card uses a static derivative instead of the animated original'
         assert_animates(image,page,f['name'])
     print('PASS: animated originals play in visible library cards even when old static thumbnails exist; original bytes retained',len(files))
-    origin='https://wchao6891.github.io'
+    origin=ORIGIN
     def route(r):
         path=r.request.url.split(origin)[-1]
         if path.endswith('.webp'):

@@ -230,7 +230,9 @@ def main() -> None:
         assert any(asset.get("kind") == "video" and asset["sourceUrl"].endswith("/film.mp4") and asset['storageMode'] == 'managed' and asset['byteSize'] == len(video_bytes) for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert any(asset.get("kind") == "document" and asset.get("mimeType") == "application/pdf" for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert not any(asset.get("sourceUrl", "").endswith("/unsafe-package.zip") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
-        assert media_saved[0]["sourceFacts"]["captureScope"] == "document", media_saved[0]
+        # The reader's own article + appendix picks keep the exact chosen scope,
+        # which this save must record instead of claiming a whole-document scan.
+        assert media_saved[0]["sourceFacts"]["captureScope"] == "selection", media_saved[0]
         assert media_saved[0]["sourceFacts"]["pageType"] == "article", media_saved[0]
         assert media_saved[0]["sourceFacts"]["extractionMethod"] == "page", media_saved[0]
         library = run.open_page("library.html", wait_until="networkidle")

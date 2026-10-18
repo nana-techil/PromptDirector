@@ -76,7 +76,12 @@ try:
             template=[b for b in matches['codeBlocks'] if b['module']['selector'] not in dialog_selectors]
             assert len(template)==3,template
             bundle=call('read_capture',{'captureId':prepared['captureId'],'expectedRevision':revision,'part':'source','selectors':[block['selector'] for block in template],'length':3})
-            assert bundle['revision']==revision+1, 'one scene read freezes every source under one revision'
+            # One multi-selector read freezes every requested source under the same
+            # revision. Reading additional independent sources does not edit the
+            # preview, so the revision only changes when a frozen original is replaced.
+            assert [source['selector'] for source in bundle['sources']]==[block['selector'] for block in template],bundle
+            assert all(source['totalCharacters'] for source in bundle['sources']),bundle
+            assert bundle['revision']==revision,(bundle.get('revision'),revision)
             revision=bundle['revision']
             for block in template:
                 refs.append({'selector':block['selector'],'target':'prompt'});texts.append(page.locator(block['selector']).text_content())
