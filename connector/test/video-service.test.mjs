@@ -123,7 +123,8 @@ for (const reason of ['timeout', 'space']) test(`native ${reason} abort keeps it
     } });
   try {
     await assert.rejects(service.request('download', { url: 'https://www.bilibili.com/video/BVtest/',
-      streams: { videoUrl: 'https://a.bilivideo.com/video' }, maxBytes: 10, budget: { maxDurationMs: 5 } }),
+      streams: { videoUrl: 'https://a.bilivideo.com/video' }, maxBytes: 10,
+      ...(reason === 'timeout' ? { budget: { maxDurationMs: 5 } } : {}) }),
       { code: reason === 'space' ? 'video_staging_exceeded' : 'video_timeout' });
   } finally { await service.close(); }
 });
