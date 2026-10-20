@@ -1,4 +1,4 @@
-"""Reload settings after a manual installation; native availability is a fixture.
+"""Reload settings after a manual installation; native availability and macOS are fixtures.
 
 The settings UI, background message route and durable setup state are real.
 No system install, real-library write or media download is performed.
@@ -32,6 +32,7 @@ def main():
           if (!state.fixtureNativeStatus) throw Error('Host unavailable');
           return state.fixtureNativeStatus;
         }, platform:""")
+        source = source.replace('platform: () => chrome.runtime.getPlatformInfo(),', "platform: async () => ({os:'mac'}),")
         source = source.replace('resume: () => captureSaveTasks.resumeVideo(),', """resume: async () => {
           const s=await chrome.storage.local.get('fixtureResumes');
           await chrome.storage.local.set({fixtureResumes:(s.fixtureResumes||0)+1});

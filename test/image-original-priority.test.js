@@ -52,3 +52,14 @@ test('Liblib, Krea and Higgsfield thumbnail-only payloads are not labelled as or
     assert.equal(normalized.media[0].sourceKind,'current', JSON.stringify(payload));
   }
 });
+
+test('a cross-frame video source keeps its concrete element provenance when the same URL has a generic fallback', () => {
+  const url = 'https://example.com/film.mp4';
+  const candidate = normalizePageCaptureCandidate({canonicalUrl:'https://example.com/work',media:[{
+    id:'film',kind:'video',url,width:1920,height:1080,sourceKind:'source',
+    variants:[{url,sourceKind:'source'},{url,sourceKind:'video-element'}]
+  }]});
+  assert.equal(candidate.media[0].sourceKind,'video-element');
+  assert.equal(candidate.media[0].url,url);
+  assert.deepEqual(candidate.media[0].variants.map(v=>v.url),[url]);
+});

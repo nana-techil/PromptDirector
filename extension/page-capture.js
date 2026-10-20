@@ -3299,8 +3299,10 @@ function normalizeMediaVariants(value = {}) {
       }
     }
   }
+  const specificUrls = new Set(variants.filter(variant => variant.sourceKind !== "source").map(variant => variant.url));
   const uniqueUrls = new Set();
-  return variants.sort((left, right) => mediaVariantScore(right) - mediaVariantScore(left) || left.order - right.order)
+  return variants.filter(variant => variant.sourceKind !== "source" || !specificUrls.has(variant.url))
+    .sort((left, right) => mediaVariantScore(right) - mediaVariantScore(left) || left.order - right.order)
     .filter(variant => {
       if (uniqueUrls.has(variant.url)) return false;
       uniqueUrls.add(variant.url);

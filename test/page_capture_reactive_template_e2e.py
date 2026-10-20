@@ -72,6 +72,11 @@ def main():
             ('zh-CN','手选范围已失效，请在当前页面重新选择一个案例')]:
             panel.evaluate("locale=>chrome.storage.local.set({uiPreferences:{locale,theme:'dark',motion:'reduced'}})",locale)
             panel.reload(wait_until='networkidle')
+            # Each locale checks a fresh explicit pick. A prior or automatic
+            # preview is now retained by supplementation until explicitly closed.
+            if panel.locator('#page-capture').is_visible():
+                panel.locator('#page-capture-cancel').click()
+                expect(panel.locator('#page-capture')).to_be_hidden()
             source.bring_to_front()
             panel.locator('#start-selection').evaluate('button=>button.click()')
             expect(source.locator('#promptdirector-content-picker')).to_be_attached()

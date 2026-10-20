@@ -71,7 +71,14 @@ with extension_session('pd-component-capture-') as run:
     assert 'all six shots' in broad['html'] and 'Unrelated' not in broad['html'], broad
     # The actual extension preview and original save/readback on a clean profile.
     run.seed_storage(panel, {'entries':[], 'uiPreferences':{'theme':'dark','motion':'reduced'}, 'capturePermissionOnboarding':{'version':1,'acknowledgedAt':'2026-10-10T00:00:00Z'}})
+    # Start the single-selection scenario with no automatic preview to append to.
+    page.goto('about:blank')
+    panel.bring_to_front()
     panel.reload(wait_until='networkidle')
+    panel.evaluate("async()=>{await import('./collector.js');await chrome.tabs.query({active:true,currentWindow:true})}")
+    expect(panel.locator('#normal-start')).to_be_visible()
+    page.goto(ORIGIN + '/work', wait_until='networkidle')
+    page.add_script_tag(content=picker)
     page.bring_to_front()
     panel.evaluate("()=>document.querySelector('#start-selection').click()")
     expect(page.locator('#promptdirector-content-picker')).to_be_attached()
