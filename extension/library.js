@@ -882,14 +882,13 @@ elements.uiLocale.value = uiPreferences.locale;
 bindDiagnosticControls({
   controls: [elements.copyAnalysisDiagnostics], toggle: document.querySelector('#ui-diagnostics'), preferences: uiPreferences,
   save: async change => (uiPreferences = await updateUiPreferences(change)),
-  onError: error => transientFeedback.show(elements.librarySettingsFeedback, translateUiMessage(error.message), { error: true })
+  onError: error => transientFeedback.show(document.querySelector('#diagnostic-settings-feedback'), translateUiMessage(error.message), { error: true })
 });
 bindAppearanceControls({
-  dark: elements.uiTheme, system: document.querySelector('#ui-theme-system'), motion: elements.uiMotion,
+  theme: elements.uiTheme, motion: elements.uiMotion,
   getPreferences: () => uiPreferences,
   save: async change => { uiPreferences = await updateUiPreferences(change); },
   onError: error => transientFeedback.show(elements.librarySettingsFeedback, translateUiMessage(error.message), { error: true }),
-  systemDark: matchMedia('(prefers-color-scheme: dark)')
 });
 mountSelectionIndicator(document.querySelector('.gallery-view-switch'), { selector: '[data-gallery-view]', attribute: 'aria-pressed' });
 mountSelectionIndicator(document.querySelector('#settings-dialog .settings-tabs'), { selector: '[data-settings-tab]', attribute: 'aria-selected', underline: true });
@@ -901,6 +900,7 @@ void refreshExtensionUpdateStatus().then(async () => {
     localUpgradeFeedback = result.message;
     localUpgradeCleanupRequired = result.cleanupRequired;
     renderExtensionUpdateStatus(extensionUpdateStatus);
+    if (localUpgradeFeedback) showUpdateFeedback(localUpgradeFeedback);
   } catch (error) { showUpdateFeedback(error.message, true); }
 });
 try {
@@ -4361,8 +4361,9 @@ async function refreshExtensionUpdateStatus() {
     const response = await chrome.runtime.sendMessage({ type: "GET_EXTENSION_UPDATE_STATUS" });
     if (!response?.ok || !response.status) throw new Error(response?.status?.lastError || response?.message || "无法读取更新状态");
     renderExtensionUpdateStatus(response.status);
-  } catch (error) {
-    if (!extensionUpdateStatus) renderExtensionUpdateStatus(null, error?.message || "无法读取更新状态");
+  } catch {
+    // Passive status reads never replay a previous network error.
+    if (!extensionUpdateStatus) renderExtensionUpdateStatus(null);
   }
 }
 
@@ -4375,8 +4376,8 @@ async function checkExtensionUpdate() {
     if (response?.status) renderExtensionUpdateStatus(response.status);
     if (!response?.ok) throw new Error(response?.status?.lastError || response?.message || "检查更新失败");
     showUpdateFeedback(updateCheckFeedback(response.status));
-  } catch (error) {
-    showUpdateFeedback(error?.message || "检查更新失败", true);
+  } catch {
+    showUpdateFeedback(navigator.onLine ? "暂时无法检查更新，请稍后重试" : "当前未联网，联网后再检查更新");
   } finally {
     elements.checkExtensionUpdate.disabled = false;
     elements.checkExtensionUpdate.removeAttribute("aria-busy");
@@ -4392,6 +4393,7 @@ async function applyExtensionUpdate() {
         localUpgradeCleanupRequired = false;
         localUpgradeFeedback = t("已清理升级临时文件");
         renderExtensionUpdateStatus(extensionUpdateStatus);
+        showUpdateFeedback(localUpgradeFeedback);
       }
     } catch (error) { showUpdateFeedback(error.message, true); }
     finally { elements.applyExtensionUpdate.disabled = false; }
@@ -4423,7 +4425,7 @@ async function applyExtensionUpdate() {
   }
 }
 
-function renderExtensionUpdateStatus(nextStatus, fallbackError = "") {
+function renderExtensionUpdateStatus(nextStatus) {
   if (nextStatus) extensionUpdateStatus = { ...(extensionUpdateStatus ?? {}), ...nextStatus };
   const status = extensionUpdateStatus;
   elements.aboutVersion.textContent = `PromptDirector ${status?.currentVersion || chrome.runtime.getManifest().version}`;
@@ -4437,7 +4439,7 @@ function renderExtensionUpdateStatus(nextStatus, fallbackError = "") {
   elements.settingsUpdateBadge.hidden = !hasUpdate;
   elements.openSettings.setAttribute("aria-label", t(hasUpdate ? "设置，有可用更新" : "设置"));
   elements.openSettings.title = t(hasUpdate ? "设置，有可用更新" : "设置");
-  showUpdateFeedback(status?.lastError || fallbackError || localUpgradeFeedback, Boolean(status?.lastError || fallbackError));
+  // Status notifications update controls only; feedback belongs to the action that requested it.
 }
 
 async function showExtensionAbout() {

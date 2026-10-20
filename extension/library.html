@@ -352,7 +352,7 @@
       <header class="data-safety-header ui-dialog-header"><div class="ui-dialog-heading"><h2 data-i18n="设置">设置</h2></div><button id="settings-close" class="icon-button" type="button" aria-label="关闭设置" data-i18n-aria-label="关闭设置" title="关闭设置" data-i18n-title="关闭设置"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-x"></use></svg></button></header>
       <div class="data-safety-body settings-shell">
         <nav class="settings-tabs" aria-label="设置视图" data-i18n-aria-label="设置视图">
-          <button type="button" data-settings-tab="general" aria-selected="true" data-i18n="界面与资料库">界面与资料库</button>
+          <button type="button" data-settings-tab="general" aria-selected="true" data-i18n="通用">通用</button>
           <button type="button" data-settings-tab="ai" aria-selected="false" data-i18n="AI 配置">AI 配置</button>
           <button type="button" data-settings-tab="rules" aria-selected="false" data-i18n="分析与创作规则">分析与创作规则</button>
           <button type="button" data-settings-tab="shortcuts" aria-selected="false" data-i18n="键盘快捷键">键盘快捷键</button>
@@ -387,9 +387,8 @@
         <section id="settings-general-panel" class="settings-panel compact-general" data-settings-panel="general">
           <section class="setting-section appearance-grid">
             <label><span data-i18n="界面语言">界面语言</span><select id="ui-locale"><option value="system" data-i18n="跟随浏览器">跟随浏览器</option><option value="zh-CN" data-i18n="中文">中文</option><option value="en">English</option></select></label>
-            <div class="appearance-field"><span data-i18n="主题">主题</span><div class="appearance-switches"><label><input id="ui-theme" class="ui-switch" type="checkbox" role="switch"><span data-i18n="深色">深色</span></label><label><input id="ui-theme-system" class="ui-switch" type="checkbox" role="switch"><span data-i18n="跟随系统">跟随系统</span></label></div></div>
+            <label><span data-i18n="主题">主题</span><select id="ui-theme"><option value="system" data-i18n="跟随系统">跟随系统</option><option value="light" data-i18n="浅色">浅色</option><option value="dark" data-i18n="深色">深色</option></select></label>
             <div class="appearance-field"><span data-i18n="动态效果">动态效果</span><div class="appearance-switches"><label><input id="ui-motion" class="ui-switch" type="checkbox" role="switch"><span data-i18n="减少动态效果">减少动态效果</span></label></div></div>
-            <div class="appearance-field"><label for="ui-diagnostics" data-i18n="开发诊断">开发诊断</label><input id="ui-diagnostics" class="ui-switch" type="checkbox" role="switch"></div>
           </section>
           <section class="setting-section">
             <div class="setting-section-heading"><h3 data-i18n="资料库">资料库</h3></div>
@@ -407,13 +406,15 @@
           </section>
           <section class="setting-section">
             <div class="setting-section-heading"><h3 data-i18n="视频采集">视频采集</h3></div>
-            <div class="setting-row"><label for="video-online-only" data-i18n="仅保存在线播放">仅保存在线播放</label><input id="video-online-only" class="ui-switch" type="checkbox" role="switch"></div>
-            <div class="capture-permission-row"><strong data-i18n="本机视频解析">本机视频解析</strong><span id="video-component-status" role="status" data-i18n="未检查">未检查</span><button id="connect-video-component" class="button-secondary" type="button" data-i18n="安装视频组件">安装视频组件</button></div>
+            <div class="video-capture-controls">
+              <div class="setting-row"><label for="video-online-only" data-i18n="仅保存在线播放">仅保存在线播放</label><input id="video-online-only" class="ui-switch" type="checkbox" role="switch"></div>
+              <div class="capture-permission-row"><strong data-i18n="本机视频解析">本机视频解析</strong><span id="video-component-status" role="status" data-i18n="未检查">未检查</span><button id="connect-video-component" class="button-secondary" type="button" data-i18n="安装视频组件">安装视频组件</button></div>
+            </div>
             <p id="video-capture-settings-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
           </section>
           <section class="setting-section">
             <div class="capture-permission-row agent-connection-row"><strong data-i18n="Agent 连接">Agent 连接</strong><span id="agent-connection-status" role="status" data-i18n="未连接">未连接</span><div class="agent-connection-actions"><button id="copy-agent-connection" class="button-secondary" type="button" data-i18n="复制连接指令">复制连接指令</button><button id="toggle-agent-connection" class="button-secondary" type="button" data-i18n="启用">启用</button></div></div>
-            <p id="agent-connection-help" class="data-safety-feedback ui-task-feedback" hidden data-i18n="复制连接指令发给你的 Agent，由它完成安装和配对。需要浏览器授权时点击启用；断开后停止接收新请求，已提交任务继续处理。">复制连接指令发给你的 Agent，由它完成安装和配对。需要浏览器授权时点击启用；断开后停止接收新请求，已提交任务继续处理。</p>
+            <p id="agent-connection-help" class="setting-help" hidden data-i18n="复制连接指令，交给 Agent 完成安装与配对。">复制连接指令，交给 Agent 完成安装与配对。</p>
             <p id="agent-connection-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
           </section>
           <section id="data-safety-dialog" class="setting-section settings-data-safety">
@@ -435,15 +436,6 @@
               </div>
             </details>
           </section>
-          <footer class="settings-about">
-            <input id="local-extension-package" type="file" accept=".zip,application/zip" hidden />
-            <strong id="about-version">PromptDirector</strong>
-            <span id="update-status" role="status"></span>
-            <button id="check-extension-update" class="icon-button compact-icon" type="button" aria-label="检查更新" data-i18n-aria-label="检查更新" title="检查更新" data-i18n-title="检查更新"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg></button>
-            <button id="apply-extension-update" type="button" hidden></button>
-            <button id="open-about" class="about-trigger" type="button" data-i18n="关于">关于</button>
-            <p id="update-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
-          </footer>
         </section>
         <section id="settings-dedupe-panel" class="settings-panel settings-dedupe-panel" data-settings-panel="dedupe" aria-label="案例排重" data-i18n-aria-label="案例排重" hidden>
           <div class="settings-subview-heading"><button id="dedupe-back" class="icon-button" type="button" aria-label="返回任务与维护" title="返回任务与维护" data-i18n-aria-label="返回任务与维护" data-i18n-title="返回任务与维护"><svg class="ui-icon" aria-hidden="true"><use href="assets/ui-icons.svg#icon-arrow-left"></use></svg></button><h3 data-i18n="案例排重">案例排重</h3></div>
@@ -478,6 +470,7 @@
           </div>
           <div class="batch-card"><div class="task-heading"><div class="task-copy"><h3 data-i18n="案例排重">案例排重</h3><p data-i18n="查找图片或视频原件完全相同的案例。">查找图片或视频原件完全相同的案例。</p></div><button id="inspect-duplicates" class="button-secondary" type="button" data-i18n="查看重复案例">查看重复案例</button></div></div>
           <div id="legacy-candidates" class="batch-card"></div>
+          <section class="settings-diagnostics"><label class="appearance-switches" for="ui-diagnostics"><span data-i18n="开发诊断">开发诊断</span><input id="ui-diagnostics" class="ui-switch" type="checkbox" role="switch"></label><p id="diagnostic-settings-feedback" class="ui-task-feedback" role="status"></p></section>
         </section>
         <section id="settings-ai-panel" class="settings-panel settings-ai-panel" data-settings-panel="ai" hidden>
           <section class="ai-routing-card">
@@ -566,6 +559,15 @@
 
           </form>
         </section>
+        <footer class="settings-about">
+          <input id="local-extension-package" type="file" accept=".zip,application/zip" hidden />
+          <div class="settings-version"><strong id="about-version">PromptDirector</strong><span id="update-status" role="status"></span><button id="open-about" class="about-trigger" type="button" data-i18n="关于">关于</button></div>
+          <div class="settings-update-actions">
+            <button id="check-extension-update" class="button-secondary" type="button" aria-label="检查更新" data-i18n-aria-label="检查更新" title="检查更新" data-i18n-title="检查更新"><svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="assets/ui-icons.svg#icon-refresh-cw"></use></svg><span data-i18n="检查更新">检查更新</span></button>
+            <button id="apply-extension-update" type="button" hidden></button>
+          </div>
+          <p id="update-feedback" class="data-safety-feedback ui-task-feedback" role="status" aria-live="polite"></p>
+        </footer>
       </div>
     </dialog>
 

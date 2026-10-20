@@ -18,19 +18,25 @@ export function appendCaptureCandidate(candidate, addition, selection, { include
     remapped.set(item.id, block.id);
   }
   for (const item of addition.media || []) {
-    const existing = media.find(m => m.id === item.id || item.localAssetId && m.localAssetId === item.localAssetId
+    const identities = new Set([item.url, ...(item.variants || []).map(v => v.url)].filter(Boolean).map(pageCaptureMediaIdentity).filter(Boolean));
+    const existing = media.find(m => m.kind === (item.kind || "image") && (item.localAssetId && m.localAssetId === item.localAssetId
+      || item.localTransferId && m.localTransferId === item.localTransferId
       || item.contentHash && m.contentHash === item.contentHash
-      || item.url && m.url && pageCaptureMediaIdentity(item.url) === pageCaptureMediaIdentity(m.url));
+      || !item.localAssetId && !m.localAssetId && !item.localTransferId && !m.localTransferId && [m.url, ...(m.variants || []).map(v => v.url)]
+        .some(url => url && identities.has(pageCaptureMediaIdentity(url)))));
     if (existing) {
       remapped.set(item.id, existing.id);
-      // Explicitly adding a selected reply includes its already discovered
-      // attachments as well. Ordinary draft merges keep earlier choices.
+      const index = media.indexOf(existing);
+      media[index] = { ...existing,
+        variants: [...(existing.variants || []), existing, ...(item.variants || []), item],
+        originalPrompt: existing.originalPrompt || item.originalPrompt || '',
+        originalWorkUrl: existing.originalWorkUrl || item.originalWorkUrl || '',
+        posterUrl: existing.posterUrl || item.posterUrl || '' };
+      // A manual pick includes its already discovered attachments.
+      // Ordinary draft merges keep earlier exclusions.
       if (includeExistingMedia) {
         mediaIds.add(existing.id);
-        const index = media.indexOf(existing);
-        media[index] = { ...existing, placement: 'inline',
-          originalWorkUrl: existing.originalWorkUrl || item.originalWorkUrl || '',
-          posterUrl: existing.posterUrl || item.posterUrl || '' };
+        media[index].placement = 'inline';
       }
       continue;
     }

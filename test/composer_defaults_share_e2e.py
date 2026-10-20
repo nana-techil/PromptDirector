@@ -51,7 +51,7 @@ def main():
             if theme == 'light':
                 page.locator('[data-settings-tab="general"]').click()
                 with page.expect_navigation(wait_until='networkidle'):
-                    page.locator('#ui-theme').uncheck()
+                    page.locator('#ui-theme').select_option('light')
                 page.locator('#open-settings').click()
                 page.locator('[data-settings-tab="rules"]').click()
                 page.locator('[data-analysis-kind="composer"]').click()

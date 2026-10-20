@@ -86,7 +86,7 @@ export function renderSharePreviewHtml(
   </header>
 
   <aside class="import-guide">
-    <p><strong data-zh="这是可离线浏览的只读分享包。" data-en="This is a read-only package that works offline.">${locale === "en" ? "This is a read-only package that works offline." : "这是可离线浏览的只读分享包。"}</strong> <span data-zh="要整理、编辑或继续创作，请原样保留 ZIP，并在 PromptDirector 中打开“设置 → 界面与资料库 → 导入分享包”。" data-en="To organize, edit, or continue creating, keep the ZIP intact and open Settings → Interface & Library → Import shared package in PromptDirector.">${locale === "en" ? "To organize, edit, or continue creating, keep the ZIP intact and open Settings → Interface & Library → Import shared package in PromptDirector." : "要整理、编辑或继续创作，请原样保留 ZIP，并在 PromptDirector 中打开“设置 → 界面与资料库 → 导入分享包”。"}</span></p>
+    <p><strong data-zh="这是可离线浏览的只读分享包。" data-en="This is a read-only package that works offline.">${locale === "en" ? "This is a read-only package that works offline." : "这是可离线浏览的只读分享包。"}</strong> <span data-zh="要整理、编辑或继续创作，请原样保留 ZIP，并在 PromptDirector 中打开“添加 → 导入本机资料”。" data-en="To organize, edit, or continue creating, keep the ZIP intact and open Add → Import local materials in PromptDirector.">${locale === "en" ? "To organize, edit, or continue creating, keep the ZIP intact and open Add → Import local materials in PromptDirector." : "要整理、编辑或继续创作，请原样保留 ZIP，并在 PromptDirector 中打开“添加 → 导入本机资料”。"}</span></p>
     <div class="product-actions">${installAction}${sourceAction}</div>
   </aside>
 

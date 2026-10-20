@@ -84,12 +84,11 @@ def main() -> None:
             });"""
         )
         library = session.open_page("library.html", wait_until="networkidle")
-        # 2026-10-11 confirmed appearance model: the manual light/dark control is a switch
-        # (checked = dark), next to the "follow system" switch.
+        # The single theme selector uses the stored light/dark/system choices.
         library.locator("#ui-theme").evaluate(
             """input => {
-              if (!input.checked) {
-                input.checked = true;
+              if (input.value !== 'dark') {
+                input.value = 'dark';
                 input.dispatchEvent(new Event('change', {bubbles: true}));
               }
             }"""
@@ -251,7 +250,7 @@ def main() -> None:
             library.screenshot(path=str(Path(os.environ['PD_E2E_ARTIFACT_DIR']) / 'similar-refreshed-390.png'))
         library.locator("#ui-theme").evaluate(
             """input => {
-              input.checked = false;
+              input.value = 'light';
               input.dispatchEvent(new Event('change', {bubbles: true}));
             }"""
         )

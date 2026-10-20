@@ -35,10 +35,10 @@ with extension_session('pd-six-surfaces-', viewport={'width':1440,'height':960})
  for width,height,locale,theme in [(1440,960,'zh-CN','dark'),(390,844,'en','light')]:
   page.set_viewport_size({'width':width,'height':height})
   page.locator('[data-settings-tab="general"]').click()
-  # Theme is a switch (dark on); language stays a multi-choice select.
-  if page.locator('#ui-theme').is_checked()!=(theme=='dark'):
+  # Theme and language are explicit choices.
+  if page.locator('#ui-theme').input_value()!=theme:
    with page.expect_navigation(wait_until='networkidle'):
-    page.locator('#ui-theme').set_checked(theme=='dark')
+    page.locator('#ui-theme').select_option(theme)
    page.locator('#open-settings').click()
    page.locator('[data-settings-tab="general"]').click()
   if page.locator('#ui-locale').input_value()!=locale:

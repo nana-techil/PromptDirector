@@ -28,9 +28,9 @@ def main():
             permission:async()=>false,send:async()=>{throw Error('Denied permission must not start a download')}});
           fixtureView.render({phase:'idle'});
         }""")
-        page.locator('#video-component-setup button').click()
+        page.locator('#video-component-setup [data-video-component-action=manual]').click()
         expect(page.locator('#video-component-setup')).to_contain_text('未开启组件连接权限')
-        expect(page.locator('#video-component-setup button')).to_have_text('开启权限')
+        expect(page.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('开启权限')
         page.screenshot(path=str(evidence / 'permission-denied.png'))
         task = page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_SAVE_TASK'})).task")
         assert task['status'] == 'waiting-component' and task['input']['batch']['candidates'][0]['contentText'] == 'Full original source'
@@ -41,14 +41,14 @@ def main():
             open:async()=>{throw Error('Installer file was moved. Download it again.')},showDownloads:()=>fixtureCalls.push('show-downloads')});
           fixtureView.render({phase:'idle'});
         }""")
-        page.locator('#video-component-setup button').click()
-        expect(page.locator('#video-component-setup button')).to_have_text('打开安装包')
-        page.locator('#video-component-setup button').click()
-        expect(page.locator('#video-component-setup button')).to_have_text('重新下载')
+        page.locator('#video-component-setup [data-video-component-action=manual]').click()
+        expect(page.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('打开安装包')
+        page.locator('#video-component-setup [data-video-component-action=manual]').click()
+        expect(page.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('重新下载')
         for width in [390, 1280]:
             page.set_viewport_size({'width':width,'height':850})
             page.screenshot(path=str(evidence / f'installer-moved-{width}.png'))
-        page.locator('#video-component-setup button').click()
+        page.locator('#video-component-setup [data-video-component-action=manual]').click()
         expect(page.locator('#video-component-setup')).to_contain_text('正在下载安装包')
         calls = page.evaluate('fixtureCalls')
         assert calls[-1]['restart'] is True, calls
@@ -61,11 +61,11 @@ def main():
               window.fixtureView=createVideoComponentView(document.querySelector('#video-component-setup'),{primary:true,showDownloads:()=>fixtureCalls.push('show-downloads')});
               fixtureView.render({phase:'review'});
             }""")
-            expect(page.locator('#video-component-setup button')).to_have_text('View downloads' if locale == 'en' else '查看下载')
+            expect(page.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('View downloads' if locale == 'en' else '查看下载')
             for width in [390, 1280]:
                 page.set_viewport_size({'width':width,'height':850})
                 page.screenshot(path=str(evidence / f'review-{locale}-{width}.png'))
-            page.locator('#video-component-setup button').click()
+            page.locator('#video-component-setup [data-video-component-action=manual]').click()
             assert page.evaluate('fixtureCalls.at(-1)') == 'show-downloads'
             page.evaluate("fixtureView.render({phase:'installing',downloadId:88})")
             expect(page.locator('#video-component-setup')).to_contain_text('Extract the package' if locale == 'en' else '解压安装包')

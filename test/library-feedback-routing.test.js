@@ -53,13 +53,13 @@ test('batch errors stay inside the current analysis dialog above settings', () =
   assert.deepEqual(view.messages, [{ target: 'batch', message: 'preview failed', error: true }]);
 });
 
-test('failed appearance writes display inside open settings and restore the saved switch value', async () => {
+test('failed appearance writes display inside open settings and restore the saved theme choice', async () => {
   const view = fixture({ settingsOpen: true });
   vm.runInContext(source.slice(appearance.start, appearance.end), view.context);
-  view.elements.uiTheme.checked = false;
+  view.elements.uiTheme.value = 'light';
   view.elements.uiTheme.dispatchEvent(new Event('change'));
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(view.messages, [{ target: 'settings', message: 'preference write failed', error: true }]);
-  assert.equal(view.elements.uiTheme.checked, true);
+  assert.equal(view.elements.uiTheme.value, 'dark');
   assert.equal(view.elements.uiTheme.disabled, false);
 });

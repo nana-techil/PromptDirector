@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFile, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve, win32 } from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { join, resolve } from 'node:path';
+import { windowsVideoRegistry } from '../../connector/register-video.mjs';
 import { isMain } from '../../connector/is-main.mjs';
 
 const exists = async path => {
@@ -17,21 +16,8 @@ export async function checkSourceRegistration({ root, nativeDirectory, removed =
   const windows = process.platform === 'win32';
   const registration = join(nativeDirectory || (windows ? root : join(homedir(), 'Library/Application Support/Google/Chrome/NativeMessagingHosts')), 'com.promptdirector.video.json');
   if (windows) {
-    assert(process.env.SystemRoot, 'Windows system directory is required');
-    const script = `$ErrorActionPreference='Stop'
-$found=@()
-foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32,[Microsoft.Win32.RegistryView]::Registry64)) {
- $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser,$view)
- try {
-  $key=$base.OpenSubKey('Software\\Google\\Chrome\\NativeMessagingHosts\\com.promptdirector.video')
-  if ($null -eq $key) { $found += $null }
-  else { try { $found += $key.GetValue('') } finally { $key.Dispose() } }
- } finally { $base.Dispose() }
-}
-ConvertTo-Json -InputObject @($found) -Compress`;
-    const { stdout } = await promisify(execFile)(win32.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 30_000 });
-    const actual = JSON.parse(stdout);
+    const snapshots = await windowsVideoRegistry({ registration }).snapshot();
+    const actual = snapshots.map(value => value.hasValue ? value.value : null);
     assert.deepEqual(actual, removed ? [null, null] : [registration, registration], 'Both HKCU views must reflect the actual source installation');
   }
   if (removed) {

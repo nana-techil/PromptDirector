@@ -81,7 +81,7 @@
 
 <p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/guide-assets/v127-maintenance.jpg" alt="设置 → 任务与维护：文字标签补全、资料索引自动补全、案例排重" width="860"></p>
 
-**备份、同步和 Agent，都在设置里。** 在「设置 → 界面与资料库」这一页可以整库备份与恢复、跨设备同步，也能复制 Agent 连接指令交给 Codex、Claude Code 或 WorkBuddy；资料库名称和视频采集也在这里。
+**备份、同步和 Agent，都在设置里。** 在「设置 → 通用」这一页可以整库备份与恢复、跨设备同步，也能复制 Agent 连接指令交给 Codex、Claude Code 或 WorkBuddy；资料库名称和视频采集也在这里。
 
 <p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/guide-assets/v127-settings-video.jpg" alt="设置 → 界面与资料库页：资料库名称、分享保存位置、采集权限与视频采集；Agent 连接、备份与同步在本页下方" width="760"></p>
 

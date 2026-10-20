@@ -97,7 +97,8 @@ jobs:
     name: Packaged Chromium shard ${{ matrix.shard }}
     needs: [plan, package]
     if: needs.plan.outputs.browser == 'true'
-    runs-on: ubuntu-latest
+    # Keep the OS compatible with the pinned Playwright 1.58 browser build.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -126,7 +127,7 @@ jobs:
     name: Linux packaged upgrade
     needs: [plan, package]
     if: needs.plan.outputs.upgrade == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:

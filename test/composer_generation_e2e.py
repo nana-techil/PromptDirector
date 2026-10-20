@@ -8,7 +8,7 @@ from threading import Event, Thread
 from playwright.sync_api import expect
 
 from composer_e2e_support import composer_request_payload, set_composer_reference_media, set_composer_direction
-from e2e_support import ai_configuration_fixture, base_entry, extension_session
+from e2e_support import ai_configuration_fixture, base_entry, extension_session, wait_for_async_condition
 
 
 GENERATED_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -79,16 +79,16 @@ def current_session(page) -> dict:
 
 
 def completed_session(page) -> dict:
-    page.wait_for_function(
+    # Poll the resolved background result, then assert against that same snapshot.
+    return wait_for_async_condition(page,
         """async () => {
           const sessionId = new URL(location.href).searchParams.get('session');
           const response = await chrome.runtime.sendMessage({type: 'GET_COMPOSER_SESSION', sessionId});
           return response?.ok === true && response.session?.activeTurn == null
-            && response.session.messages?.at(-1)?.role === 'assistant';
+            && response.session.messages?.at(-1)?.role === 'assistant' ? response.session : false;
         }""",
         timeout=10_000,
     )
-    return current_session(page)
 
 
 def main() -> None:

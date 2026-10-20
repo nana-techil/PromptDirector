@@ -218,8 +218,7 @@ def main() -> None:
               storedTheme: localStorage.getItem('promptDirectorTheme'),
               storedMotion: localStorage.getItem('promptDirectorMotion'),
               selectedMotion: document.querySelector('#ui-motion').checked,
-              selectedDarkTheme: document.querySelector('#ui-theme').checked,
-              selectedSystemTheme: document.querySelector('#ui-theme-system').checked
+              selectedTheme: document.querySelector('#ui-theme').value
             })"""
         )
         assert migrated == {
@@ -228,8 +227,7 @@ def main() -> None:
             "storedTheme": "light",
             "storedMotion": "reduced",
             "selectedMotion": True,
-            "selectedDarkTheme": False,
-            "selectedSystemTheme": False,
+            "selectedTheme": "light",
         }, migrated
 
         light_tokens = light_page.evaluate(

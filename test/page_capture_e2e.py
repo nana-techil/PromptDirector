@@ -5,7 +5,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect
 
-from e2e_support import extension_session
+from e2e_support import extension_session, wait_for_async_condition
 
 
 ARTICLE = b"""<!doctype html><html><head>
@@ -20,7 +20,7 @@ ARTICLE = b"""<!doctype html><html><head>
 <p>This article contains enough deliberate editorial text to exercise the real injected page capture path. The scanner must produce a preview before anything is stored, and the reader must remain in control of the article text and every media item.</p>
 <p>A second paragraph includes <a href="/evidence">evidence</a> and makes the article boundary unambiguous while keeping navigation, logos, avatars, buttons and advertising outside the saved content.</p>
 <picture><source media="(min-width: 1px)" srcset="/hero-picture-800.png 800w, /hero-picture-2000.png 2000w" sizes="400px">
-<img alt="Primary artwork" src="/hero-400.png" srcset="/hero-400.png 400w, /hero-1600.png 1600w" sizes="400px" style="display:block;width:720px;height:480px"></picture>
+<img alt="Primary artwork" src="/hero-400.png" data-original="/hero-original.png" srcset="/hero-400.png 400w, /hero-1600.png 1600w" sizes="400px" style="display:block;width:720px;height:480px"></picture>
 <img alt="Secondary artwork" src="/secondary-640.png" srcset="/secondary-640.png 640w, /secondary-1280.png 1280w" sizes="400px" style="display:block;width:640px;height:420px">
 <img alt="Deferred artwork" src="/placeholder.png" data-src="/deferred-original.png" style="display:block;width:600px;height:400px">
 <img alt="Animated process" src="/animation.gif" style="display:block;width:480px;height:320px">
@@ -149,8 +149,7 @@ def main() -> None:
         media_labels = collector.locator(".page-capture-article-media").all_text_contents()
         media_sources = collector.locator(".page-capture-article-media img").evaluate_all("nodes => nodes.map(node => node.src)")
         assert len(media_labels) == 5, {"labels": media_labels, "sources": media_sources}
-        assert media_sources[0].endswith("/hero-picture-2000.png"), {"labels": media_labels, "sources": media_sources}
-        assert "候选 2000px" in media_labels[0] and "picture 响应图" in media_labels[0], media_labels
+        assert media_sources[0].endswith("/hero-original.png"), {"labels": media_labels, "sources": media_sources}
         assert media_sources[1].endswith("/secondary-1280.png"), {"labels": media_labels, "sources": media_sources}
         assert "候选 1280px" in media_labels[1], media_labels
         assert "延迟加载原图" in media_labels[2], media_labels
@@ -179,8 +178,8 @@ def main() -> None:
         expect(collector.locator(".page-capture-media-review-group")).to_have_count(0)
         expect(collector.locator("#page-capture-media-review-status")).to_contain_text("5 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
-        # Direct picking replaces the automatic scope, then appends subsequent choices.
-        for selector in ['article', '#appendix']:
+        # The first manual pick must retain the automatic article and its prompt.
+        for selector in ['img[alt="Primary artwork"]', '#appendix']:
             fixture.bring_to_front()
             collector.evaluate("() => document.querySelector('#add-selection').click()")
             expect(fixture.locator('#promptdirector-content-picker')).to_be_attached(timeout=8000)
@@ -200,6 +199,20 @@ def main() -> None:
         expect(collector.locator("#page-capture-media-review-list .page-capture-media-review-item")).to_have_count(6)
         expect(collector.locator("#page-capture-media-review-status")).to_contain_text("6 项媒体")
         expect(collector.locator("#page-capture-save")).to_be_enabled()
+        # Reopening the preview must preserve both the original article and the new pick.
+        wait_for_async_condition(collector, """async url => {
+          const {getLibraryStorage}=await import('./library-storage.js');
+          const batch=(await getLibraryStorage().get('captureAssistantDialog')).captureAssistantDialog?.pages?.[url]?.pendingBatch;
+          const chosen=batch?.candidates.find(c=>c.id===batch.selections[0]?.candidateId);
+          return chosen?.contentText.includes('downloadable production notes') && !chosen.contentText.includes('A second paragraph');
+        }""", arg=fixture_url)
+        fixture.bring_to_front()
+        collector.reload(wait_until="networkidle")
+        expect(collector.locator(".page-capture-item.confirmed")).to_have_count(1, timeout=10000)
+        collector.locator('.page-capture-preview-details').first.evaluate('node=>node.open=true')
+        expect(collector.locator(".page-capture-item.confirmed .page-capture-article")).to_contain_text("downloadable production notes")
+        expect(collector.locator(".page-capture-item.confirmed .page-capture-article")).to_contain_text("This article contains enough")
+        expect(collector.locator(".page-capture-item.confirmed .page-capture-article")).not_to_contain_text("A second paragraph")
         collector.locator("#page-capture-save").click()
         # Successful content is committed immediately; the failed video remains available for retry.
         expect(collector.locator("#page-capture-help")).to_contain_text("有效视频文件", timeout=60000)
@@ -226,13 +239,13 @@ def main() -> None:
         assert block_kinds.count("document") == 1, media_saved[0]
         assert block_kinds.count("link") == 1, media_saved[0]
         assert any(asset["sourceUrl"].endswith("/placeholder.png") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
+        assert any(asset["sourceUrl"].endswith("/hero-original.png") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert any(asset.get("mimeType") == "image/gif" and asset["sourceUrl"].endswith("/animation.gif") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert any(asset.get("kind") == "video" and asset["sourceUrl"].endswith("/film.mp4") and asset['storageMode'] == 'managed' and asset['byteSize'] == len(video_bytes) for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert any(asset.get("kind") == "document" and asset.get("mimeType") == "application/pdf" for asset in media_saved[0]["mediaAssets"]), media_saved[0]
         assert not any(asset.get("sourceUrl", "").endswith("/unsafe-package.zip") for asset in media_saved[0]["mediaAssets"]), media_saved[0]
-        # The reader's own article + appendix picks keep the exact chosen scope,
-        # which this save must record instead of claiming a whole-document scan.
-        assert media_saved[0]["sourceFacts"]["captureScope"] == "selection", media_saved[0]
+        # Supplemental picking retains the original document rather than replacing its provenance.
+        assert media_saved[0]["sourceFacts"]["captureScope"] == "document", media_saved[0]
         assert media_saved[0]["sourceFacts"]["pageType"] == "article", media_saved[0]
         assert media_saved[0]["sourceFacts"]["extractionMethod"] == "page", media_saved[0]
         library = run.open_page("library.html", wait_until="networkidle")

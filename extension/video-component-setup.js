@@ -7,7 +7,7 @@ export const VIDEO_SETUP_ALARM = 'video-component-setup';
 // alarm survives worker suspension; the memory timer keeps an open view responsive.
 export function createVideoComponentSetup({ storage, inspect, platform, homepage, downloads, resume,
   alarms, fetchImpl = fetch, notify = () => {}, now = Date.now, schedule = setTimeout, cancel = clearTimeout }) {
-  let timer, starting, checking = false;
+  let timer, starting, refreshing, checking = false;
   const publish = async state => { await storage.set({ [VIDEO_SETUP_KEY]: state }); await notify(state); return state; };
   const get = async () => (await storage.get(VIDEO_SETUP_KEY))[VIDEO_SETUP_KEY] || { phase: 'idle' };
   const stop = async () => { if (timer) cancel(timer); timer = null; await alarms.clear(VIDEO_SETUP_ALARM); };
@@ -57,7 +57,26 @@ export function createVideoComponentSetup({ storage, inspect, platform, homepage
   }
   return {
     get, check, restore: check,
-    async start({ restart = false } = {}) {
+    async refresh() {
+      if (refreshing) return refreshing;
+      refreshing = (async () => {
+        const state = await get();
+        if (['downloading', 'review', 'installing'].includes(state.phase)) return check();
+        // A visible page refresh probes once, even after a failed download or
+        // manual installation. It never restarts downloads or expired tasks.
+        let result;
+        try { result = await inspect(); } catch { result = {}; }
+        const current = await get();
+        if (JSON.stringify(current) !== JSON.stringify(state)) return current;
+        if (result.available || result.updateRequired) {
+          return publish({ phase: result.updateRequired ? 'update' : 'ready', versions: result.versions });
+        }
+        if (['idle', 'ready', 'update'].includes(state.phase)) return publish({ phase: 'idle' });
+        return state;
+      })();
+      try { return await refreshing; } finally { refreshing = null; }
+    },
+    async start({ restart = false, viaAgent = false } = {}) {
       if (starting) return starting;
       starting = (async () => {
         await stop();
@@ -66,8 +85,15 @@ export function createVideoComponentSetup({ storage, inspect, platform, homepage
           try {
             if ((await inspect()).available) { await publish({ phase: 'ready' }); await resume(); return get(); }
           } catch { /* Offer the complete installer. */ }
-          if (!restart && ['downloading', 'review', 'installing'].includes(current.phase)) { await arm(); return get(); }
+          if (!restart && ['downloading', 'review', 'installing'].includes(current.phase)) {
+            if (viaAgent) await publish({ ...current, viaAgent: true });
+            await arm(); return get();
+          }
           const url = videoComponentDownload((await platform()).os, homepage);
+          if (viaAgent) {
+            await publish({ phase: 'installing', viaAgent: true, startedAt: now() });
+            await arm(); return get();
+          }
           const response = await fetchImpl(url, { method: 'HEAD', signal: AbortSignal.timeout(30_000) });
           if (!response.ok) throw new Error(response.status === 404 ? '视频组件安装包尚未发布，待保存内容已保留' : '暂时无法下载安装包，请稍后重试');
           const downloadId = await downloads.download({ url, saveAs: false });
@@ -80,11 +106,7 @@ export function createVideoComponentSetup({ storage, inspect, platform, homepage
     async continue() {
       await stop();
       const state = await get();
-      await publish({ ...state, phase: state.downloadId ? 'installing' : 'paused', startedAt: now(), checkAttempts: 0 });
-      if (!state.downloadId) {
-        if ((await inspect()).available) { await publish({ phase: 'ready' }); await resume(); }
-        return get();
-      }
+      await publish({ ...state, phase: 'installing', startedAt: now(), checkAttempts: 0 });
       return check();
     },
     stop

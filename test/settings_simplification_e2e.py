@@ -68,7 +68,7 @@ def main():
         expect(p.locator('#analysis-settings-feedback')).to_contain_text('Scope preview failed')
         expect(p.locator('#analysis-batch-summary')).to_have_attribute('aria-busy','false')
         snapshot(p, out/'analysis-preview-failed.png')
-        p.locator('[data-settings-tab=general]').click()
+        p.locator('[data-settings-tab=tasks]').click()
         p.locator('#ui-diagnostics').check()
         p.locator('#settings-close').click()
         p=run.open_page('composer.html',wait_until='networkidle')

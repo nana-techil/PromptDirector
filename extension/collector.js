@@ -119,7 +119,7 @@ const captureAssistantView = installCaptureAssistant({ getBatch: () => pageCaptu
   preserveBatch: () => Boolean(pageCaptureBatch && captureSaveTask?.input?.type === 'COMMIT_PAGE_CAPTURE'),
   switchBatch: batch => {
     pageCaptureAppendBase = null; pageCaptureDetailsBase = null; genericGroupingBase = null;
-    pageCaptureMediaView = null; pageCaptureEditHistory = []; pageCaptureDraftIds = new Set(); manuallyPickedBatchId = '';
+    pageCaptureMediaView = null; pageCaptureEditHistory = []; pageCaptureDraftIds = new Set();
     pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render();
   },
   applyBatch: batch => { pageCaptureBatch = batch ? normalizePageCaptureBatch(batch) : null; render(); } });
@@ -139,7 +139,6 @@ let feedbackTimer = 0;
 let pageCaptureRequestId = "";
 let pageCaptureListRequested = false;
 let pageCaptureEditing = null;
-let manuallyPickedBatchId = "";
 let pageCaptureSupplementRequest = null;
 let pageCaptureCancelling = false;
 let pageCapturePreviewRequest = 0;
@@ -512,18 +511,15 @@ async function extractPageSelection(button) {
       const batch = normalizePageCaptureBatch({ ...response.batch, status: "preview" });
       const candidate = batch.candidates[0];
       if (!candidate?.contentText && !candidate?.media.length) return showFeedback(batch.error || "这个区域没有可保存内容", true);
-      const previousCandidate = previous?.candidates.find(item => item.id === previous.selections[0]?.candidateId);
-      if (previousCandidate && (manuallyPickedBatchId === previous.id || response.supplement === "comments")) {
-        appendToPageCapture(candidate);
+      if (previous) {
+        appendToPageCapture(candidate, { includeExistingMedia: true });
         if (batch.error) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, error: batch.error });
         if (batch.selectionTemplate) pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch, selectionTemplate: batch.selectionTemplate });
         render();
         return;
       }
-      if (previous) pageCaptureEditHistory.push({ batch: structuredClone(previous) });
       pageCaptureBatch = normalizePageCaptureBatch({ ...batch, selections: [{ candidateId: candidate.id,
         selectedTextBlockIds: candidate.textBlocks.map(item => item.id), selectedMediaIds: pageCaptureDefaultMediaIds(candidate), mediaDecision: "pending" }] });
-      manuallyPickedBatchId = pageCaptureBatch.id;
       pageCaptureDraftIds = new Set();
       syncDraftIntoPageCapture();
       render();
@@ -1042,12 +1038,27 @@ function textNode(tagName, value) {
   return node;
 }
 
-function appendToPageCapture(addition) {
+function appendToPageCapture(addition, options = {}) {
   capturePreviewEditVersion++;
   const selection = pageCaptureBatch?.selections[0];
-  if (!selection || pageCaptureBatch.selections.length !== 1) return;
+  if (!pageCaptureBatch) return;
+  if (!selection || pageCaptureBatch.selections.length !== 1) {
+    const addedBatch = normalizePageCaptureBatch({ candidates: [{ ...addition,
+      canonicalUrl: addition.canonicalUrl || pageCaptureBatch.sourceUrl, id: `added:${crypto.randomUUID()}` }] });
+    const added = addedBatch.candidates[0];
+    if (!added) return;
+    pageCaptureEditHistory.push({ batch: structuredClone(pageCaptureBatch), genericBase: genericGroupingBase });
+    genericGroupingBase = null;
+    pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
+      captureMode: selection ? "list" : pageCaptureBatch.captureMode,
+      candidates: [...pageCaptureBatch.candidates, added],
+      selections: [...pageCaptureBatch.selections, { candidateId: added.id,
+        selectedTextBlockIds: added.textBlocks.map(block => block.id),
+        selectedMediaIds: pageCaptureDefaultMediaIds(added), mediaDecision: "confirmed" }] });
+    return;
+  }
   const candidate = pageCaptureBatch.candidates.find(c => c.id === selection.candidateId);
-  const result = appendCaptureCandidate(candidate, addition, selection);
+  const result = appendCaptureCandidate(candidate, addition, selection, options);
   pageCaptureEditHistory.push({ candidateId: candidate.id, candidate: structuredClone(candidate), selection: structuredClone(selection), genericBase: genericGroupingBase });
   genericGroupingBase = null;
   pageCaptureBatch = normalizePageCaptureBatch({ ...pageCaptureBatch,
@@ -1072,7 +1083,7 @@ function confirmPageCaptureCandidate(candidate) {
         selectedMediaIds: pageCaptureDefaultMediaIds(candidate), mediaDecision: "confirmed" }] }))[0];
     pageCaptureBatch = pageCaptureAppendBase;
     pageCaptureAppendBase = null;
-    appendToPageCapture(selected);
+    appendToPageCapture(selected, { includeExistingMedia: true });
     render();
     return;
   }

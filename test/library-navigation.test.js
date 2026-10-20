@@ -26,7 +26,7 @@ test("top navigation keeps search-adjacent actions focused on adding, creating, 
   assert.doesNotMatch(html, /动态视图|save-dynamic-view|dynamic-view-list/);
 });
 
-test("about details are on demand while version stays at the bottom of general settings", async () => {
+test("about details are on demand while version stays at the bottom of settings", async () => {
   const about = html.slice(html.indexOf('<footer class="settings-about"'), html.indexOf("</footer>", html.indexOf('<footer class="settings-about"')));
   const script = await readFile(new URL("../extension/library.js", import.meta.url), "utf8");
   assert.match(about, /id="about-version">PromptDirector</);
