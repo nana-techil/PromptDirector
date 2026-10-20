@@ -55,8 +55,9 @@ export async function sourcePackageFiles(repo = repository) {
   const component = { distribution: 'source', version: VIDEO_COMPONENT.version, extensionId: extensionIdFromPublicKey(manifest) };
   const files = await Promise.all([...VIDEO_SOURCE_FILES, 'docs/VIDEO_COMPONENT.md'].map(async name => ({ name, data: await readFile(join(repo, name)) })));
   const guide = files.find(file => file.name === 'docs/VIDEO_COMPONENT.md');
-  guide.data = encoder.encode(guide.data.toString('utf8').replaceAll('../tools/video-component/INSTALL.', '../INSTALL.'));
+  guide.data = encoder.encode(guide.data.toString('utf8').replaceAll('../tools/video-component/', '../'));
   for (const language of ['zh', 'en']) files.push({ name: `INSTALL.${language}.md`, data: await readFile(new URL(`./INSTALL.${language}.md`, import.meta.url)) });
+  files.push({ name: 'INSTALL-AGENT.md', data: await readFile(new URL('./INSTALL-AGENT.md', import.meta.url)) });
   files.push({ name: 'component.json', data: encoder.encode(JSON.stringify(component, null, 2)) },
     { name: 'package.json', data: encoder.encode(JSON.stringify({ private: true, type: 'module', engines: { node: '>=22.13' } }, null, 2)) });
   for (const [verb, command] of [['Install', 'install'], ['Uninstall', 'uninstall']]) {

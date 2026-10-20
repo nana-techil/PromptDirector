@@ -19,13 +19,13 @@ async function fixture(t) {
   const base = await mkdtemp(join(tmpdir(), 'pd-video-source-'));
   t.after(() => rm(base, { recursive: true, force: true }));
   await packageVideoSource(base);
-  const directory = join(base, 'source with space');
+  const directory = join(base, '视频 source with space');
   const files = await readZipBlob(new Blob([await readFile(join(base, VIDEO_SOURCE_ASSET))]));
   for (const [name, data] of files) {
     await mkdir(dirname(join(directory, name)), { recursive: true });
     await writeFile(join(directory, name), Buffer.from(await data.arrayBuffer()));
   }
-  const plan = await videoSourcePlan({ directory, root: join(base, 'installed with space'), nativeDirectory: join(base, 'chrome'), platform: process.platform === 'win32' ? 'win32' : 'darwin' });
+  const plan = await videoSourcePlan({ directory, root: join(base, '视频 installed with space'), nativeDirectory: join(base, 'chrome'), platform: process.platform === 'win32' ? 'win32' : 'darwin' });
   return { base, directory, files, plan };
 }
 async function fixtureTools(directory) {
@@ -201,4 +201,24 @@ test('the installed source host can invoke actual local dependencies without a b
     assert.match(messages[1].result.versions.ffprobe, /^ffprobe version/u);
     assert.equal(await readFile(join(plan.root, 'LICENSE'), 'utf8'), await readFile(new URL('../../LICENSE', import.meta.url), 'utf8'));
   } finally { await uninstallVideoSource(plan, { register: async () => {} }); }
+});
+
+test('a registry failure during Windows reinstallation restores the previous runtime and leaves external tools untouched', async t => {
+  const { plan, base } = await fixture(t);
+  const tools = await fixtureTools(join(base, 'external tools'));
+  if (!tools.ytDlp || !tools.ffmpeg || !tools.ffprobe) {
+    assert.notEqual(process.env.PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS, '1'); return t.skip('Windows integration requires video tools');
+  }
+  // On macOS this exercises file replacement only, never the real registry.
+  plan.platform = 'win32';
+  await installVideoSource(plan, { env: toolEnv(tools), register: async () => {} });
+  const marker = join(plan.root, 'previous-runtime.txt');
+  await writeFile(marker, 'previous installation');
+  const previousManifest = await readFile(plan.registration, 'utf8');
+  await assert.rejects(installVideoSource(plan, { env: toolEnv(tools), register: async () => { throw new Error('Registry write denied'); } }), /Registry write denied/u);
+  assert.equal(await readFile(marker, 'utf8'), 'previous installation');
+  assert.equal(await readFile(plan.registration, 'utf8'), previousManifest);
+  assert.equal((await stat(tools.ffmpeg)).isFile(), true);
+  assert.deepEqual((await readdir(base)).filter(name => name.includes('.install-') || name.includes('.previous-')), []);
+  await uninstallVideoSource(plan, { register: async () => {} });
 });

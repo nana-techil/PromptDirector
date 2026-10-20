@@ -52,7 +52,7 @@ test("share preview uses the current visual foundation and exposes the read-only
   assert.match(html, /\.case-card:focus-visible::after,\.related-card:focus-visible::after\{[^}]*border-width:2px/);
   assert.match(html, /\.fallback-cover\.audio\{background:linear-gradient\(160deg,var\(--ui-raised\),var\(--ui-surface\)\)\}/);
   assert.match(html, /\.eyebrow,\.fallback-cover small,[^}]*\{color:var\(--ui-text\)\}/);
-  assert.match(html, /设置 → 界面与资料库 → 导入分享包/);
+  assert.match(html, /添加 → 导入本机资料/);
   assert.match(html, /data-zh="视觉创作灵感库" data-en="Visual Inspiration Library"/);
   assert.match(html, /提示词导演，你的视觉创作私人灵感库。/);
   assert.match(html, /class="app-footer"/);

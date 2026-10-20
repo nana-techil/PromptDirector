@@ -21,6 +21,7 @@ SCRIPTS = [
     "detail_media_stability_components_e2e.py",
     "capture_source_text_e2e.py",
     "video_setup_restart_e2e.py",
+    "video_setup_refresh_e2e.py",
     "capture_access_gate_e2e.py",
     "agent_capture_preview_e2e.py",
     "agent_capture_commit_receipt_e2e.py",
@@ -150,6 +151,7 @@ SCRIPTS = [
     "case_edit_persistence_e2e.py",
     "case_covers_e2e.py",
     "x_post_capture_e2e.py",
+    "x_image_originals_e2e.py",
     "x_capture_injection_e2e.py",
     "x_followup_capture_e2e.py",
     "x_media_feedback_e2e.py",
@@ -252,12 +254,14 @@ SCRIPTS = [
     "ui_regressions_e2e.py",
     "settings_visual_anchor_e2e.py",
     "settings_compact_e2e.py",
+    "settings_update_feedback_e2e.py",
     "settings_simplification_e2e.py",
     "settings_text_completion_e2e.py",
     "settings_tab_stability_e2e.py",
     "brand_i18n_e2e.py",
     "english_interaction_states_e2e.py",
     "case_management_batch_regression_e2e.py",
+    "library_selection_menu_scroll_e2e.py",
 ]
 
 CASE_MANAGEMENT_SCRIPTS = [
@@ -297,6 +301,7 @@ CASE_MANAGEMENT_SCRIPTS = [
     "projects_and_categories_e2e.py",
     "project_tree_e2e.py",
     "case_management_batch_regression_e2e.py",
+    "library_selection_menu_scroll_e2e.py",
 ]
 
 

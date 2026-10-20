@@ -24,6 +24,34 @@ test('duplicate image URLs and text do not override exclusions or grow the draft
   const result=appendCaptureCandidate(base,addition,{...selection,selectedMediaIds:[]});
   assert.equal(result.candidate.media.length,2);assert.equal(result.candidate.textBlocks.length,1);assert.deepEqual(result.selection.selectedMediaIds,[]);
 });
+test('supplementing the same image upgrades its source while retaining prompt, IDs, exclusions and undo data', () => {
+  const small = 'https://example.com/art.jpg?w=640';
+  const original = 'https://example.com/art.jpg';
+  const base = normalizePageCaptureCandidate({ ...candidate(), media: [{
+    id: 'art', kind: 'image', url: small, width: 640, height: 360, sourceKind: 'current', originalPrompt: 'Edited original prompt'
+  }] });
+  const before = structuredClone(base);
+  const addition = {id:'pick',media:[{id:'picked-art',kind:'image',url:original,sourceKind:'site-original',
+    variants:[{url:original,sourceKind:'site-original'},{url:small,sourceKind:'current'}],originalPrompt:'Detected prompt'}]};
+  const excluded = {...selection,selectedMediaIds:[]};
+  const result = appendCaptureCandidate(base, addition, excluded);
+  assert.equal(result.candidate.media.length, 1);
+  assert.equal(result.candidate.media[0].id, 'art');
+  assert.equal(result.candidate.media[0].url, original);
+  assert.equal(result.candidate.media[0].width, 0, 'Small dimensions cannot describe the unmeasured original');
+  assert.equal(result.candidate.media[0].originalPrompt, 'Edited original prompt');
+  assert.equal(result.candidate.contentText, base.contentText);
+  assert.deepEqual(result.selection.selectedMediaIds, []);
+  assert.deepEqual(base, before);
+  const explicit = appendCaptureCandidate(base, addition, excluded, {includeExistingMedia:true});
+  assert.deepEqual(explicit.selection.selectedMediaIds, ['art']);
+});
+test('a repeated DOM ID from a different pick cannot silently discard a different image', () => {
+  const base = candidate();
+  const result = appendCaptureCandidate(base, {id:'pick',media:[{id:'one',kind:'image',url:'https://example.com/different.jpg'}]}, selection);
+  assert.equal(result.candidate.media.length, 3);
+  assert.ok(result.selection.selectedMediaIds.includes('added:pick:one'));
+});
 test('explicit comment addition selects an already discovered video once and gives it the selected reply source',()=>{
   const base=candidate();base.media.push({id:'discovered-video',kind:'video',placement:'unplaced',url:'https://video.twimg.com/reply.mp4'});
   const addition={id:'reply',media:[{id:'owned-video',kind:'video',url:'https://video.twimg.com/reply.mp4',originalWorkUrl:'https://x.com/user/status/3',posterUrl:'https://pbs.twimg.com/poster.jpg'}],

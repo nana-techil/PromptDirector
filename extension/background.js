@@ -1423,20 +1423,11 @@ async function handleMessage(message, interaction = {}) {
     case 'GET_NATIVE_VIDEO_STATUS':
       return { ok: true, ...(await nativeVideoStatus()) };
     case 'START_VIDEO_COMPONENT_SETUP':
-      return { ok: true, state: await videoComponentSetup.start({ restart: message.restart === true }) };
+      return { ok: true, state: await videoComponentSetup.start({ restart: message.restart === true, viaAgent: message.viaAgent === true }) };
     case 'CONTINUE_VIDEO_COMPONENT_SETUP':
       return { ok: true, state: await videoComponentSetup.continue() };
     case 'GET_VIDEO_COMPONENT_SETUP': {
-      let state = await videoComponentSetup.get();
-      if (['downloading', 'review', 'installing'].includes(state.phase)) state = await videoComponentSetup.check();
-      else if (['idle', 'ready'].includes(state.phase)) {
-        try {
-          const result = await nativeVideoStatus();
-          state = { phase: result.updateRequired ? 'update' : result.available ? 'ready' : 'idle' };
-        }
-        catch { state = { phase: 'idle' }; }
-      }
-      return { ok: true, state };
+      return { ok: true, state: await videoComponentSetup.refresh() };
     }
     case 'UPDATE_LAYOUT_PREFERENCES':
       return enqueue(async () => {
@@ -2646,12 +2637,13 @@ async function commitPageCapture(batchValue, metadata = {}, progress = createCap
             decodeDataUrl: dataUrlToImageBlob
           }));
           const blob = resolved.blob;
+          if (resolved.usedReducedImage) warnings.push(`${media.alt || candidate.title}：原图不可用，已保存网站提供的较小图片`);
           progress.stage('verify', context);
           const contentHash = await sha256Blob(blob);
           const existing = mediaAssets.find((asset) => asset.contentHash === contentHash) ?? savedAssets.withHash(entries, contentHash)[0];
           if (existing && await reusableCaptureAsset(existing)) {
             if (!mediaAssets.some((asset) => asset.id === existing.id)) mediaAssets.push({ ...existing,
-                sourceUrl: media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
+                sourceUrl: resolved.sourceUrl || media.url, sourceTitle: media.filename || media.sourceTitle || media.alt || candidate.title,
                 sourceAuthor: media.sourceAuthor || candidate.sourceFacts.author,
                 originalWorkUrl: media.originalWorkUrl || candidate.canonicalUrl
               });

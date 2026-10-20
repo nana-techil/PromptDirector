@@ -24,7 +24,7 @@ def main():
     composer_js = (ROOT / 'extension/composer-page.js').read_text()
     assistant_js = (ROOT / 'extension/collector-capture-assistant.js').read_text()
     parts = {
-        'settings': between(library[library.index('<section id="settings-general-panel"'):], '<section class="setting-section appearance-grid">', '</section>') + '</section>',
+        'settings': between(library, '<section class="settings-diagnostics">', '</section>') + '</section>',
         'options': between(composer, '<details id="composer-options"', '</details>') + '</details>',
         'analysis': re.search(r'<button id="copy-analysis-diagnostics".*?</button>', library).group(),
         'settingsBind': between(library_js, 'bindDiagnosticControls({', '\nbindAppearanceControls'),
@@ -91,7 +91,7 @@ def main():
                 results.append({'width':width,'theme':theme,'entries':len(diagnostic_ids),'defaultHidden':True,'enabledVisible':True,'closedDialog':True,'reopenPersisted':True})
             page.evaluate('window.failSave=true')
             page.locator('#ui-diagnostics').click()
-            page.wait_for_function("document.querySelector('#library-settings-feedback').textContent==='保存失败'")
+            page.wait_for_function("document.querySelector('#diagnostic-settings-feedback').textContent==='保存失败'")
             assert not page.locator('#ui-diagnostics').is_checked()
             page.screenshot(path=str(output/'save-failure-390-dark.png'), animations='disabled')
             (output/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2))

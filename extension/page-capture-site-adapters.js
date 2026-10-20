@@ -247,7 +247,8 @@ export function collectPageCaptureSitePayload(options = {}) {
       const images = rawImages.slice(0, maxMedia).map((image) => ({
         id: Number(image?.id) || 0,
         uuid: clean(image?.uuid),
-        originalImageUrl: clean(image?.originalImageUrl || image?.previewUrl),
+        originalImageUrl: clean(image?.originalImageUrl),
+        previewUrl: clean(image?.previewUrl),
         imageUrl: clean(image?.imageUrl || image?.watermarkImageUrl),
         width: Number(image?.width) || 0,
         height: Number(image?.height) || 0,
@@ -1054,8 +1055,8 @@ function normalizeKreaPayload(value, canonicalUrlValue) {
     canonicalUrl,
     title: jsonLd.name,
     prompt: value?.prompt,
-    imageUrl: jsonLd.contentUrl || jsonLd.url || jsonLd.thumbnailUrl,
-    imagePreviewUrl: value?.imagePreviewUrl,
+    imageUrl: jsonLd.contentUrl || jsonLd.url,
+    imagePreviewUrl: value?.imagePreviewUrl || jsonLd.thumbnailUrl,
     styleReferences: value?.styleReferences,
     publishedAt: jsonLd.datePublished,
     width: jsonLd.width,
@@ -1070,15 +1071,17 @@ function normalizeKreaItem(value) {
   if (!(canonicalHost === "krea.ai" || canonicalHost.endsWith(".krea.ai"))) return null;
   const itemId = clean(value?.itemId) || kreaItemId(canonicalUrl) || kreaItemId(value?.imageUrl);
   if (!itemId) return null;
-  const url = safeTrustedMediaUrl("krea", value?.imageUrl);
+  const originalUrl = safeTrustedMediaUrl("krea", value?.imageUrl);
   const width = positiveInteger(value?.width);
   const height = positiveInteger(value?.height);
   const prompt = cleanMultiline(value?.prompt);
   const previewUrl = safeTrustedMediaUrl("krea", value?.imagePreviewUrl);
+  const url = originalUrl || previewUrl;
+  const sourceKind = originalUrl ? "site-original" : "current";
   const media = url ? [{
     id: `krea:${itemId}:1`, kind: "image", url, width, height, originalPrompt: prompt,
-    sourceKind: "site-original", captureMethod: "source",
-    variants: [{ url, sourceKind: "site-original", width, height },
+    sourceKind, captureMethod: "source",
+    variants: [{ url, sourceKind, width, height },
       ...(previewUrl && previewUrl !== url ? [{ url: previewUrl, sourceKind: "current" }] : [])]
   }] : [];
   for (const [index, reference] of (Array.isArray(value?.styleReferences) ? value.styleReferences : []).entries()) {
@@ -1191,12 +1194,12 @@ function normalizeHiggsfieldWork(value, briefValue) {
   const imageValues = Array.isArray(value?.image) ? [...value.image] : value?.image ? [value.image] : [];
   const types = Array.isArray(value?.["@type"]) ? value["@type"] : [value?.["@type"]];
   const videoValues = [...(Array.isArray(value?.video) ? value.video : value?.video ? [value.video] : []), ...(types.includes("VideoObject") ? [value] : [])];
-  if (types.includes("ImageObject")) imageValues.push(value);
+  if (types.includes("ImageObject") && (value.contentUrl || safeHttpUrl(value.url) !== canonicalUrl)) imageValues.push(value);
   const contentText = cleanMultiline(briefValue) || cleanMultiline(value?.description);
   const isArticle = Boolean(cleanMultiline(briefValue) || types.some((type) => ["Article", "BlogPosting"].includes(type)));
   const media = [];
   const seen = new Set();
-  const addMedia = (item, kind) => {
+  const addMedia = (item, kind, sourceKind = "site-original") => {
     const playbackUrl = safeTrustedMediaUrl("higgsfield", typeof item === "string" ? item : item?.contentUrl || item?.url);
     const url = kind === "video" && safeTrustedMediaUrl("higgsfield", item?.originalSrc) || playbackUrl;
     if (!url || seen.has(url)) return;
@@ -1207,8 +1210,8 @@ function normalizeHiggsfieldWork(value, briefValue) {
       id: `higgsfield:${stableTextHash(itemId)}:${stableTextHash(url)}`, kind, url, width, height,
       ...(kind === "video" ? { posterUrl: safeTrustedMediaUrl("higgsfield", item?.thumbnailUrl),
         ...(/\.m3u8(?:[?#]|$)/iu.test(playbackUrl) ? { streamUrl: playbackUrl } : {}) } : {}),
-      sourceKind: "site-original", captureMethod: "source",
-      variants: [{ url, sourceKind: "site-original", width, height },
+      sourceKind, captureMethod: "source",
+      variants: [{ url, sourceKind, width, height },
         ...(playbackUrl && playbackUrl !== url ? [{ url: playbackUrl, sourceKind: "video-element" }] : [])]
     });
   };
@@ -1217,7 +1220,7 @@ function normalizeHiggsfieldWork(value, briefValue) {
   for (const item of imageValues) {
     if (isArticle || !posters.has(typeof item === "string" ? item : item?.contentUrl || item?.url)) addMedia(item, "image");
   }
-  if (!media.length && value?.thumbnailUrl) addMedia(value.thumbnailUrl, "image");
+  if (!media.length && value?.thumbnailUrl) addMedia(value.thumbnailUrl, "image", "current");
   if (isArticle) {
     const cover = media.find((item) => item.kind === "image");
     if (cover) cover.isCover = true;
@@ -1364,15 +1367,17 @@ function normalizeLiblibPayload(value, canonicalUrlValue) {
   const handle = clean(value?.author?.uuid);
   const images = Array.isArray(data.images) ? data.images : [];
   const media = images.flatMap((image, index) => {
-    const originalUrl = safeTrustedMediaUrl("liblibai", image?.originalImageUrl || image?.previewUrl);
+    const originalUrl = safeTrustedMediaUrl("liblibai", image?.originalImageUrl);
     const displayUrl = safeTrustedMediaUrl("liblibai", image?.imageUrl || image?.watermarkImageUrl);
-    const url = originalUrl || displayUrl;
+    const previewUrl = safeTrustedMediaUrl("liblibai", image?.previewUrl);
+    const url = originalUrl || displayUrl || previewUrl;
     if (!url) return [];
     const width = positiveInteger(image?.width);
     const height = positiveInteger(image?.height);
     const variants = [
       originalUrl ? { url: originalUrl, sourceKind: "site-original", width, height } : null,
-      displayUrl && displayUrl !== originalUrl ? { url: displayUrl, sourceKind: "current", width, height } : null
+      displayUrl && displayUrl !== originalUrl ? { url: displayUrl, sourceKind: "current" } : null,
+      previewUrl && previewUrl !== originalUrl && previewUrl !== displayUrl ? { url: previewUrl, sourceKind: "current" } : null
     ].filter(Boolean);
     return [{
       id: `liblibai:${itemId}:${clean(image?.uuid || image?.id) || index + 1}`,

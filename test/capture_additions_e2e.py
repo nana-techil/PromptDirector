@@ -18,7 +18,7 @@ def main():
             const blob=await new Promise(r=>canvas.toBlob(r,'image/png'));await saveScreenshotBlob(id,blob);
             return {id,mimeType:'image/png',width:100,height:120,sourceTitle:id};
           }
-          const first=await image('first-image','#336699'), extra=await image('extra-image','#996633');
+          const first=await image('first-image','#336699'), extra=await image('extra-image','#996633'), screenshot=await image('screenshot-image','#339966');
           window.makeImage=image;window.extraImage=extra; window.captureKinds=[];window.cancelScreenshot=false;
           const initial=createCaptureDraft({title:'已有草稿',fragments:[{id:'first-text',text:'已有的选中文字，必须与网页内容保存在同一个案例。',sourceUrl:'https://example.com/first'}],visuals:[first],customLabels:['保留标签']});
           await send({type:'UPDATE_CAPTURE_DRAFT',draft:initial});
@@ -29,7 +29,7 @@ def main():
           Object.defineProperty(navigator,'clipboard',{configurable:true,value:{read:async()=>[{types:['text/plain'],getType:async()=>new Blob(['剪贴板补充：保持动作连续。'],{type:'text/plain'})}]}});
           chrome.runtime.sendMessage=async m=>{
             if(m.type==='START_PAGE_CAPTURE')return {ok:true,batch:window.webSnapshot};
-            if(m.type==='PICK_PAGE_CONTENT')return {ok:true,supplement:'comments',batch:{...snapshot,id:'picked-comment',candidates:[{
+            if(m.type==='PICK_PAGE_CONTENT')return {ok:true,batch:{...snapshot,id:'picked-content',candidates:[{
               ...snapshot.candidates[0],id:'selected-extra',contentText:'网页高亮补充：使用自然光与清晰构图。',
               textBlocks:[{id:'selected-extra',text:'网页高亮补充：使用自然光与清晰构图。'}],media:[]
             }]}};
@@ -42,7 +42,7 @@ def main():
               const current=(await send({type:'GET_CAPTURE_WORKSPACE'})).draft;
               const next=m.type==='ADD_ACTIVE_SELECTION_TO_DRAFT'
                 ? addDraftFragment(current,{id:'selected-extra',text:'网页高亮补充：使用自然光与清晰构图。',sourceUrl:'https://example.com/post'}).draft
-                :addDraftVisual(current,extra);
+                :addDraftVisual(current,m.type==='CAPTURE_ACTIVE_TAB_TO_DRAFT'?screenshot:extra);
               return send({type:'UPDATE_CAPTURE_DRAFT',draft:next});
             }
             return send(m);
@@ -62,6 +62,13 @@ def main():
             assert len(boxes)==5 and len({b['top'] for b in boxes})==1 and len({b['h'] for b in boxes})==1 and not any(b['overflow'] for b in boxes),boxes
         page.locator('#add-selection').click()
         expect(page.locator('.page-capture-excerpt')).to_contain_text('网页高亮补充')
+        expect(page.locator('.page-capture-excerpt')).to_contain_text('网页主帖原始提示词')
+        expect(page.locator('.page-capture-excerpt')).to_contain_text('已有的选中文字')
+        expect(page.locator('.page-capture-thumbnails img')).to_have_count(1)
+        page.locator('#page-capture-undo-region').click()
+        expect(page.locator('.page-capture-excerpt')).not_to_contain_text('网页高亮补充')
+        expect(page.locator('.page-capture-excerpt')).to_contain_text('网页主帖原始提示词')
+        page.locator('#add-selection').click()
         page.locator('#add-clipboard').click()
         expect(page.locator('.page-capture-excerpt')).to_contain_text('剪贴板补充')
         page.locator('#add-smart-visuals').click()
@@ -78,15 +85,16 @@ def main():
         expect(page.locator('.page-capture-thumbnails img')).to_have_count(2)
         page.evaluate('()=>window.cancelScreenshot=false')
         page.locator('#add-screenshot').click()
-        expect(page.locator('.page-capture-thumbnails img')).to_have_count(2)
+        expect(page.locator('.page-capture-thumbnails img')).to_have_count(3)
+        expect(page.locator('.page-capture-excerpt')).to_contain_text('网页主帖原始提示词')
         expect(page.locator('#page-capture')).to_be_visible()
         # Supplementary webpage cancel and confirmation both retain the current case.
         page.locator('#add-page-capture').click();page.locator('#page-capture-cancel').click()
         expect(page.locator('.page-capture-excerpt')).to_contain_text('剪贴板补充')
         page.locator('#add-page-capture').click();page.locator('.page-capture-confirm').click()
-        expect(page.locator('.page-capture-thumbnails img')).to_have_count(2)
+        expect(page.locator('.page-capture-thumbnails img')).to_have_count(3)
         expect(page.locator('.page-capture-excerpt')).to_contain_text('网页高亮补充')
-        for width in (320,390):
+        for width in (320,390,860):
             page.set_viewport_size({'width':width,'height':844})
             page.locator('#capture-add-more-actions').scroll_into_view_if_needed()
             page.screenshot(path=str(Path(tempfile.gettempdir()) / f'pd-capture-additions-{width}.png'))
@@ -100,7 +108,7 @@ def main():
         assert len(saved)==1,saved
         entry=saved[0]
         for text in ['已有的选中文字','网页主帖','网页高亮补充','剪贴板补充']:assert text in entry['text'],entry['text']
-        assert len(entry['mediaAssets'])==2,entry['mediaAssets']
+        assert len(entry['mediaAssets'])==3,entry['mediaAssets']
         assert '保留标签' in entry['customLabels'],entry
         assert entry['classification']['pathIds']==['content:prompt:image'],entry['classification']
         projects=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_STATE'})).organizerState.collections")
@@ -128,7 +136,7 @@ def main():
             assert len(updated)==1 and updated[0]['id']==entry['id'],updated
             assert updated[0]['text'].count('第二次补充：必须写回已经保存的案例。')==1,updated[0]['text']
             for text in ['已有的选中文字','网页主帖','网页高亮补充','剪贴板补充']: assert text in updated[0]['text']
-            assert len(updated[0]['mediaAssets'])==2
+            assert len(updated[0]['mediaAssets'])==3
             remaining_draft=page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CAPTURE_WORKSPACE'})).draft")
             assert not remaining_draft['fragments'],remaining_draft
         print({'recaptureSupplementSavedToSameCase':True,'retryNoDuplicateText':True})
@@ -148,5 +156,33 @@ def main():
         assert [v['id'] for v in remaining['visuals']]==['pending-image'],remaining
         assert page.evaluate("async()=>(await (await import('./image-store.js')).getScreenshotBlob('pending-image')).size")>0
         print({'text_only_keeps_image':True,'project_saved':True,'manual_type_saved':True})
-        print({'one_case':True,'all_five_methods':True,'cancel_preserved':True,'duplicate_ignored':True,'media_readback':blobs,'tags_preserved':True,'widths':[320,390]})
+        print({'one_case':True,'all_five_methods':True,'cancel_preserved':True,'duplicate_ignored':True,'media_readback':blobs,'tags_preserved':True,'widths':[320,390,860]})
+        # With no single target, a manual pick is an additional candidate, never a replacement.
+        page.evaluate("""async()=>{
+          const {createCaptureDraft}=await import('./capture-draft.js');
+          await chrome.runtime.sendMessage({type:'UPDATE_CAPTURE_DRAFT',draft:createCaptureDraft()});
+          const base=window.webSnapshot.candidates[0];
+          window.webSnapshot={...window.webSnapshot,id:'multiple-cases',captureMode:'list',selections:[],
+            candidates:['Alpha','Beta'].map(name=>({...base,id:name,title:name,canonicalUrl:'https://example.com/'+name}))};
+          window.dispatchEvent(new Event('focus'));
+        }""")
+        expect(page.locator('#normal-start')).to_be_visible()
+        page.locator('#start-page-capture').click()
+        expect(page.locator('.page-capture-item')).to_have_count(2)
+        page.locator('#add-selection').click()
+        expect(page.locator('.page-capture-item')).to_have_count(3)
+        expect(page.locator('.page-capture-item.confirmed')).to_have_count(1)
+        page.locator('#page-capture-undo-region').click()
+        expect(page.locator('.page-capture-item')).to_have_count(2)
+        expect(page.locator('.page-capture-item.confirmed')).to_have_count(0)
+        page.locator('.page-capture-confirm').nth(0).click()
+        page.locator('.page-capture-confirm').nth(1).click()
+        expect(page.locator('.page-capture-item.confirmed')).to_have_count(2)
+        page.locator('#add-selection').click()
+        expect(page.locator('.page-capture-item.confirmed')).to_have_count(3)
+        expect(page.locator('#page-capture-list')).to_contain_text('Alpha')
+        expect(page.locator('#page-capture-list')).to_contain_text('Beta')
+        page.locator('#page-capture-undo-region').click()
+        expect(page.locator('.page-capture-item.confirmed')).to_have_count(2)
+        print({'unselectedCandidatesPreserved':True,'multipleSelectedCasesPreserved':True,'undoPreserved':True})
 if __name__=='__main__':main()

@@ -56,21 +56,21 @@ def main():
             }""")
             assert response.get('code') == 'video_component_required', response
             collector.reload()
-            expect(collector.locator('#video-component-setup button')).to_have_text('安装视频组件')
+            expect(collector.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('手动安装')
             for width in [390, 1280]:
                 collector.set_viewport_size({'width': width, 'height': 850})
                 collector.screenshot(path=str(evidence / f'required-{width}.png'))
-            collector.locator('#video-component-setup button').click()
+            collector.locator('#video-component-setup [data-video-component-action=manual]').click()
             expect(collector.locator('#video-component-setup')).to_contain_text('正在下载安装包')
             collector.screenshot(path=str(evidence / 'downloading.png'))
             collector.close()
             collector = run.open_page('collector.html')
             expect(collector.locator('#video-component-setup')).to_contain_text('正在下载安装包')
             collector.evaluate("async()=>chrome.storage.local.set({setupComplete:true})")
-            expect(collector.locator('#video-component-setup button')).to_have_text('打开安装包', timeout=15000)
+            expect(collector.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('打开安装包', timeout=15000)
             collector.screenshot(path=str(evidence / 'open-installer.png'))
             collector.evaluate("() => {chrome.downloads.open = async id => chrome.storage.local.set({setupOpened:id});}")
-            collector.locator('#video-component-setup button').click()
+            collector.locator('#video-component-setup [data-video-component-action=manual]').click()
             assert wait_for_async_condition(collector, "async()=>(await chrome.storage.local.get('setupOpened')).setupOpened") == 123
             # Register the real offline payload for this disposable browser only.
             registration = run.profile_dir / 'NativeMessagingHosts/com.promptdirector.video.json'

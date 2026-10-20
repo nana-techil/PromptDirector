@@ -1,6 +1,6 @@
-import { readFile, writeFile, mkdir, cp, rm, lstat, rename, chmod, access, realpath } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, cp, rm, lstat, rename, chmod, access, realpath, mkdtemp } from 'node:fs/promises';
 import { join, dirname, resolve, win32 } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
@@ -88,77 +88,91 @@ export async function registerVideoViews(registration, registry) {
   }
 }
 
-// Values are data, never interpolated as PowerShell. Conditional restoration is
-// performed in the same native operation as the read, preserving later writers.
-export function windowsVideoRegistry(plan, { keyName = 'Software\\Google\\Chrome\\NativeMessagingHosts\\com.promptdirector.video' } = {}) {
-  if (!process.env.SystemRoot) throw new Error('Windows system directory is unavailable.');
-  const script = `$ErrorActionPreference='Stop'
-$name=$env:PROMPTDIRECTOR_VIDEO_REGISTRY_KEY
-if ($env:PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'snapshot') {
- $snapshots=@()
- foreach ($view in @([Microsoft.Win32.RegistryView]::Registry32,[Microsoft.Win32.RegistryView]::Registry64)) {
-  $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser,$view)
-  try {
-   $key=$base.OpenSubKey($name)
-   if ($null -eq $key) { $snapshots += @{exists=$false} }
-   else {
-    try {
-     $hasValue=$key.GetValueNames() -contains ''
-     $value=$null; $kind=$null
-     if ($hasValue) {
-      $value=$key.GetValue('',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-      $kind=$key.GetValueKind('').ToString()
-     }
-     $snapshots += @{exists=$true; hasValue=$hasValue; value=$value; kind=$kind}
-    } finally { $key.Dispose() }
-   }
-  } finally { $base.Dispose() }
- }
- ConvertTo-Json -InputObject @($snapshots) -Compress -Depth 5
-} else {
- $view=[Enum]::Parse([Microsoft.Win32.RegistryView],$env:PROMPTDIRECTOR_VIDEO_REGISTRY_VIEW)
- $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::CurrentUser,$view)
- try {
-  if ($env:PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'write') {
-   $key=$base.CreateSubKey($name)
-   try {
-    $key.SetValue('',$env:PROMPTDIRECTOR_VIDEO_MANIFEST,[Microsoft.Win32.RegistryValueKind]::String)
-    if ($key.GetValue('') -cne $env:PROMPTDIRECTOR_VIDEO_MANIFEST) { throw 'Video registration readback mismatch' }
-   } finally { $key.Dispose() }
-  } elseif ($env:PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION -eq 'restore') {
-   $key=$base.OpenSubKey($name,$true)
-   if ($null -ne $key) {
-    $deleteEmpty=$false
-    try {
-     if ($key.GetValue('') -ceq $env:PROMPTDIRECTOR_VIDEO_MANIFEST) {
-      $previous=ConvertFrom-Json $env:PROMPTDIRECTOR_VIDEO_PREVIOUS
-      if ($previous.exists -and $previous.hasValue) {
-       $kind=[Enum]::Parse([Microsoft.Win32.RegistryValueKind],$previous.kind)
-       $key.SetValue('',$previous.value,$kind)
-      } else {
-       $key.DeleteValue('',$false)
-       $deleteEmpty=(!$previous.exists -and $key.ValueCount -eq 0 -and $key.SubKeyCount -eq 0)
-      }
-     }
-    } finally { $key.Dispose() }
-    if ($deleteEmpty) { $base.DeleteSubKey($name) }
-   }
-  } else { throw 'Invalid video registry operation' }
- } finally { $base.Dispose() }
-}`;
-  const run = async (operation, view, previous) => {
-    const { stdout } = await promisify(execFile)(win32.join(process.env.SystemRoot, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')],
-      { windowsHide: true, timeout: 30_000, env: { ...process.env, PROMPTDIRECTOR_VIDEO_MANIFEST: plan.registration,
-        PROMPTDIRECTOR_VIDEO_REGISTRY_KEY: keyName,
-        PROMPTDIRECTOR_VIDEO_REGISTRY_OPERATION: operation, PROMPTDIRECTOR_VIDEO_REGISTRY_VIEW: view || '',
-        PROMPTDIRECTOR_VIDEO_PREVIOUS: JSON.stringify(previous || {}) } });
-    return stdout;
+// reg.exe exports UTF-16, independent of the console code page. Preserve the
+// default entry verbatim so rollback also restores its original registry type.
+function readRegistryExport(bytes, key) {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xfe) throw new Error('Invalid Unicode registry snapshot.');
+  const lines = bytes.toString('utf16le').slice(1).replace(/\\\r?\n[ \t]*/gu, '').split(/\r?\n/u);
+  const heading = `[${key}]`;
+  const start = lines.findIndex(line => line.toLowerCase() === heading.toLowerCase());
+  if (start < 0) throw new Error('Registry snapshot key mismatch.');
+  let entry, otherValues = false, subkeys = false;
+  for (const line of lines.slice(start + 1)) {
+    if (line.startsWith('[')) { subkeys = true; break; }
+    if (line.startsWith('@=')) entry = line;
+    else if (line.trim() && !line.startsWith(';')) otherValues = true;
+  }
+  let value, kind;
+  if (entry?.startsWith('@="')) {
+    if (!/^@="(?:[^"\\]|\\["\\])*"$/u.test(entry)) throw new Error('Invalid registry string snapshot.');
+    value = entry.slice(3, -1).replace(/\\(["\\])/gu, '$1'); kind = 'String';
+  }
+  return { exists: true, hasValue: entry !== undefined, entry, value, kind, otherValues, subkeys };
+}
+
+export function windowsVideoRegistry(plan, { keyName = 'Software\\Google\\Chrome\\NativeMessagingHosts\\com.promptdirector.video',
+  env = process.env, exec = promisify(execFile) } = {}) {
+  if (!env.SystemRoot) throw new Error('Windows system directory is unavailable.');
+  const executable = win32.join(env.SystemRoot, 'System32', 'reg.exe');
+  const key = `HKEY_CURRENT_USER\\${keyName}`;
+  const run = (view, args) => {
+    if (!['Registry32', 'Registry64'].includes(view)) throw new Error('Invalid registry view.');
+    return exec(executable, [...args, view === 'Registry32' ? '/reg:32' : '/reg:64'],
+      { windowsHide: true, timeout: 30_000, encoding: 'buffer', env });
   };
+  // Exit code 1 can mean missing OR access denied. Enumerate the nearest
+  // readable ancestor before treating a failed query as an absent key.
+  const exists = async (view, path = key) => {
+    try { await run(view, ['query', path]); return true; }
+    catch (error) {
+      if (error.code !== 1 || !path.includes('\\')) throw error;
+      const parent = path.slice(0, path.lastIndexOf('\\'));
+      if (!await exists(view, parent)) return false;
+      const { stdout } = await run(view, ['query', parent]);
+      const children = stdout.toString('utf8').split(/\r?\n/u).map(line => line.trim().toLowerCase());
+      if (children.includes(path.toLowerCase())) throw error;
+      return false;
+    }
+  };
+  const withFile = async action => {
+    const directory = await mkdtemp(join(tmpdir(), 'pd-video-reg-'));
+    try { return await action(join(directory, 'snapshot.reg')); }
+    finally { await rm(directory, { recursive: true, force: true }); }
+  };
+  const snapshot = async view => {
+    if (!await exists(view)) return { exists: false };
+    return withFile(async file => {
+      await run(view, ['export', key, file, '/y']);
+      return readRegistryExport(await readFile(file), key);
+    });
+  };
+  const owns = (current, registration) => current.kind === 'String' && current.value === registration;
   return {
-    snapshot: async () => JSON.parse(await run('snapshot')),
-    write: view => run('write', view),
-    restoreIfCurrent: (view, _registration, previous) => run('restore', view, previous)
+    snapshot: async () => [await snapshot('Registry32'), await snapshot('Registry64')],
+    async write(view, registration = plan.registration) {
+      await run(view, ['add', key, '/ve', '/t', 'REG_SZ', '/d', registration, '/f']);
+      if (!owns(await snapshot(view), registration)) throw new Error('Video registration readback mismatch');
+    },
+    async restoreIfCurrent(view, registration = plan.registration, previous) {
+      const current = await snapshot(view);
+      if (!owns(current, registration)) return;
+      if (previous.exists && previous.hasValue) {
+        await withFile(async file => {
+          await writeFile(file, Buffer.from(`\ufeffWindows Registry Editor Version 5.00\r\n\r\n[${key}]\r\n${previous.entry}\r\n`, 'utf16le'));
+          await run(view, ['import', file]);
+        });
+        if ((await snapshot(view)).entry !== previous.entry) throw new Error('Video registration rollback readback mismatch');
+      } else {
+        // Never recursively remove a key containing somebody else's data.
+        await run(view, ['delete', key, '/ve', '/f']);
+        const remaining = await snapshot(view);
+        if (remaining.hasValue) throw new Error('Video registration removal readback mismatch');
+        if (!previous.exists && remaining.exists && !remaining.otherValues && !remaining.subkeys) {
+          await run(view, ['delete', key, '/f']);
+          if (await exists(view)) throw new Error('Video registry key removal readback mismatch');
+        }
+      }
+    }
   };
 }
 async function windowsRegistration(plan, remove = false) {

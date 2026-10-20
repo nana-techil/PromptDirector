@@ -114,7 +114,6 @@
   .modular-library .topbar #share-count { font-size: 10px; }
   .modular-library .topbar #share-cancel { padding-inline: 5px; }
   .modular-library .topbar .selection-mode .gallery-heading-copy { display: none; }
-  .modular-library .topbar .selection-menu-panel { position: fixed; top: var(--library-topbar-height); left: 8px; right: 8px; width: auto; }
 }
 
 .modular-library .gallery-shell { grid-column: 3; grid-row: 1; }

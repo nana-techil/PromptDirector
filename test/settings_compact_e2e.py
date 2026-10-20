@@ -9,12 +9,12 @@ with extension_session('pd-settings-compact-', viewport={'width':1440,'height':1
  page=session.open_page('library.html')
  page.locator('#open-settings').dispatch_event('click')
  expect(page.locator('#settings-general-panel')).to_be_visible()
- # Theme is a switch now; toggling persists through the same preference service.
- if not page.locator('#ui-theme').is_checked():
+ # Theme choices persist through the same preference service.
+ if page.locator('#ui-theme').input_value() != 'dark':
   with page.expect_navigation(wait_until='domcontentloaded'):
-   page.locator('#ui-theme').check()
+   page.locator('#ui-theme').select_option('dark')
   page.locator('#open-settings').dispatch_event('click')
- assert page.locator('#ui-theme').is_checked()
+ assert page.locator('#ui-theme').input_value() == 'dark'
  assert page.evaluate("async()=> (await chrome.runtime.sendMessage({type:'GET_STATE'})).uiPreferences.theme")=='dark'
  page.locator('#library-name-setting').fill('设置保存验证')
  page.locator('#save-library-settings').click()

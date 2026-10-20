@@ -74,7 +74,7 @@ def main():
             assert len(state['entries']) == 2, 'Missing originals must not create a player or a false saved case'
             collector.reload()
             expect(collector.locator('#video-component-setup')).to_be_visible()
-            expect(collector.locator('#video-component-setup button')).to_have_text('安装视频组件')
+            expect(collector.locator('#video-component-setup [data-video-component-action=manual]')).to_have_text('手动安装')
             library = run.open_page('library.html')
             expect(library.locator(f'.case-card[data-entry-id="{saved["id"]}"]')).to_be_visible()
             expect(library.locator('#library-loading')).to_be_hidden()

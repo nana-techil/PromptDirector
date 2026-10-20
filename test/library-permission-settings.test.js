@@ -15,7 +15,7 @@ test("general settings show separate web-capture and clipboard permission status
   assert.match(html, /id="revoke-capture-web-permission"/);
   assert.match(html, /id="revoke-capture-clipboard-permission"/);
   assert.doesNotMatch(html, /这里不会读取剪贴板/);
-  assert.match(css, /\.capture-permission-list\s*\{/);
+  assert.match(css, /\.capture-permission-list[^{}]*\{/);
   assert.match(css, /\.capture-permission-row\s*\{/);
 });
 

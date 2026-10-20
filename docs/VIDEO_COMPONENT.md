@@ -2,11 +2,11 @@
 
 ## 免费源码安装 / Free source installation
 
-能直接保存的视频无需安装组件。需要本机处理时，在采集侧栏下载 `PromptDirector-Video-Source.zip`，完整解压，按包内 `INSTALL.zh.md` / `INSTALL.en.md` 安装免费的 Node.js、yt-dlp、FFmpeg/FFprobe，然后双击 `Install-macOS.command` 或 `Install-Windows.cmd`。成功后返回插件，原采集自动继续；若检查已暂停，点“继续”。关闭侧栏后重新打开仍可接续；取消的保存不会因安装完成自动提交。
+能直接保存的视频无需安装组件。需要本机处理时，点击现有组件提示中的“让 Agent 安装”，把复制的任务交给有本机执行权限的 Agent；它会按[执行指南](../tools/video-component/INSTALL-AGENT.md)检查现有工具、补齐缺少的免费依赖、安装并验证。完成后插件自动检测并接续待保存的视频；已经暂停时点击“继续”。也可把已解压组件包交给 Agent，说“按包内 INSTALL-AGENT.md 帮我安装并验证视频组件”。
 
-不需要付费账号、开发者证书、Agent 配对、填写路径或手写 manifest。安装脚本只自动查找已安装依赖和包内可选 `tools/` 文件夹，不下载依赖、不代替用户接受协议、不改变系统保护。工具缺失或被系统拦截时给出具体来源，保留待保存内容。完整步骤及官方来源见[中文安装说明](../tools/video-component/INSTALL.zh.md)和 [English installation guide](../tools/video-component/INSTALL.en.md)。
+不使用 Agent 时，保留原安装包下载和手动安装入口。具体步骤及官方依赖来源见[中文安装说明](../tools/video-component/INSTALL.zh.md)和 [English installation guide](../tools/video-component/INSTALL.en.md)。不需要付费账号、开发者证书、Agent 配对、填写路径或手写 manifest。基础安装脚本复用已有依赖和可选 `tools/` 文件夹，不联网下载或调整系统保护；Agent 在用户委托范围内完成缺少的工具安装。浏览器授权或系统权限确实需要人工操作时再提示。
 
-Directly available originals need no component. When prompted, download and fully extract `PromptDirector-Video-Source.zip`, install the free dependencies listed in its guide, then double-click the platform's Install script. Return to the extension to resume the pending capture, or select Continue if checks paused. No paid account, developer certificate, Agent pairing or manual path editing is required. The installer does not download dependencies, accept agreements or weaken system protection.
+Directly available originals need no component. Select **Install with Agent** in the component prompt and paste the copied request into a local Agent. Following the [execution guide](../tools/video-component/INSTALL-AGENT.md), it reuses existing tools, supplies missing free dependencies, installs the component and verifies it. The extension detects readiness and resumes the pending capture; select Continue if checks paused. Manual download and installation remain available. No paid account, developer certificate, Python installation or Agent pairing is required. The base installer itself does not download dependencies or change system protection.
 
 macOS and Windows are supported subject to the chosen dependencies' OS/architecture requirements. The source package does not imply that every old OS, managed device or Smart App Control configuration permits those dependencies. Follow [Apple's security guidance](https://support.apple.com/en-us/102445) and [Microsoft's Smart App Control documentation](https://learn.microsoft.com/en-us/windows/apps/develop/smart-app-control/overview); do not disable protection or remove security markers. The online-only preference remains off unless the user explicitly enables it.
 

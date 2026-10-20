@@ -134,3 +134,88 @@ test('worker restoration never polls an idle or terminal setup, and interrupted 
   assert.equal((await createVideoComponentSetup(f.options).check()).phase, 'failed');
   assert.equal(f.alarms.size, 0); assert.equal(f.resumed, 0);
 });
+
+for (const phase of ['failed', 'paused', 'idle', 'ready', 'update', 'permission']) {
+  test(`page refresh rechecks ${phase} setup and clears stale failure after manual installation without downloading or restarting a save`, async () => {
+    const f = fixture({ phase, message: 'previous failure', startedAt: 10 });
+    let probes = 0;
+    f.options.inspect = async () => { probes++; return { available: true, versions: { component: '0.1.0' } }; };
+    const setup = createVideoComponentSetup(f.options);
+    const results = await Promise.all([setup.refresh(), setup.refresh()]);
+    assert.equal(probes, 1);
+    assert(results.every(state => state.phase === 'ready' && !state.message));
+    assert.equal((await setup.get()).phase, 'ready');
+    assert.equal(f.downloads, 0); assert.equal(f.resumed, 0); assert.equal(f.scheduled.length, 0);
+  });
+}
+
+test('a failed page refresh retains the actionable error and does not poll or download again', async () => {
+  const original = { phase: 'failed', message: '安装包下载中断，请重试', downloadId: 7 };
+  const f = fixture(original);
+  assert.deepEqual(await f.setup.refresh(), original);
+  assert.equal(f.downloads, 0); assert.equal(f.scheduled.length, 0);
+});
+
+test('refresh detects a removed or obsolete host instead of leaving a cached ready state', async () => {
+  const f = fixture({ phase: 'ready' });
+  assert.equal((await f.setup.refresh()).phase, 'idle');
+  f.options.inspect = async () => ({ available: false, updateRequired: true });
+  assert.equal((await createVideoComponentSetup(f.options).refresh()).phase, 'update');
+});
+
+test('a late page probe does not overwrite a newer installation state', async () => {
+  const f = fixture({ phase: 'failed' });
+  let release, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  f.options.inspect = () => { entered(); return new Promise(resolve => { release = resolve; }); };
+  const setup = createVideoComponentSetup(f.options);
+  const refresh = setup.refresh(); await waiting;
+  const newer = { phase: 'installing', downloadId: 99, startedAt: 1000 };
+  await f.options.storage.set({ [VIDEO_SETUP_KEY]: newer });
+  release({ available: true });
+  assert.deepEqual(await refresh, newer);
+  assert.deepEqual(await setup.get(), newer);
+});
+
+test('Agent installation starts only readiness checks, never a package download, then resumes the pending capture once', async () => {
+  const f = fixture({ phase: 'failed', message: 'previous download failure' });
+  f.options.fetchImpl = async () => { throw new Error('Agent installation must not fetch an installer'); };
+  const setup = createVideoComponentSetup(f.options);
+  assert.equal((await setup.start({ viaAgent: true })).phase, 'installing');
+  assert.equal((await setup.get()).downloadId, undefined);
+  assert.equal((await setup.get()).message, undefined);
+  assert.equal(f.downloads, 0); assert(f.alarms.has(VIDEO_SETUP_ALARM));
+  await setup.start({ viaAgent: true });
+  f.ready(); await setup.check(); await setup.check();
+  assert.equal((await setup.get()).phase, 'ready');
+  assert.equal(f.resumed, 1); assert.equal(f.downloads, 0); assert.equal(f.alarms.size, 0);
+});
+
+test('a paused Agent installation can continue watching without downloading an installer', async () => {
+  const f = fixture({ phase: 'paused', startedAt: 0 });
+  assert.equal((await f.setup.continue()).phase, 'installing');
+  assert(f.alarms.has(VIDEO_SETUP_ALARM));
+  assert.equal(f.downloads, 0);
+  f.ready(); await f.setup.check(); assert.equal(f.resumed, 1);
+});
+
+test('the manual download remains available after starting installation with an Agent', async () => {
+  const f = fixture(); await f.setup.start({ viaAgent: true });
+  assert.equal((await f.setup.start({ restart: true })).phase, 'downloading');
+  assert.equal(f.downloads, 1);
+});
+
+test('asking an Agent to finish a downloaded installer keeps its download and deadline while showing the copied request', async () => {
+  const f = fixture({ phase: 'installing', downloadId: 7, startedAt: 500, checkAttempts: 2 });
+  const state = await f.setup.start({ viaAgent: true });
+  assert.equal(state.viaAgent, true);
+  assert.equal(state.downloadId, 7); assert.equal(state.startedAt, 500);
+  assert.equal(f.downloads, 0);
+});
+
+test('Agent setup rejects unsupported systems without starting installation polling', async () => {
+  const f = fixture(); f.options.platform = async () => ({ os: 'linux' });
+  const state = await createVideoComponentSetup(f.options).start({ viaAgent: true });
+  assert.equal(state.phase, 'failed'); assert.match(state.message, /Windows 和 macOS/u);
+  assert.equal(f.alarms.size, 0); assert.equal(f.scheduled.length, 0);
+});

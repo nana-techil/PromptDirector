@@ -39,6 +39,10 @@ test('the installed standalone component reports actual readiness through the sa
   assert.deepEqual(chrome.hosts, [VIDEO_COMPONENT.host]);
 });
 
+test('an installer patch keeps an already working video component usable', async () => {
+  assert.deepEqual(await nativeVideoStatus(browser({ componentVersion: '0.1.0' })), { available: true, updateRequired: false });
+});
+
 test('an outdated component offers the same simple update flow instead of failing the selected video later', async () => {
   assert.deepEqual(await nativeVideoStatus(browser({ componentVersion: '0.0.1' })), { available: false, updateRequired: true });
   await assert.rejects(openNativeVideoSession(browser({ componentVersion: '0.0.1' })), { code: 'video_component_required' });

@@ -4,6 +4,16 @@
 
 This source package supports macOS and Windows. No paid account, developer certificate or Agent pairing is required. It connects free local Node.js, yt-dlp, FFmpeg and FFprobe installations. It does not download dependencies, accept agreements or change system security settings for you.
 
+## Install with a local Agent (recommended)
+
+Give this package to an Agent with permission to run on your computer, such as Codex, and send:
+
+> Install the PromptDirector video component using INSTALL-AGENT.md in this package. Reuse or install the missing free dependencies, then install and verify it. Do not install Python or change system security settings; involve me only for required system authorization.
+
+The Agent handles extraction, dependency checks, installation and verification. **Install with Agent** in the extension copies the complete request. Older extensions without that button can use the sentence above. See the [Agent installation guide](INSTALL-AGENT.md).
+
+## Manual installation (alternative)
+
 1. Install the dependencies below, or reuse existing installations.
 2. **Extract the entire ZIP**. Do not run scripts inside the archive preview. Double-click `Install-macOS.command` on macOS or `Install-Windows.cmd` on Windows.
 3. After the window confirms installation, return to PromptDirector. The pending capture resumes; select **Continue** if installation checks have paused.

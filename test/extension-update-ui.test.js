@@ -6,10 +6,12 @@ const root = new URL("../extension/", import.meta.url);
 const [html, source, local] = await Promise.all(["library.html", "library.js", "local-extension-upgrade-ui.js"].map(path => readFile(new URL(path, root), "utf8")));
 const $ = load(html);
 
-test("settings footer is compact with named icons and on-demand about details", () => {
+test("settings update actions stay in a shared footer with a visible check label", () => {
   const about = $(".settings-about");
   assert.equal(about.find("#about-version").length, 1);
   assert.equal(about.find('#check-extension-update[aria-label="检查更新"] svg').length, 1);
+  assert.equal(about.parent().hasClass("settings-shell"), true);
+  assert.equal(about.find('#check-extension-update span').text(), "检查更新");
   assert.equal(about.find("#apply-extension-update[hidden]").length, 1);
   assert.equal(about.find("#open-about").length, 1);
   assert.equal(about.find("#update-explanation, #update-channel, #update-checked-at").length, 0);

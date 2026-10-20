@@ -613,16 +613,7 @@ export function pageCapturePermissionOrigins(candidates = []) {
 }
 
 export function pageCaptureMediaFetchCandidates(value = {}) {
-  const seen = new Set();
-  return [
-    ...(Array.isArray(value.variants) ? value.variants.map((variant) => variant?.url) : []),
-    value.url
-  ].flatMap((candidate) => {
-    const url = safeUrl(candidate);
-    if (!url || seen.has(url)) return [];
-    seen.add(url);
-    return [url];
-  });
+  return normalizeMediaVariants(value).map((variant) => variant.url);
 }
 
 export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
@@ -630,25 +621,34 @@ export async function resolvePageCaptureImage(mediaValue = {}, options = {}) {
     throw new Error("网页媒体解析器缺少下载能力");
   }
   const failures = [];
-  for (const url of pageCaptureMediaFetchCandidates(mediaValue)) {
-    try {
-      const downloaded = await options.fetchMedia(url);
-      const blob = downloaded?.blob instanceof Blob ? downloaded.blob : downloaded;
-      return { blob, metadata: downloaded?.metadata || null, sourceUrl: url, captureMethod: "source", usedPixelFallback: false, failures };
-    } catch (error) {
-      options.signal?.throwIfAborted();
-      failures.push({ url, message: String(error?.message || error) });
-    }
-  }
-  if (options.sessionMediaAllowed !== false && typeof options.fetchSessionMedia === "function") {
-    for (const url of pageCaptureMediaFetchCandidates(mediaValue)) {
+  const variants = normalizeMediaVariants(mediaValue);
+  const urls = variants.map(variant => variant.url);
+  const originals = variants.filter(variant => variant.sourceKind === "site-original").map(variant => variant.url);
+  // Try originals through the allowed page session before accepting preview renditions.
+  const groups = originals.length ? [originals, urls.filter(url => !originals.includes(url))] : [urls];
+  for (const group of groups) {
+    for (const url of group) {
       try {
-        const downloaded = await options.fetchSessionMedia(url);
+        const downloaded = await options.fetchMedia(url);
         const blob = downloaded?.blob instanceof Blob ? downloaded.blob : downloaded;
-        return { blob, metadata: downloaded?.metadata || null, sourceUrl: url, captureMethod: "page-session", usedPixelFallback: false, failures };
+        return { blob, metadata: downloaded?.metadata || null, sourceUrl: url, captureMethod: "source", usedPixelFallback: false,
+          usedReducedImage: originals.length > 0 && !originals.includes(url), failures };
       } catch (error) {
         options.signal?.throwIfAborted();
-        failures.push({ url, method: "page-session", message: String(error?.message || error) });
+        failures.push({ url, message: String(error?.message || error) });
+      }
+    }
+    if (options.sessionMediaAllowed !== false && typeof options.fetchSessionMedia === "function") {
+      for (const url of group) {
+        try {
+          const downloaded = await options.fetchSessionMedia(url);
+          const blob = downloaded?.blob instanceof Blob ? downloaded.blob : downloaded;
+          return { blob, metadata: downloaded?.metadata || null, sourceUrl: url, captureMethod: "page-session", usedPixelFallback: false,
+            usedReducedImage: originals.length > 0 && !originals.includes(url), failures };
+        } catch (error) {
+          options.signal?.throwIfAborted();
+          failures.push({ url, method: "page-session", message: String(error?.message || error) });
+        }
       }
     }
   }
@@ -2387,8 +2387,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
           url: sourceUrl,
           posterUrl: "",
           alt: cleanText(element.alt),
-          width: Number(element.naturalWidth || element.width) || 0,
-          height: Number(element.naturalHeight || element.height) || 0,
+          width: variants[0]?.declaredWidth || (sourceUrl === safeHttpUrl(element.currentSrc || element.src) ? Number(element.naturalWidth) || 0 : 0),
+          height: sourceUrl === safeHttpUrl(element.currentSrc || element.src) ? Number(element.naturalHeight) || 0 : 0,
           captureMethod: "source",
           sourceKind: variants[0]?.sourceKind || "source",
           variants
@@ -2717,7 +2717,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       const fallbackRect = kind === "image" && !deferredReveal && rect.width >= 48 && rect.height >= 48 && rect.bottom >= 0 && rect.top <= (Number(window.innerHeight) || 720)
         ? { rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, viewportWidth: Number(window.innerWidth) || document.documentElement.clientWidth, viewportHeight: Number(window.innerHeight) || document.documentElement.clientHeight }
         : null;
-      const responsiveCandidate = Boolean(imageSource?.declaredWidth || imageSource?.density > 1);
+      const responsiveCandidate = Boolean(imageSource?.declaredWidth || imageSource?.density > 1
+        || kind === "image" && url !== safeHttpUrl(element.currentSrc || element.src));
       media.push({
         id: `${kind}:${elementIndex}:${hashText(cleanText(element.alt || element.getAttribute?.("aria-label")))}`,
         kind,
@@ -2863,8 +2864,8 @@ export async function collectPageCaptureSnapshot(options = {}) {
       }
     }
     const seen = new Set();
-    return candidates.filter((candidate) => candidate.url && !seen.has(candidate.url) && seen.add(candidate.url))
-      .sort((left, right) => imageVariantScore(right) - imageVariantScore(left));
+    return candidates.sort((left, right) => imageVariantScore(right) - imageVariantScore(left))
+      .filter((candidate) => candidate.url && !seen.has(candidate.url) && seen.add(candidate.url));
   }
 
   function urlWidthHint(value) {
@@ -2904,16 +2905,17 @@ export async function collectPageCaptureSnapshot(options = {}) {
 
   function imageVariantScore(value) {
     const sourcePriority = {
-      "site-original": 600,
-      "picture-srcset": 500,
-      structured: 550,
-      "deferred-srcset": 450,
-      "deferred-src": 400,
-      "img-srcset": 350,
-      current: 200,
-      source: 100
+      "site-original": 1000000,
+      "picture-srcset": 500000,
+      structured: 550000,
+      "deferred-srcset": 450000,
+      "deferred-src": 400000,
+      "img-srcset": 350000,
+      "css-background": 250000,
+      current: 200000,
+      source: 100000
     }[value?.sourceKind] || 0;
-    return sourcePriority + Math.min(100000, Number(value?.declaredWidth || 0)) + Math.min(100, Number(value?.density || 0) * 10);
+    return sourcePriority + Math.min(99999, Number(value?.width || value?.declaredWidth || 0)) + Math.min(99, Number(value?.density || 0) * 10);
   }
 
   function isSupportedVideoFrame(element) {
@@ -3136,6 +3138,7 @@ function uniqueMedia(values) {
   for (const value of Array.isArray(values) ? values : []) {
     const variants = normalizeMediaVariants(value);
     const url = variants[0]?.url || safeUrl(value?.url);
+    const changedImageSource = (!value?.kind || value.kind === "image") && url !== safeUrl(value?.url);
     const posterUrl = safeUrl(value?.posterUrl);
     const dataUrl = safeImageDataUrl(value?.dataUrl);
     const previewDataUrl = safeImageDataUrl(value?.previewDataUrl);
@@ -3177,10 +3180,10 @@ function uniqueMedia(values) {
       sourceTitle: cleanCaptureImageDescription(value.sourceTitle),
       sourceAuthor: clean(value.sourceAuthor),
       originalWorkUrl: safeUrl(value.originalWorkUrl),
-      width: positiveInteger(variants[0]?.width || value.width, 0),
-      height: positiveInteger(variants[0]?.height || value.height, 0),
+      width: positiveInteger(variants[0]?.width || (changedImageSource ? 0 : value.width), 0),
+      height: positiveInteger(variants[0]?.height || (changedImageSource ? 0 : value.height), 0),
       sourceKind: variants[0]?.sourceKind || normalizeMediaSourceKind(value.sourceKind),
-      declaredWidth: positiveInteger(variants[0]?.declaredWidth || value.declaredWidth, 0),
+      declaredWidth: positiveInteger(variants[0]?.declaredWidth || (changedImageSource ? 0 : value.declaredWidth), 0),
       density: positiveNumber(variants[0]?.density || value.density, 0),
       captureMethod: ["source", "css-background", "page-session", "pixel-fallback"].includes(value.captureMethod) ? value.captureMethod : "source"
     };
@@ -3188,7 +3191,7 @@ function uniqueMedia(values) {
     const existingIndex = indexById.get(id) ?? (identity ? indexByIdentity.get(identity) : undefined);
     if (existingIndex !== undefined) {
       const existing = items[existingIndex];
-      const mergedVariants = normalizeMediaVariants({ variants: [...existing.variants, ...item.variants] });
+      const mergedVariants = normalizeMediaVariants({ ...existing, variants: [...existing.variants, ...item.variants] });
       items[existingIndex] = {
         ...existing,
         url: mergedVariants[0]?.url || existing.url,
@@ -3240,6 +3243,24 @@ function normalizeFallbackRect(value) {
   };
 }
 
+function xOriginalImageUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.hostname !== "pbs.twimg.com" || url.username || url.password
+      || !/^\/media\/[A-Za-z0-9_-]+(?:\.(?:jpe?g|png|webp))?(?::[A-Za-z0-9_]+)?$/u.test(url.pathname)) return "";
+    // X serves original post photos through name=orig (or the legacy .jpg:orig form).
+    if (/:[A-Za-z0-9_]+$/u.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/:[A-Za-z0-9_]+$/u, ":orig");
+      url.searchParams.delete("name");
+    } else {
+      url.searchParams.set("name", "orig");
+    }
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
 function normalizeMediaVariants(value = {}) {
   const seen = new Set();
   const variants = [...(Array.isArray(value.variants) ? value.variants : []), {
@@ -3251,7 +3272,7 @@ function normalizeMediaVariants(value = {}) {
     density: value.density
   }].flatMap((variant, index) => {
     const url = safeUrl(variant?.url);
-    if (!url || seen.has(url)) return [];
+    if (!url) return [];
     seen.add(url);
     return [{
       url,
@@ -3263,7 +3284,28 @@ function normalizeMediaVariants(value = {}) {
       order: index
     }];
   });
+  if ((!value.kind || value.kind === "image") && !value.localAssetId && !value.localTransferId) {
+    for (const variant of [...variants]) {
+      const original = xOriginalImageUrl(variant.url);
+      if (!original) continue;
+      if (original === variant.url) variant.sourceKind = "site-original";
+      else {
+        if (variant.sourceKind === "site-original") variant.sourceKind = "current";
+        if (!seen.has(original)) {
+          seen.add(original);
+          variants.push({ url: original, sourceKind: "site-original", width: 0, height: 0,
+            declaredWidth: 0, density: 0, order: variants.length });
+        }
+      }
+    }
+  }
+  const uniqueUrls = new Set();
   return variants.sort((left, right) => mediaVariantScore(right) - mediaVariantScore(left) || left.order - right.order)
+    .filter(variant => {
+      if (uniqueUrls.has(variant.url)) return false;
+      uniqueUrls.add(variant.url);
+      return true;
+    })
     .map(({ order, ...variant }) => variant);
 }
 
@@ -3276,7 +3318,7 @@ function normalizeMediaSourceKind(value) {
 
 function mediaVariantScore(value) {
   const sourcePriority = {
-    "site-original": 600000,
+    "site-original": 1000000,
     structured: 550000,
     "picture-srcset": 500000,
     "deferred-srcset": 450000,

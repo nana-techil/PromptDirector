@@ -4,6 +4,16 @@
 
 此源码包支持 macOS 和 Windows，不需要付费账号、开发者证书或 Agent 配对。它连接本机免费的 Node.js、yt-dlp、FFmpeg 和 FFprobe；不会替你下载软件、接受协议或调整系统保护。
 
+## 让 Agent 安装（推荐）
+
+将这个组件包交给有本机执行权限的 Agent（例如 Codex），发送一句话：
+
+> 帮我按包内 INSTALL-AGENT.md 安装 PromptDirector 视频组件：自动复用或补齐免费依赖，完成安装与验证；不要安装 Python 或修改系统安全设置，仅在需要系统授权时叫我。
+
+Agent 会负责解压、检查依赖、安装和验证。插件中的“让 Agent 安装”可直接复制完整指令；较旧插件没有此按钮时，也可以使用上面这句话。具体执行规则见 [Agent 安装指南](INSTALL-AGENT.md)。
+
+## 手动安装（备用）
+
 1. 安装下方依赖。已安装的可以直接复用。
 2. **完整解压 ZIP**，不要在压缩文件预览里运行。macOS 双击 `Install-macOS.command`；Windows 双击 `Install-Windows.cmd`。
 3. 窗口显示安装成功后，返回 PromptDirector，待保存视频会继续；如侧栏已暂停，点“继续”。关闭安装窗口不影响浏览器资料库。

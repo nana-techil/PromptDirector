@@ -125,9 +125,15 @@ jobs:
           $env:PROMPTDIRECTOR_VIDEO_REQUIRE_TOOLS = '1'
           node --test connector/test/video-source-install.test.mjs connector/test/video-registration.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Source installation contracts failed' }
-          $sourceRoot = Join-Path $env:RUNNER_TEMP 'PromptDirector video source'
+          $sourceRoot = Join-Path $env:RUNNER_TEMP 'PromptDirector 视频 source'
           $componentRoot = Join-Path $env:LOCALAPPDATA 'PromptDirector/VideoComponent-Source'
           Expand-Archive -LiteralPath dist/video-component/PromptDirector-Video-Source.zip -DestinationPath $sourceRoot
+          # Exercise native commands from a constrained session. This does not
+          # claim to reproduce an enterprise WDAC/AppLocker policy.
+          $ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'
+          if ($ExecutionContext.SessionState.LanguageMode -ne 'ConstrainedLanguage') { throw 'ConstrainedLanguage was not enabled' }
+          node --test connector/test/video-registration.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Constrained-session registry contracts failed' }
           try {
             node "$sourceRoot/connector/register-video.mjs" install
             if ($LASTEXITCODE -ne 0) { throw 'Source installation failed' }
