@@ -45,7 +45,7 @@ def main():
         assert page.evaluate("async id => !!await (await import(chrome.runtime.getURL('media-store.js'))).getMediaBlob(id)", first['assetId']) is False
         page.goto(f'chrome-extension://{session.extension_id}/skills.html?view=detail&skill={skill_id}')
         expect(page.locator('#skill-detail-cover img')).to_be_visible()
-        page.locator('#skill-detail-more > summary').click()
+        page.locator('#skill-detail-download > summary').click()
         page.locator('#skill-export').click()
         exported, _ = wait_for_download(page)
         with zipfile.ZipFile(exported) as archive:

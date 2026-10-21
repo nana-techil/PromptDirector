@@ -13,17 +13,22 @@ from e2e_support import extension_session
 CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/skills-catalog.json"
 GOOD_URL = "https://github.com/wchao6891/PromptDirector-Curated/releases/download/skills/good-skill.zip"
 ROLLBACK_URL = "https://github.com/wchao6891/PromptDirector-Curated/releases/download/skills/rollback-skill.zip"
+SCRIPT_URL = "https://github.com/wchao6891/PromptDirector-Curated/releases/download/skills/script-skill.zip"
+SCRIPT_FILES = {"scripts/run.js": "globalThis.__skillScriptExecuted = true;\n", "scripts/run.py": "print(\"preserve this script\")\n", "RIGHTS.md": "# Fixture rights\n"}
 UNSAFE_URL = "https://github.com/wchao6891/PromptDirector-Curated/releases/download/skills/unsafe-skill.zip"
 
 
-def skill_archive(name: str, description: str, body: str, *, unsafe_script: bool = False) -> bytes:
+def skill_archive(name: str, description: str, body: str, *, scripts: bool = False, unsafe_path: bool = False) -> bytes:
     stream = io.BytesIO()
     skill_markdown = f"---\nname: {name}\ndescription: {description}\n---\n\n{body}\n"
     with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("SKILL.md", skill_markdown)
         archive.writestr("references/guide.md", "# Guide\n\nKeep the subject readable.\n")
-        if unsafe_script:
-            archive.writestr("scripts/run.sh", "echo should-never-run\n")
+        if scripts:
+            for path, text in SCRIPT_FILES.items():
+                archive.writestr(path, text)
+        if unsafe_path:
+            archive.writestr("../escape.txt", "must not be imported")
     return stream.getvalue()
 
 
@@ -85,10 +90,12 @@ def persisted_snapshot(page) -> dict:
 def main() -> None:
     good_archive = skill_archive("good-skill", "A safe synthetic Skill.", "# 安全精选 Skill\n\n## 使用方法\n\nUse clear hierarchy.")
     rollback_archive = skill_archive("rollback-skill", "A rollback fixture.", "# Rollback method\n\nKeep local work intact.")
-    unsafe_archive = skill_archive("unsafe-skill", "An unsafe fixture.", "# Unsafe method\n\nThis text itself is inert.", unsafe_script=True)
+    unsafe_archive = skill_archive("unsafe-skill", "An unsafe fixture.", "# Unsafe method\n\nThis text itself is inert.", unsafe_path=True)
+    script_archive = skill_archive("script-skill", "A complete package.", "# Script method", scripts=True)
     items = [
         catalog_item(catalog_id="good-skill@1.0.0", skill_id="good-skill", title="安全精选 Skill", call_name="中式意境巨构", download_url=GOOD_URL, archive=good_archive, order=1),
         catalog_item(catalog_id="rollback-skill@1.0.0", skill_id="rollback-skill", title="回滚精选 Skill", download_url=ROLLBACK_URL, archive=rollback_archive, order=2),
+        catalog_item(catalog_id="script-skill@1.0.0", skill_id="script-skill", title="完整脚本 Skill", download_url=SCRIPT_URL, archive=script_archive, order=3),
         catalog_item(catalog_id="unsafe-skill@1.0.0", skill_id="unsafe-skill", title="不安全精选 Skill", download_url=UNSAFE_URL, archive=unsafe_archive, order=3),
     ]
     catalog = {
@@ -111,6 +118,7 @@ def main() -> None:
         fulfill(CATALOG_URL, "application/json", json.dumps(catalog, ensure_ascii=False))
         fulfill(GOOD_URL, "application/zip", good_archive)
         fulfill(ROLLBACK_URL, "application/zip", rollback_archive)
+        fulfill(SCRIPT_URL, "application/zip", script_archive)
         fulfill(UNSAFE_URL, "application/zip", unsafe_archive)
 
         setup = session.open_page("collector.html")
@@ -122,7 +130,7 @@ def main() -> None:
         setup.close()
 
         page = session.open_page("curated-skills.html")
-        expect(page.locator(".curated-skill-card")).to_have_count(3)
+        expect(page.locator(".curated-skill-card")).to_have_count(4)
         assert requests == [CATALOG_URL], requests
 
         good_card = page.locator(".curated-skill-card").filter(has=page.get_by_role("heading", name="安全精选 Skill", exact=True))
@@ -152,13 +160,16 @@ def main() -> None:
         good_card = page.locator(".curated-skill-card").filter(has=page.get_by_role("heading", name="安全精选 Skill", exact=True))
         good_card.get_by_role("button", name="查看说明", exact=True).click()
         expect(page.locator("#skill-detail-dialog")).to_be_visible()
-        expect(page.locator(".curated-skill-markdown")).to_contain_text("使用方法")
-        expect(page.locator(".curated-skill-markdown h1")).to_have_count(0)
-        maintenance = page.locator(".curated-skill-maintenance")
-        expect(maintenance).not_to_have_attribute("open", "")
-        expect(maintenance.get_by_text("许可：CC BY 4.0", exact=True)).to_be_hidden()
-        maintenance.locator("summary").click()
-        expect(maintenance.get_by_text("许可：CC BY 4.0", exact=True)).to_be_visible()
+        reader = page.locator("#skill-detail-dialog .skill-detail-markdown")
+        expect(reader).to_contain_text("使用方法")
+        expect(reader.locator("h1")).to_have_count(1)
+        expect(page.locator(".curated-skill-maintenance")).to_have_count(0)
+        sidebar = page.locator("#skill-detail-dialog .skill-file-sidebar")
+        sidebar.locator("summary", has_text="references").click()
+        sidebar.get_by_role("button", name="guide.md", exact=True).click()
+        expect(reader).to_contain_text("Keep the subject readable.")
+        sidebar.get_by_role("button", name="SKILL.md", exact=True).click()
+        expect(reader).to_contain_text("Use clear hierarchy.")
 
         # Force a second click through the real handler so the idempotent transaction is exercised,
         # rather than only accepting the disabled UI as evidence.
@@ -190,14 +201,30 @@ def main() -> None:
         assert rolled_back["keys"] == first["keys"], {"before": first, "after": rolled_back}
 
         page.evaluate("chrome.runtime.sendMessage = window.__promptDirectorOriginalSendMessage")
+        script_card = page.locator(".curated-skill-card", has_text="完整脚本 Skill")
+        script_card.get_by_role("button", name="保存到本地", exact=True).click()
+        expect(page.locator("#skill-toast")).to_have_text("精选 Skill 已保存到本地")
+        with_scripts = persisted_snapshot(page)
+        assert len(with_scripts["skills"]) == 2, with_scripts
+        assert len(with_scripts["keys"]) == 7, with_scripts
+        script_text = {file["path"]: file["text"] for file in with_scripts["files"] if file["skillId"] == "script-skill"}
+        for path, text in SCRIPT_FILES.items():
+            assert script_text[path] == text, script_text
+        script_card.get_by_role("button", name="查看说明", exact=True).click()
+        sidebar.locator("summary", has_text="scripts").click()
+        for path in ("scripts/run.py", "scripts/run.js"):
+            sidebar.get_by_role("button", name=path.split("/")[-1], exact=True).click()
+            expect(page.locator(".skill-file-text")).to_have_text(SCRIPT_FILES[path])
+        assert page.evaluate("typeof globalThis.__skillScriptExecuted") == "undefined"
+        page.locator("#skill-detail-close").click()
         unsafe_card = page.locator(".curated-skill-card", has_text="不安全精选 Skill")
         unsafe_card.get_by_role("button", name="保存到本地", exact=True).click()
-        expect(page.locator("#skill-toast")).to_contain_text("包含不允许的文件")
+        expect(page.locator("#skill-toast")).to_contain_text("路径")
         after_unsafe = persisted_snapshot(page)
-        assert len(after_unsafe["skills"]) == 1, after_unsafe
-        assert after_unsafe["keys"] == first["keys"], {"before": first, "after": after_unsafe}
+        assert len(after_unsafe["skills"]) == 2, after_unsafe
+        assert after_unsafe["keys"] == with_scripts["keys"], {"before": with_scripts, "after": after_unsafe}
 
-        assert requests == [CATALOG_URL, GOOD_URL, ROLLBACK_URL, UNSAFE_URL], requests
+        assert requests == [CATALOG_URL, GOOD_URL, ROLLBACK_URL, SCRIPT_URL, UNSAFE_URL], requests
 
         page.evaluate("""async () => chrome.storage.local.set({
           uiPreferences: {locale: 'en', theme: 'dark', motion: 'none'}
@@ -205,7 +232,7 @@ def main() -> None:
         page.set_viewport_size({"width": 390, "height": 844})
         page.reload(wait_until="domcontentloaded")
         expect(page.locator("html")).to_have_attribute("data-theme", "dark")
-        expect(page.locator(".curated-skill-card")).to_have_count(3)
+        expect(page.locator(".curated-skill-card")).to_have_count(4)
         expect(page.locator("#skill-search")).to_have_attribute("placeholder", "Search by Skill or purpose")
         page.locator(".curated-skill-card").first.hover()
         mobile_visual = page.evaluate("""() => {
@@ -231,7 +258,8 @@ def main() -> None:
             "storedPackageFiles": len(after_unsafe["keys"]),
             "sameVersionIdempotent": True,
             "metadataFailureRolledBack": True,
-            "unsafePackageRejected": True,
+            "scriptsPreservedWithoutExecution": True,
+            "unsafePathRejected": True,
             "mobileDarkVisualContract": mobile_visual,
             "externalNetworkRequests": 0,
         })
