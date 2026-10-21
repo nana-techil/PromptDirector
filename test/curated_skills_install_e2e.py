@@ -7,7 +7,7 @@ import zipfile
 
 from playwright.sync_api import expect
 
-from e2e_support import extension_session
+from e2e_support import extension_session, wait_for_async_condition
 
 
 CATALOG_URL = "https://wchao6891.github.io/PromptDirector-Curated/skills-catalog.json"
@@ -196,6 +196,11 @@ def main() -> None:
         assert patched is True
         page.locator(".curated-skill-card", has_text="回滚精选 Skill").get_by_role("button", name="保存到本地", exact=True).click()
         expect(page.locator("#skill-toast")).to_have_text("模拟元数据提交失败")
+        # Durable stage cleanup runs after feedback so a cleanup delay cannot block the UI.
+        wait_for_async_condition(page, """async () => {
+          const stored = await chrome.storage.local.get('stagedMediaWrites');
+          return Object.keys(stored.stagedMediaWrites ?? {}).length === 0;
+        }""")
         rolled_back = persisted_snapshot(page)
         assert len(rolled_back["skills"]) == 1, rolled_back
         assert rolled_back["keys"] == first["keys"], {"before": first, "after": rolled_back}
