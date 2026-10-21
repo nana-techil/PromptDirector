@@ -300,12 +300,16 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-library")).to_be_visible()
         skills.locator("#skill-import").click()
         skills.locator("#skill-zip-file").set_input_files(str(external_zip))
-        dependency_dialog = skills.locator("#promptdirector-app-dialog")
-        expect(dependency_dialog).to_be_visible()
-        dependency_warning = dependency_dialog.text_content()
-        dependency_dialog.get_by_role("button", name="仍要导入", exact=True).click()
         expect(skills.locator("#skill-feedback")).to_contain_text("已导入 /external-method")
-        assert "scripts" in dependency_warning
+        expect(skills.locator("#promptdirector-app-dialog")).not_to_be_visible()
+        imported_script = skills.evaluate("""async () => {
+          const {creativeSkills} = await chrome.storage.local.get('creativeSkills');
+          const skill = creativeSkills.items.find(item => item.callName === 'external-method');
+          const file = skill.packageFiles.find(item => item.path.endsWith('scripts/helper.py'));
+          const {getMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
+          return (await getMediaBlob(file.assetId)).text();
+        }""")
+        assert imported_script == "print('helper')\n"
         expect(skills.locator(".skill-card")).to_have_count(2)
         card_layout = skills.evaluate("""() => {
           const cards = [...document.querySelectorAll('.skill-card')];

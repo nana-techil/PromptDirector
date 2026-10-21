@@ -96,7 +96,7 @@ def main() -> None:
         catalog_item(catalog_id="good-skill@1.0.0", skill_id="good-skill", title="安全精选 Skill", call_name="中式意境巨构", download_url=GOOD_URL, archive=good_archive, order=1),
         catalog_item(catalog_id="rollback-skill@1.0.0", skill_id="rollback-skill", title="回滚精选 Skill", download_url=ROLLBACK_URL, archive=rollback_archive, order=2),
         catalog_item(catalog_id="script-skill@1.0.0", skill_id="script-skill", title="完整脚本 Skill", download_url=SCRIPT_URL, archive=script_archive, order=3),
-        catalog_item(catalog_id="unsafe-skill@1.0.0", skill_id="unsafe-skill", title="不安全精选 Skill", download_url=UNSAFE_URL, archive=unsafe_archive, order=3),
+        catalog_item(catalog_id="unsafe-skill@1.0.0", skill_id="unsafe-skill", title="不安全精选 Skill", download_url=UNSAFE_URL, archive=unsafe_archive, order=4),
     ]
     catalog = {
         "format": "prompt-director-curated-skills",
