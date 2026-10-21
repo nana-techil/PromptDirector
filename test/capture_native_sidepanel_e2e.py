@@ -32,6 +32,7 @@ with tempfile.TemporaryDirectory(prefix='pd-native-sender-') as tmp:
   for _ in range(100):
    if evaluate("Boolean(document.querySelector('#open-capture-assistant'))"):break
    p.wait_for_timeout(50)
+  evaluate("import(chrome.runtime.getURL('collector.js')).then(module => module.collectorStartup)")
   sender=evaluate("chrome.runtime.sendMessage({type:'PROBE_SENDER'})")
   assert 'documentId' not in sender,sender
   evaluate("document.querySelector('#open-capture-assistant').click()")

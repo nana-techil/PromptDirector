@@ -329,7 +329,7 @@ elements.contentType.addEventListener("change", () => updateCaptureMetadata({
 }));
 
 await captureAssistantView.restore();
-void startAutomaticPageCapture();
+export const collectorStartup = startAutomaticPageCapture();
 
 async function startAutomaticPageCapture() {
   if (autoPageCaptureActive || pageCaptureBatch || pageCaptureRequestId || pendingCaptureAction

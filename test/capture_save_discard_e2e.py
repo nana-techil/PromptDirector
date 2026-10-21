@@ -60,6 +60,7 @@ def main():
                 captureSaveInput:{type:'COMMIT_PAGE_CAPTURE',saveRequestId:status,batch}});
             }''', status)
             page.reload()
+            page.evaluate("async () => await (await import('./collector.js')).collectorStartup")
             expect(page.locator('#page-capture')).to_be_visible()
             if status != 'pending':
                 expect(page.locator('#collector-footer')).to_be_hidden()
@@ -84,6 +85,7 @@ def main():
             entries = page.evaluate("async()=>(await chrome.runtime.sendMessage({type:'GET_CASE_LIBRARY_STATE'})).entries")
             assert any(entry['text'] == '必须保留' for entry in entries), entries
             page.reload()
+            page.evaluate("async () => await (await import('./collector.js')).collectorStartup")
             expect(page.locator('#page-capture')).to_be_hidden()
             # A new visible capture now proceeds through the real save service and library commit.
             page.evaluate('''status=>{
