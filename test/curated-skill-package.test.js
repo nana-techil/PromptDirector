@@ -20,18 +20,18 @@ function fixture(overrides = {}) {
     description: "把主体层级组织成清晰画面。",
     skillMarkdown: "# 构图方法\n\n保持主体清晰。",
     references: [{ path: "references/guide.md", markdown: "# Guide\n\nUse depth.", runtime: true }],
-    provenanceMarkdown: `# 私人来源\n\n${["", "Users", "private", "cases.md"].join("/")}`
+    provenanceMarkdown: "# Public provenance\n\nOriginal evidence."
   }, { id: "local:one", versionId: "version:one", now: "2026-08-23T00:00:00.000Z" }).skill;
 }
 
-test("curated submission snapshot includes a byte-verified image, is exact-previewable, and excludes private provenance by default", async () => {
+test("curated submission snapshot includes a byte-verified image, is exact-previewable, and retains provenance instead of silently excluding files", async () => {
   const skill = fixture();
   const snapshot = await buildCuratedSkillSnapshot(skill, {
     author: "Creator One",
     summary: "A reusable composition method.",
     rightsConfirmed: true
   });
-  assert.deepEqual([...snapshot.files.keys()], ["SKILL.md", "references/guide.md", "assets/cover.gif"]);
+  assert.deepEqual([...snapshot.files.keys()], ["SKILL.md", "references/guide.md", "references/provenance.md", "assets/cover.gif"]);
   assert.equal(snapshot.findings.length, 0);
   assert.doesNotMatch(await snapshot.files.get("SKILL.md").text(), /私人来源|\/Users\/private/);
   assert.equal(snapshot.manifest.reviewStatus, "pending");
@@ -42,7 +42,7 @@ test("curated submission snapshot includes a byte-verified image, is exact-previ
   assert.equal("authorId" in snapshot.manifest, false);
   assert.equal("skillVersion" in snapshot.manifest, false);
   assert.equal(snapshot.preview[0].text, await snapshot.files.get("SKILL.md").text());
-  assert.equal(currentCreativeSkillVersion(skill).provenanceMarkdown.includes("private"), true);
+  assert.equal(await snapshot.files.get("references/provenance.md").text(), currentCreativeSkillVersion(skill).provenanceMarkdown + "\n");
 });
 
 test("privacy findings are reported without mutating the final preview", async () => {
@@ -75,7 +75,7 @@ test("submission archive contains a manifest and the reviewed method and cover p
   assert.equal("authorId" in manifest, false);
   assert.equal("skillVersion" in manifest, false);
   const payload = await readZipBlob(outer.get("payload.zip"));
-  assert.deepEqual([...payload.keys()], ["SKILL.md", "references/guide.md", "assets/cover.gif"]);
+  assert.deepEqual([...payload.keys()], ["SKILL.md", "references/guide.md", "references/provenance.md", "assets/cover.gif"]);
 });
 
 test("curated submission rejects missing public consent and derives its stable id from the Skill", async () => {
@@ -105,4 +105,13 @@ test("new submissions need a cover but historical methods stay valid locally", a
   const skill = fixture(); skill.packageFiles = [];
   await assert.rejects(() => buildCuratedSkillSnapshot(skill, { author: "Creator", summary: "Method", rightsConfirmed: true }), /成果封面/);
   assert.ok(currentCreativeSkillVersion(skill).skillMarkdown);
+});
+
+ test("private provenance remains in the preview and blocks publication rather than disappearing", async () => {
+  const skill = fixture();
+  skill.versions[0].provenanceMarkdown = ['','Users','private','source.md'].join('/');
+  const snapshot = await buildCuratedSkillSnapshot(skill, { author: 'Creator', summary: 'Method', rightsConfirmed: true });
+  assert.ok(snapshot.files.has('references/provenance.md'));
+  assert.ok(snapshot.findings.some(item => item.path === 'references/provenance.md'));
+  await assert.rejects(() => buildCuratedSkillSubmissionArchive(snapshot), /隐私风险/);
 });

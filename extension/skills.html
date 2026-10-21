@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="ui-foundation.css" />
     <link rel="stylesheet" href="library.css" />
     <link rel="stylesheet" href="skills-page.css" />
+    <link rel="stylesheet" href="skill-file-browser.css" />
     <link rel="stylesheet" href="skill-cover.css" />
     <link rel="stylesheet" href="source-video-preview.css" />
 </head>
@@ -36,29 +37,25 @@
           <div class="skill-detail-actions">
             <button id="skill-test" type="button" data-i18n="用此 Skill 创作">用此 Skill 创作</button>
             <button id="skill-detail-edit" class="button-secondary" type="button" data-i18n="编辑">编辑</button>
+            <details id="skill-detail-download" class="skill-detail-more">
+              <summary data-i18n="下载">下载</summary>
+              <div class="skill-detail-more-panel">
+                <button id="skill-export" class="button-secondary" type="button" data-i18n="下载完整 Skill">下载完整 Skill</button>
+                <button id="skill-download-file" class="button-secondary" type="button" data-i18n="下载当前文件">下载当前文件</button>
+              </div>
+            </details>
             <details id="skill-detail-more" class="skill-detail-more">
               <summary data-i18n="更多">更多</summary>
               <div class="skill-detail-more-panel">
                 <button id="skill-detail-refine" class="button-secondary" type="button" data-i18n="用证据改进 Skill">用证据改进 Skill</button>
-                <button id="skill-export" class="button-secondary" type="button" data-i18n="导出 Skill">导出 Skill</button>
                 <button id="skill-submit-curated" class="button-secondary" type="button" data-i18n="投稿到精选 Skill">投稿到精选 Skill</button>
               </div>
             </details>
           </div>
         </header>
         <p id="skill-detail-feedback" class="skill-feedback ui-task-feedback" role="status"></p>
-        <div id="skill-detail-cover" class="skill-cover-detail" hidden></div>
-        <div class="skill-detail-layout">
-          <aside class="skill-detail-summary">
-            <p id="skill-detail-description"></p>
-            <dl>
-              <div><dt data-i18n="版本">版本</dt><dd id="skill-detail-version"></dd></div>
-              <div><dt data-i18n="来源">来源</dt><dd id="skill-detail-source"></dd></div>
-              <div><dt data-i18n="更新">更新</dt><dd id="skill-detail-updated"></dd></div>
-            </dl>
-          </aside>
-          <article id="skill-detail-markdown" class="skill-detail-markdown"></article>
-        </div>
+        <p id="skill-detail-description" class="skill-detail-description"></p>
+        <div id="skill-detail-files"></div>
       </section>
 
       <section id="skill-workspace" class="skill-workspace" hidden>
@@ -116,14 +113,16 @@
 
             <section id="skill-draft-step" class="skill-step skill-draft-step" tabindex="-1" hidden>
               <div class="skill-section-heading"><div><small>03</small><strong data-i18n="编辑并保存">编辑并保存</strong></div><span id="skill-version-label"></span></div>
-              <div class="skill-result-actions"><button data-i18n="返回选材" id="skill-back-sources" class="button-secondary" type="button">返回选材</button><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
+              <div class="skill-result-actions"><button data-i18n="返回选材" id="skill-back-sources" class="button-secondary" type="button">返回选材</button><button id="skill-add-files" class="button-secondary" type="button" data-i18n="添加文件">添加文件</button><button id="skill-add-folder" class="button-secondary" type="button" data-i18n="添加文件夹">添加文件夹</button><button id="skill-save" type="button" data-i18n="保存 Skill">保存 Skill</button></div>
               <div class="skill-name-grid">
                 <label><span data-i18n="调用名">调用名</span><div class="skill-call-name"><b>/</b><input id="skill-call-name" maxlength="80" placeholder="你的 Skill 名称" data-i18n-placeholder="你的 Skill 名称" /></div></label>
                 <label><span data-i18n="说明">说明</span><input id="skill-description" maxlength="240" placeholder="它在什么创作任务中发挥作用" data-i18n-placeholder="它在什么创作任务中发挥作用" /></label>
               </div>
               <div id="skill-cover-editor"></div>
-              <article id="skill-draft-preview" class="skill-draft-preview"></article>
-              <details id="skill-draft-editor" class="skill-draft-editor"><summary data-i18n="查看并编辑 SKILL.md">查看并编辑 SKILL.md</summary><label><span data-i18n="SKILL.md 正文">SKILL.md 正文</span><textarea id="skill-markdown" class="skill-markdown-editor" rows="22"></textarea></label></details>
+              <div id="skill-draft-preview"></div>
+              <textarea id="skill-markdown" class="skill-markdown-editor" rows="22" aria-label="SKILL.md 正文" data-i18n-aria-label="SKILL.md 正文" hidden></textarea>
+              <input id="skill-add-files-input" type="file" multiple hidden />
+              <input id="skill-add-folder-input" type="file" webkitdirectory multiple hidden />
 
               <p id="skill-save-status" class="skill-feedback ui-task-feedback" role="status"></p>
             </section>

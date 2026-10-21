@@ -143,11 +143,14 @@ function appendInline(parent, sourceValue, options) {
 function appendInlineToken(parent, token, options) {
   const media = token.match(/^(!?)\[([^\]]*)\]\(([^)]+)\)$/);
   if (media) {
-    if (media[1] && /^document-image:\d+$/u.test(media[3]) && options.loadLocalImage) {
-      parent.append(localDocumentImage(media[3], media[2], options));
+    const localLink = !media[1] && options.renderLink?.(media[3], media[2]);
+    if (localLink) { parent.append(localLink); return; }
+    const reference = options.resolveLink?.(media[3], Boolean(media[1])) ?? media[3];
+    if (media[1] && /^document-image:\d+$/u.test(reference) && options.loadLocalImage) {
+      parent.append(localDocumentImage(reference, media[2], options));
       return;
     }
-    const url = safeRemoteUrl(media[3]);
+    const url = safeRemoteUrl(reference);
     if (media[1]) parent.append(remoteImage(url, media[2], options));
     else {
       const link = document.createElement("a");

@@ -20,7 +20,7 @@ export async function buildCuratedSkillSnapshot(skillValue, metadata = {}, optio
   const parsed = await parseSkillFiles(stored);
   const files = new Map([...stored].map(([path, blob]) => [parsed.root ? path.slice(parsed.root.length + 1) : path, blob]));
   for (const path of files.keys()) {
-    if (isSkillCoverPath(path) || (path === "references/provenance.md" && metadata.includeProvenance !== true)) files.delete(path);
+    if (isSkillCoverPath(path)) files.delete(path);
   }
   files.set(cover.path, cover.blob);
   const preview = [];

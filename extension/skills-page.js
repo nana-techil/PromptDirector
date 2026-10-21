@@ -8,6 +8,9 @@ import { createUiIcon } from "./ui-icons.js";
 import { bindVideoHoverPreview } from "./video-hover-preview.js";
 import { createSourceVideoPreview, bindSourceVideoCover } from "./source-video-preview.js";
 import { createSkillCoverEditor, showSkillCoverImage, clearSkillCoverImage } from "./skill-cover-ui.js";
+import { createSkillFileBrowser } from "./skill-file-browser.js";
+import { skillRevision } from "./skill-operations.js";
+import { prepareSkillFileEdit } from "./skill-package-edit.js";
 import { readSkillCover } from "./skill-cover.js";
 import { DEFAULT_COMPOSER_REQUEST_TIMEOUT_MS, normalizeAiSettings } from "./deepseek.js";
 import { normalizeComposerSettings, referenceSourcePartsForAsset } from "./composer.js";
@@ -19,6 +22,8 @@ import {
 import {
   buildProvenanceMarkdown,
   exportStoredSkillPackage,
+  storedSkillFiles,
+  storedSkillPaths,
   parseSkillFile,
   parseSkillFiles
 } from "./creative-skill-package.js";
@@ -56,7 +61,6 @@ import {
   saveSkillPackageBlob
 } from "./media-store.js";
 import { entryMediaAssets, primaryImageAsset } from "./media.js";
-import { renderMarkdownDocument } from "./markdown-renderer.js";
 import { blobToDataUrl, normalizeVisionSettings } from "./vision.js";
 import { currentLocale, initializeUi, t, translateUiMessage } from "./i18n.js";
 import { confirmAppAction, showAppDialog } from "./ui-dialogs.js";
@@ -75,10 +79,10 @@ const CURATED_SKILL_PUBLISHER_STORAGE_KEY = "curatedSkillPublisher";
 
 const elements = Object.fromEntries([
   "skill-search", "skill-import", "skill-create", "skill-context-back", "skill-zip-file", "skill-folder-files", "skill-library", "skill-summary", "skill-feedback", "skill-list", "skill-empty",
-  "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-version", "skill-detail-source", "skill-detail-updated", "skill-detail-markdown", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export", "skill-submit-curated",
+  "skill-detail", "skill-detail-title", "skill-detail-call-name", "skill-detail-feedback", "skill-detail-description", "skill-detail-files", "skill-detail-download", "skill-download-file", "skill-detail-edit", "skill-detail-more", "skill-detail-refine", "skill-export", "skill-submit-curated",
   "skill-workspace", "skill-workspace-kicker", "skill-workspace-title", "skill-delete", "skill-builder", "skill-source-sidebar", "skill-source-step", "skill-target-step", "skill-selected-count", "skill-project-picker", "skill-project-label", "skill-project-filter", "skill-case-search", "skill-clear-selection", "skill-visible-select", "skill-selection-summary", "skill-case-scroll", "skill-case-grid", "skill-case-load-more",
   "skill-run-evidence-step", "skill-run-evidence-count", "skill-run-evidence-list",
-  "skill-show-draft", "skill-back-sources", "skill-draft-preview", "skill-goal", "skill-use-vision", "skill-vision-toggle-note", "skill-vision-preview", "skill-advanced", "skill-text-provider-menu", "skill-vision-provider-menu", "skill-text-instruction", "skill-vision-instruction", "skill-restore-instructions", "skill-request-preview", "skill-generate", "skill-retry-vision", "skill-run-panel", "skill-generation-status", "skill-run-elapsed", "skill-stop-run", "skill-run-progress", "skill-run-stages", "skill-run-log", "skill-generation-feedback", "skill-draft-step", "skill-draft-editor", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
+  "skill-show-draft", "skill-back-sources", "skill-draft-preview", "skill-goal", "skill-use-vision", "skill-vision-toggle-note", "skill-vision-preview", "skill-advanced", "skill-text-provider-menu", "skill-vision-provider-menu", "skill-text-instruction", "skill-vision-instruction", "skill-restore-instructions", "skill-request-preview", "skill-generate", "skill-retry-vision", "skill-run-panel", "skill-generation-status", "skill-run-elapsed", "skill-stop-run", "skill-run-progress", "skill-run-stages", "skill-run-log", "skill-generation-feedback", "skill-draft-step", "skill-add-files", "skill-add-folder", "skill-add-files-input", "skill-add-folder-input", "skill-version-label", "skill-call-name", "skill-description", "skill-markdown", "skill-save", "skill-test", "skill-save-status", "skill-versions-step", "skill-version-list",
   "skill-source-inspector-backdrop", "skill-source-inspector", "skill-source-inspector-title", "skill-source-inspector-close", "skill-source-select-all", "skill-source-clear", "skill-source-text-option", "skill-source-include-text", "skill-source-asset-list", "skill-source-cancel", "skill-source-apply",
   "skill-import-dialog", "skill-import-close", "skill-import-zip", "skill-import-folder",
   "skill-submission-dialog", "skill-submission-close", "skill-submission-author", "skill-submission-author-error", "skill-submission-summary", "skill-submission-summary-error", "skill-submission-rights", "skill-submission-rights-error", "skill-submission-refresh", "skill-submission-open", "skill-submission-feedback", "skill-submission-findings", "skill-submission-preview"
@@ -115,6 +119,10 @@ let skillRuntimeSettings = null;
 let activeSkillRun = null;
 let visionPreferenceTouched = false;
 let curatedSubmissionSnapshot = null;
+let pendingSkillFiles = new Map();
+let draftPortableId = '';
+const detailFiles = createSkillFileBrowser({ host: elements.skillDetailFiles });
+const editorFiles = createSkillFileBrowser({ host: elements.skillDraftPreview });
 
 const coverEditor = createSkillCoverEditor({
   host: document.querySelector("#skill-cover-editor"), readFile: getMediaBlob,
@@ -130,6 +138,14 @@ function bindEvents() {
   elements.skillContextBack.addEventListener("click", () => safely(navigateBack)());
   elements.skillDetailEdit.addEventListener("click", () => navigateTo("editor", activeSkillId));
   elements.skillDetailRefine.addEventListener("click", () => navigateTo("refine", activeSkillId));
+  elements.skillDownloadFile.addEventListener('click', () => safely(async () => {
+    elements.skillDetailDownload.open = false;
+    const file = await detailFiles.selectedFile();
+    await downloadBlob(file.blob, { filename: file.path.split('/').at(-1) });
+  })());
+  elements.skillAddFiles.addEventListener('click', () => elements.skillAddFilesInput.click());
+  elements.skillAddFolder.addEventListener('click', () => elements.skillAddFolderInput.click());
+  for (const input of [elements.skillAddFilesInput, elements.skillAddFolderInput]) input.addEventListener('change', () => safely(() => addSkillFiles(input))());
   elements.skillExport.addEventListener("click", () => safely(exportSkill)());
   elements.skillSubmitCurated.addEventListener("click", () => runCuratedSubmissionAction(openCuratedSubmission));
   elements.skillImport.addEventListener("click", () => elements.skillImportDialog.showModal());
@@ -155,7 +171,7 @@ function bindEvents() {
   sourceLoader.observe(elements.skillCaseLoadMore);
   elements.skillShowDraft.addEventListener("click", showDraftResult);
   elements.skillBackSources.addEventListener("click", showSourceWorkspace);
-  elements.skillMarkdown.addEventListener("input", renderDraftPreview);
+
   elements.skillGoal.addEventListener("input", renderRequestPreview);
   elements.skillUseVision.addEventListener("change", () => { visionPreferenceTouched = true; renderVisionPreview(); renderRequestPreview(); });
   elements.skillTextInstruction.addEventListener("input", renderRequestPreview);
@@ -178,7 +194,7 @@ function bindEvents() {
   addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !elements.skillSourceInspector.hidden) cancelSourceInspector();
   });
-  addEventListener("beforeunload", () => { activeSkillRun?.controller.abort(); releaseThumbnails(); releaseSourceVideos(); });
+  addEventListener("beforeunload", () => { detailFiles.dispose(); editorFiles.dispose(); activeSkillRun?.controller.abort(); releaseThumbnails(); releaseSourceVideos(); });
 }
 
 // The Skill list only needs Skills. The whole case library (the slow part of opening this page)
@@ -331,7 +347,7 @@ function routeUrl(route) {
 
 function renderRoute(route) {
   requestedRoute = route;
-  if (route.view !== "list" && !libraryEntriesReady) {
+  if (["create", "refine"].includes(route.view) && !libraryEntriesReady) {
     document.body.dataset.skillLoading = "true";
     void readLibraryEntries().then(() => {
       delete document.body.dataset.skillLoading;
@@ -352,6 +368,9 @@ function renderRoute(route) {
   elements.skillImport.hidden = !listView;
   elements.skillCreate.hidden = !listView;
   elements.skillDetailMore.open = false;
+  elements.skillDetailDownload.open = false;
+  detailFiles.dispose();
+  editorFiles.dispose();
   elements.skillLibrary.hidden = route.view !== "list";
   elements.skillDetail.hidden = route.view !== "detail";
   elements.skillWorkspace.hidden = !["create", "editor", "refine"].includes(route.view);
@@ -382,15 +401,13 @@ function renderSkillDetail() {
   releaseThumbnails();
   const skill = activeSkill();
   if (!skill) return navigateTo("list", "", { replace: true });
-  const version = currentCreativeSkillVersion(skill);
-  showSkillCoverImage(document.querySelector("#skill-detail-cover"), () => readSkillCover(skill, getMediaBlob), { alt: skill.callName });
   elements.skillDetailTitle.textContent = skill.callName;
   elements.skillDetailCallName.textContent = `/${skill.callName}`;
   elements.skillDetailDescription.textContent = skill.description || t("暂无说明");
-  elements.skillDetailVersion.textContent = `v${versionNumber(skill, version.id)}`;
-  elements.skillDetailSource.textContent = version.source === "imported" ? t("外部包") : "PromptDirector";
-  elements.skillDetailUpdated.textContent = formatDate(skill.updatedAt);
-  elements.skillDetailMarkdown.replaceChildren(renderMarkdownDocument(version.skillMarkdown));
+  const paths = storedSkillPaths(skill);
+  detailFiles.setSource({ paths, mainPath: paths.find(path => path === 'SKILL.md' || path.endsWith('/SKILL.md')),
+    readFile: async path => (await storedSkillFiles(skill, { readFile: getMediaBlob, paths: [path] })).get(path)
+  });
   setFeedback(elements.skillDetailFeedback, "");
 }
 
@@ -414,6 +431,8 @@ function renderWorkspace(view, skillId = "") {
   finishSkillRun();
   const skill = activeSkill();
   coverEditor.reset(skill);
+  pendingSkillFiles = new Map();
+  draftPortableId = skill?.portableId ?? `skill-${crypto.randomUUID()}`;
   const selectingSources = view === "create" || view === "refine";
   elements.skillBuilder.dataset.mode = view;
   elements.skillBuilder.dataset.stage = "sources";
@@ -445,7 +464,7 @@ function renderWorkspace(view, skillId = "") {
     elements.skillDescription.value = skill.description;
     elements.skillMarkdown.value = version.skillMarkdown;
     elements.skillDraftStep.hidden = false;
-    elements.skillDraftEditor.open = view === "editor";
+
     elements.skillVersionsStep.hidden = false;
     elements.skillVersionLabel.textContent = t("当前 v{version}", { version: versionNumber(skill, version.id) });
     renderVersions(skill);
@@ -454,7 +473,7 @@ function renderWorkspace(view, skillId = "") {
     elements.skillDescription.value = "";
     elements.skillMarkdown.value = "";
     elements.skillDraftStep.hidden = true;
-    elements.skillDraftEditor.open = false;
+
     elements.skillVersionsStep.hidden = true;
   }
   setFeedback(elements.skillGenerationStatus, "");
@@ -1171,14 +1190,35 @@ async function generateTextDraft(settingsValue = null, sourcesValue = null) {
 }
 
 function renderDraftPreview() {
-  elements.skillDraftPreview.replaceChildren(renderMarkdownDocument(elements.skillMarkdown.value));
+  const skill = activeSkill();
+  const paths = [...new Set([...(skill ? storedSkillPaths(skill) : ['SKILL.md']), ...pendingSkillFiles.keys()])];
+  const mainPath = paths.find(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'));
+  elements.skillMarkdown.hidden = false;
+  editorFiles.setSource({ paths, mainPath, mainEditor: elements.skillMarkdown,
+    readFile: async path => pendingSkillFiles.get(path) ?? (await storedSkillFiles(skill, { readFile: getMediaBlob, paths: [path] })).get(path),
+    onChange: (path, blob) => pendingSkillFiles.set(path, blob)
+  });
+}
+
+async function addSkillFiles(input) {
+  const files = [...input.files]; input.value = '';
+  const skill = activeSkill();
+  const paths = skill ? storedSkillPaths(skill) : ['SKILL.md'];
+  const main = paths.find(path => path === 'SKILL.md' || path.endsWith('/SKILL.md'));
+  const prefix = main.slice(0, -'SKILL.md'.length);
+  const additions = files.map(file => [prefix + (file.webkitRelativePath || file.name), file]);
+  if (additions.some(([path]) => path === main)) throw new Error(t('请在正文编辑区修改 SKILL.md；完整包请使用导入'));
+  const overwritten = additions.filter(([path]) => paths.includes(path) || pendingSkillFiles.has(path));
+  if (overwritten.length && !await confirmAppAction({ title: t('替换同名文件？'), description: overwritten.map(([path]) => path).join('\n'), confirmLabel: t('替换') })) return;
+  for (const [path, file] of additions) pendingSkillFiles.set(path, file);
+  renderDraftPreview();
 }
 
 function showDraftResult() {
   sourceScrollPosition = window.scrollY;
   closeSourceInspector();
   renderDraftPreview();
-  elements.skillDraftEditor.open = false;
+
   elements.skillBuilder.dataset.stage = "result";
   elements.skillDraftStep.hidden = false;
   elements.skillShowDraft.hidden = false;
@@ -1201,6 +1241,9 @@ async function saveSkill() {
   const creating = !activeSkillId;
   elements.skillSave.disabled = true;
   coverEditor.setDisabled(true);
+  const fileStage = createMediaStage();
+  editorFiles.setDisabled(true);
+  elements.skillAddFiles.disabled = elements.skillAddFolder.disabled = true;
   const editableFields = [elements.skillCallName, elements.skillDescription, elements.skillMarkdown];
   editableFields.forEach(field => { field.readOnly = true; });
   try {
@@ -1221,18 +1264,32 @@ async function saveSkill() {
     const message = activeSkillId ? {
       type: "SAVE_CREATIVE_SKILL_VERSION",
       skillId: activeSkillId,
+      expectedRevision: await skillRevision(activeSkill()),
       version: { callName, description, skillMarkdown, provenanceMarkdown, reason: "improved", source: activeSkill()?.versions.at(-1)?.source,
-        coverOnly: activeView === "editor" && callName === activeSkill()?.callName && description === activeSkill()?.description && skillMarkdown === currentCreativeSkillVersion(activeSkill())?.skillMarkdown }
+        coverOnly: !pendingSkillFiles.size && activeView === "editor" && callName === activeSkill()?.callName && description === activeSkill()?.description && skillMarkdown === currentCreativeSkillVersion(activeSkill())?.skillMarkdown }
     } : {
       type: "CREATE_CREATIVE_SKILL",
       skill: { callName, description, skillMarkdown, provenanceMarkdown, reason: "created", source: "generated" }
     };
+    if (pendingSkillFiles.size) {
+      const input = message.version ?? message.skill;
+      Object.assign(input, await prepareSkillFileEdit({ skill: activeSkill(), input: { ...input, portableId: draftPortableId },
+        changes: pendingSkillFiles, readFile: getMediaBlob,
+        saveFile: async (path, blob) => {
+          const assetId = `skill-file:${crypto.randomUUID()}`;
+          await fileStage.register([assetId]); await saveSkillPackageBlob(assetId, blob);
+          return { path, assetId, byteSize: blob.size, mimeType: blob.type || 'application/octet-stream' };
+        }
+      }));
+    }
     if (coverEditor.value() !== undefined) message.cover = coverEditor.value();
     const response = await chrome.runtime.sendMessage(message);
     if (!response?.ok) throw new Error(response?.message || t("Skill 保存失败"));
     creativeSkills = normalizeCreativeSkillsState(response.creativeSkills);
     activeSkillId = response.skill.id;
     coverEditor.reset(response.skill);
+    pendingSkillFiles = new Map();
+    renderDraftPreview();
     elements.skillDelete.hidden = false;
     elements.skillVersionsStep.hidden = false;
     elements.skillWorkspaceTitle.textContent = response.skill.callName;
@@ -1242,6 +1299,9 @@ async function saveSkill() {
       setFeedback(elements.skillDetailFeedback, response.message);
     } else setFeedback(elements.skillSaveStatus, response.message);
   } finally {
+    await fileStage.release();
+    editorFiles.setDisabled(false);
+    elements.skillAddFiles.disabled = elements.skillAddFolder.disabled = false;
     elements.skillSave.disabled = false;
     coverEditor.setDisabled(false);
     editableFields.forEach(field => { field.readOnly = false; });
@@ -1272,6 +1332,8 @@ async function restoreVersion(versionId) {
   const version = currentCreativeSkillVersion(response.skill);
   elements.skillMarkdown.value = version.skillMarkdown;
   elements.skillDescription.value = response.skill.description;
+  pendingSkillFiles = new Map();
+  renderDraftPreview();
   renderVersions(response.skill);
   setFeedback(elements.skillSaveStatus, response.message);
 }
@@ -1295,6 +1357,7 @@ async function testSkill() {
 }
 
 async function exportSkill() {
+  elements.skillDetailDownload.open = false;
   const skill = activeSkill();
   if (!skill) return;
   const archive = await exportStoredSkillPackage(skill, { readFile: getMediaBlob });
@@ -1457,17 +1520,6 @@ async function importFolder() {
 }
 
 async function importParsedSkill(parsed, sourceName) {
-  if (parsed.requiresTextModeConfirmation) {
-    const approved = await confirmAppAction({
-      title: t("以文字模式导入？"),
-      description: t("“{source}”依赖 {dependencies}。PromptDirector 不会执行这些程序或工具，只能使用可读取的文字方法。", {
-      source: sourceName,
-      dependencies: parsed.dependencies.join(currentLocale() === "en" ? ", " : "、")
-      }),
-      confirmLabel: t("仍要导入")
-    });
-    if (!approved) return;
-  }
   const packageFiles = [];
   const stage = createMediaStage();
   try {
@@ -1774,7 +1826,7 @@ function safely(action) {
         ? elements.skillDetailFeedback
         : activeView === "list"
           ? elements.skillFeedback
-          : elements.skillGenerationFeedback;
+          : activeView === "editor" || elements.skillBuilder.dataset.stage === "result" ? elements.skillSaveStatus : elements.skillGenerationFeedback;
       setFeedback(target, error.message || t("操作失败"), true);
     }
   };

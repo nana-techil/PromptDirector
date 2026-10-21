@@ -16,7 +16,7 @@ import { fetchCuratedPackage, readResponseBlobWithProgress } from "./curated-dow
 import { installCuratedSkillTransaction, planCuratedSkillInstall } from "./curated-skill-install.js";
 import { initializeUi, t, translateUiMessage } from "./i18n.js";
 import { saveSkillPackageBlob } from "./media-store.js";
-import { renderMarkdownDocument } from "./markdown-renderer.js";
+import { createSkillFileBrowser } from "./skill-file-browser.js";
 
 await initializeUi();
 
@@ -25,6 +25,8 @@ const elements = Object.fromEntries([
 ].map((id) => [camel(id), document.querySelector(`#${id}`)]));
 const state = { catalog: null, creativeSkills: { version: 1, items: [] }, parsed: new Map(), archives: new Map(), query: "" };
 let toastTimer = 0;
+let detailFiles = null;
+let detailGeneration = 0;
 const covers = new Map();
 function loadCover(item) {
   if (!item.cover) return null;
@@ -35,6 +37,7 @@ function loadCover(item) {
 elements.returnLibrary.addEventListener("click", () => location.assign(chrome.runtime.getURL("library.html")));
 elements.retryCatalog.addEventListener("click", start);
 elements.skillSearch.addEventListener("input", () => { state.query = elements.skillSearch.value.trim().toLocaleLowerCase(); render(); });
+elements.skillDetailDialog.addEventListener("close", () => { detailGeneration++; detailFiles?.dispose(); });
 elements.skillDetailClose.addEventListener("click", () => elements.skillDetailDialog.close());
 elements.skillDetailDialog.addEventListener("click", (event) => { if (event.target === elements.skillDetailDialog) elements.skillDetailDialog.close(); });
 
@@ -109,18 +112,24 @@ function card(item) {
 }
 
 async function openDetail(item) {
+  const generation = ++detailGeneration;
+  detailFiles?.dispose();
   for (const host of elements.skillDetailContent.querySelectorAll(".skill-cover-detail")) clearSkillCoverImage(host);
   elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", t("正在校验并读取 Skill…")));
   elements.skillDetailDialog.showModal();
   try {
     const parsed = await loadParsed(item);
-    renderDetail(item, parsed);
+    if (generation === detailGeneration) renderDetail(item, parsed);
   } catch (error) {
+    if (generation !== detailGeneration) return;
     elements.skillDetailContent.replaceChildren(element("div", "curated-skill-detail", translateUiMessage(error.message) || t("Skill 读取失败")));
   }
 }
 
 function renderDetail(item, parsed) {
+  const selectedPath = detailFiles?.selection();
+  detailFiles?.dispose();
+  for (const host of elements.skillDetailContent.querySelectorAll(".skill-cover-detail")) clearSkillCoverImage(host);
   const root = element("article", "curated-skill-detail");
   const header = element("header");
   const copy = element("div", "curated-skill-detail-copy");
@@ -128,23 +137,12 @@ function renderDetail(item, parsed) {
   const action = installButton(item, parsed);
   action.classList.add("curated-skill-primary");
   header.append(copy, action);
-  const maintenance = element("details", "curated-skill-maintenance");
-  maintenance.append(element("summary", "", t("版本与许可")));
-  const maintenanceCopy = element("div", "curated-skill-maintenance-copy");
-  maintenanceCopy.append(
-    element("span", "", t("作者：{author}", { author: item.author })),
-    element("span", "", t("版本：{version}", { version: item.version })),
-    element("span", "", t("许可：{license}", { license: item.license })),
-    element("span", "", t("人工审核通过"))
-  );
-  maintenance.append(maintenanceCopy);
   const markdown = element("section", "curated-skill-markdown");
-  const document = renderMarkdownDocument(parsed.body);
-  removeDuplicateTitleHeading(document, item.title);
-  markdown.append(document);
+  detailFiles = createSkillFileBrowser({ host: markdown });
+  detailFiles.setSource({ paths: [...parsed.files.keys()], mainPath: parsed.root ? `${parsed.root}/SKILL.md` : 'SKILL.md', readFile: path => parsed.files.get(path) }, selectedPath);
   const cover = element("div", "skill-cover-detail");
   showSkillCoverImage(cover, () => loadCover(item), { alt: item.title });
-  root.append(cover, header, maintenance, markdown);
+  root.append(cover, header, markdown);
   elements.skillDetailContent.replaceChildren(root);
 }
 
@@ -168,6 +166,7 @@ async function loadParsed(item) {
 }
 
 async function install(item, parsed, button) {
+  const generation = detailGeneration;
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
   button.classList.add("is-progressing");
@@ -191,7 +190,7 @@ async function install(item, parsed, button) {
     });
     showToast(t(installed.status === "already-installed" ? "这个版本已经在本地" : installed.status === "install-update-copy" ? "新版本已另存，不会覆盖本地修改" : "精选 Skill 已保存到本地"));
     render();
-    if (elements.skillDetailDialog.open) renderDetail(item, verified);
+    if (elements.skillDetailDialog.open && generation === detailGeneration) renderDetail(item, verified);
   } catch (error) {
     button.disabled = planCuratedSkillInstall(state.creativeSkills, item).action === "already-installed";
     button.removeAttribute("aria-busy");
@@ -217,15 +216,6 @@ function installButton(item, parsed = null) {
   button.disabled = planCuratedSkillInstall(state.creativeSkills, item).action === "already-installed";
   button.addEventListener("click", () => install(item, parsed, button));
   return button;
-}
-
-function removeDuplicateTitleHeading(document, title) {
-  const heading = document.querySelector?.("h1");
-  if (heading && normalizedHeading(heading.textContent) === normalizedHeading(title)) heading.remove();
-}
-
-function normalizedHeading(value) {
-  return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
 function loading() {
