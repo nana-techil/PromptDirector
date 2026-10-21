@@ -21,7 +21,7 @@ Each browser receipt includes its complete planned scenario list, every result, 
 
 Only a full successful run uploads `promptdirector-tested-packages-<commit>` with `ci-validation.json`; partial checks never produce a full-release artifact. Download that exact artifact for publication and compare its recorded source tree with the merged commit. Publish the existing ZIP/checksum files after readback verification; do not rebuild them. The store ZIP remains a separate channel.
 
-Linux browser shards and the Linux upgrade job use Ubuntu 24.04, supported by the pinned Playwright 1.58.0 browser runtime. Keep that runner label aligned with `.github/actions/setup-browser/action.yml` when changing the test runtime.
+Linux browser shards and the Linux upgrade job use Ubuntu 24.04, supported by the pinned Playwright 1.64.0 browser runtime. Keep that runner label aligned with `.github/actions/setup-browser/action.yml` when changing the test runtime.
 
 ## Triggers and local checks
 
