@@ -56,6 +56,11 @@ def seed_extension_storage(page: Page, payload: dict) -> None:
     """Seed a fixture only after the extension's first state migration has settled."""
     result = page.evaluate(
         """async (payload) => {
+          // DOMContentLoaded does not wait for collector's top-level awaits.
+          // Settle its restore/read hooks before replacing the fixture state.
+          if (location.pathname === '/collector.html') {
+            await import(chrome.runtime.getURL('collector.js'));
+          }
           await chrome.runtime.sendMessage({type: 'GET_STATE'});
           await chrome.storage.local.clear();
           await chrome.storage.local.set(payload);
@@ -166,7 +171,10 @@ def launch_context(
     record_page_errors(bootstrap, bootstrap_errors)
     try:
         bootstrap.goto(f"chrome-extension://{worker.url.split('/')[2]}/collector.html", wait_until="domcontentloaded")
-        bootstrap.evaluate("async () => chrome.runtime.sendMessage({type: 'GET_STATE'})")
+        bootstrap.evaluate("""async () => {
+          await import(chrome.runtime.getURL('collector.js'));
+          await chrome.runtime.sendMessage({type: 'GET_STATE'});
+        }""")
         assert not bootstrap_errors, f"扩展首次初始化出现运行时错误：{bootstrap_errors}"
     finally:
         bootstrap.close()
