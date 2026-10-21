@@ -58,7 +58,7 @@ import { attachArticleEditor } from "./article-editor.js";
 import { renderArticleBlockText } from "./article-text-view.js";
 import { articleBlockIsMarkdown, articleDocumentForReading } from "./article-document.js";
 import { libraryTitleForLocale, libraryTitleForStorage, renderLibraryJson, screenshotStorageKey } from "./lib.js";
-import { observeImageTransparency } from "./image-transparency.js";
+import { createImageTransparencyObserver } from "./image-transparency.js";
 import { createDetailProjectSelector } from "./detail-project-selector.js";
 import { readImageDimensions, imageNeedsOriginalPlayback } from "./image-metadata.js";
 import { readVideoMedia } from "./browser-video-media.js";
@@ -118,7 +118,7 @@ import {
   entryContentTypeIds,
   entrySourceMetadataRows,
   filterEntries,
-  groupEntryAssignments,
+  createEntryAssignmentReader,
   isEntryPending
 } from "./library-model.js";
 import {
@@ -361,6 +361,7 @@ const PAGE_SIZE = 24;
 const DETAIL_TAG_PREVIEW_LIMIT = 6;
 const cacheWorkingBytes = operationBudget().workingBytes / 4;
 const previewCacheEntries = Math.max(PAGE_SIZE * 2, Math.floor(cacheWorkingBytes / (640 * 640 * 4)));
+const observeImageTransparency = createImageTransparencyObserver({ maxEntries: previewCacheEntries });
 let mediaDragCard = null;
 const mediaDragUrls = new Set();
 const urlProtected = url => mediaDragUrls.has(url) || [...document.querySelectorAll('img[src],video[src],audio[src],source[src]')].some(node => node.src === url);
@@ -442,6 +443,7 @@ elements.trashDialog.addEventListener('close', () => {
 const detailMediaUrls = new Set();
 const detailControllerCleanups = new Set();
 let activeDetailDiscovery = null;
+let cancelPendingDiscovery = null;
 const documentPreviewUrls = new ResourceUrlCache({ maxBytes: cacheWorkingBytes, protectedValue: urlProtected });
 const documentDerived = new ResourceCache({ maxEntries: previewCacheEntries, maxBytes: cacheWorkingBytes,
   cost: value => (value.searchText?.length || 0) * 2 + (value.thumbnail?.size || 0) + (value.remoteImages || []).reduce((sum, image) => sum + (image.blob?.size || 0), 0) });
@@ -472,6 +474,7 @@ let startupBrowsePlan = null;
 let taxonomy = { nodes: [] };
 let classificationRules = [];
 let facetCatalog = { facets: [], nodes: [] };
+let readEntryAssignments = createEntryAssignmentReader(facetCatalog);
 const readVocabularyUsage = createVocabularyUsageReader();
 let settings = {};
 let organizerState = { collections: [] };
@@ -1637,6 +1640,7 @@ async function refreshLibrary({ response: suppliedResponse, progressive = false 
   taxonomy = response.taxonomy ?? { nodes: [] };
   classificationRules = response.classificationRules ?? [];
   facetCatalog = normalizeFacetCatalog(response.facetCatalog);
+  readEntryAssignments = createEntryAssignmentReader(facetCatalog);
   settings = response.settings ?? {};
   organizerState = response.organizerState ?? { collections: [] };
   importJobsState = response.importJobs ?? { items: [] };
@@ -1774,7 +1778,7 @@ async function applyLibraryEntriesChange(nextEntries, { changedEntryIds: knownId
     requestAnimationFrame(() => setTimeout(() => {
       if (currentDetailId !== entryId || detailRenderGeneration !== generation) return;
       const entry = logicalCases.find(item => item.id === entryId);
-      if (entry) refreshLocalDiscovery(entry);
+      if (entry) refreshDeferredDetailSections(entry);
     }, 0));
   }
   done();
@@ -6436,7 +6440,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   const renderEntryId = currentDetailId;
   let entry = logicalCases.find((item) => item.id === currentDetailId);
   if (!entry) return closeDetail();
-  if (!usesArticleReader(entry)) entry = await readDetailGenerationInfo(entry);
+  if (entry.compoundCase && !usesArticleReader(entry)) entry = await readDetailGenerationInfo(entry);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
   const codeCase = contentRoleForEntry(entry) === CONTENT_ROLES.codeCase || Boolean(entry.sourceFacts?.codePreviewAvailable && codePreviewHtml(entry.text));
   const mediaIdentity = JSON.stringify(entryMediaAssets(entry).filter(asset => asset.usage !== "poster").map(({ id, kind, usage, storageMode, contentHash, sourceUrl, reference, recordType }) =>
@@ -6459,7 +6463,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
       if (attributes) previousAttributes.replaceWith(attributes);
       else previousAttributes.remove();
     } else if (attributes) mountedBody.insertBefore(attributes, organization);
-    mountAuthoredNotes(mountedBody, entry, t); arrangeDetailWorkspace(mountedBody); refreshLocalDiscovery(entry); return;
+    mountAuthoredNotes(mountedBody, entry, t); arrangeDetailWorkspace(mountedBody); refreshDeferredDetailSections(entry); return;
   }
   if (!rebuildMedia && !resetScroll && usesArticleReader(entry) && elements.detailDrawer.dataset.entryId === entry.id
     && mountedBody?.dataset.mediaIdentity === mediaIdentity && mountedBody.dataset.presentation === presentation
@@ -6468,7 +6472,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     if (header) replaceDetailSection(header, createDetailHeader(entry));
     refreshActiveDetailAssetSections(entry);
     mountAuthoredNotes(mountedBody, entry, t);
-    refreshLocalDiscovery(entry);
+    refreshDeferredDetailSections(entry);
     return;
   }
   const mountedGallery = elements.detailContent.querySelector(".detail-visual-gallery");
@@ -6500,7 +6504,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
     }
     mountAuthoredNotes(mountedBody, entry, t);
     arrangeDetailWorkspace(mountedBody);
-    refreshLocalDiscovery(entry);
+    refreshDeferredDetailSections(entry);
     return;
   }
   releaseDetailControllers();
@@ -6563,11 +6567,6 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   if (breakdown) body.append(breakdown);
   primary.append(body);
   content.append(primary);
-  // When cases changed since the similarity index was built, show the case first and add its
-  // similar cases right after, instead of holding the whole detail until the index is rebuilt.
-  const deferDiscovery = localSimilarityIndexStale || !imageDerivedMetadataLoaded;
-  const discovery = deferDiscovery ? null : createLocalDiscovery(entry);
-  if (discovery) content.append(discovery.section);
   if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId) return;
   mountAuthoredNotes(body, entry, t);
   elements.detailDrawer.dataset.entryId = entry.id;
@@ -6577,16 +6576,7 @@ async function renderDetail({ resetScroll = false, rebuildMedia = false } = {}) 
   arrangeDetailWorkspace(body);
   const disposeWorkspace = () => { body.disposeWorkspace?.(); detailControllerCleanups.delete(disposeWorkspace); };
   detailControllerCleanups.add(disposeWorkspace);
-  discovery?.mount();
-  if (deferDiscovery) requestAnimationFrame(() => setTimeout(async () => {
-    try { await loadImageDerivedMetadata(); }
-    catch (error) { showFeedback(error.message || "无法读取本机资料", true); return; }
-    if (renderGeneration !== detailRenderGeneration || currentDetailId !== renderEntryId || !content.isConnected) return;
-    const deferred = createLocalDiscovery(entry);
-    if (!deferred) return;
-    content.append(deferred.section);
-    deferred.mount();
-  }, 0));
+  refreshDeferredDetailSections(entry);
   if (hasMediaStage) {
     const dispose = attachDetailSplit(primary, {
       label: t("调整图文分栏宽度"),
@@ -6629,15 +6619,61 @@ function invalidateDetailContent(entryId) {
   elements.detailContent.scrollTop = 0;
 }
 
-function refreshLocalDiscovery(entry) {
-  const previous = activeDetailDiscovery;
-  previous?.cleanup();
-  const next = createLocalDiscovery(entry);
-  if (previous) {
-    if (next) previous.section.replaceWith(next.section);
-    else previous.section.remove();
-  } else if (next) elements.detailContent.append(next.section);
-  next?.mount();
+function refreshDeferredDetailSections(entry) {
+  cancelPendingDiscovery?.();
+  const generation = detailRenderGeneration;
+  let cancelled = false;
+  let timer = 0;
+  const isCurrent = () => !cancelled && generation === detailRenderGeneration &&
+    currentDetailId === entry.id && elements.detailDrawer.dataset.entryId === entry.id;
+  const cleanup = () => {
+    cancelled = true;
+    cancelAnimationFrame(frame);
+    clearTimeout(timer);
+    detailControllerCleanups.delete(cleanup);
+    if (cancelPendingDiscovery === cleanup) cancelPendingDiscovery = null;
+  };
+  // Give the case its first frame before ranking, even with a warm similarity index.
+  const frame = requestAnimationFrame(() => {
+    timer = setTimeout(async () => {
+      try {
+        if (!isCurrent()) return;
+        if (!usesArticleReader(entry)) void refreshDetailGenerationMetadata(entry, generation);
+        await loadImageDerivedMetadata();
+        if (!isCurrent()) return;
+        const previous = activeDetailDiscovery;
+        const next = createLocalDiscovery(entry);
+        previous?.cleanup();
+        if (previous) {
+          if (next) previous.section.replaceWith(next.section);
+          else previous.section.remove();
+        } else if (next) elements.detailContent.append(next.section);
+        next?.mount();
+      } catch (error) {
+        if (isCurrent()) showFeedback(error.message || "无法读取本机资料", true);
+      } finally { cleanup(); }
+    }, 0);
+  });
+  cancelPendingDiscovery = cleanup;
+  detailControllerCleanups.add(cleanup);
+}
+
+async function refreshDetailGenerationMetadata(entry, generation) {
+  // Old exports may lack generation metadata. Recover it without holding the
+  // image, prompt or editors behind reads of every original in the case.
+  const enriched = await readDetailGenerationInfo(entry);
+  if (generation !== detailRenderGeneration || currentDetailId !== entry.id) return;
+  const actions = elements.detailContent.querySelector('.detail-quick-organization > .metadata-actions');
+  if (!actions) return;
+  const source = createDetailSourceAction(enriched);
+  if (!source) return;
+  const current = actions.querySelector('.source-open-action');
+  if (current?.getAttribute('aria-description') === source.getAttribute('aria-description')) return;
+  if (current) {
+    const focused = document.activeElement === current;
+    current.replaceWith(source);
+    if (focused) source.focus({ preventScroll: true });
+  } else actions.prepend(source);
 }
 
 function createLocalDiscovery(entry) {
@@ -7801,7 +7837,7 @@ function createCurrentVideoReconstruction(entry, asset, record, aiSource = "anal
     onError: error => showFeedback(error.message, true)
   });
   card.querySelector(".prompt-read-body").classList.add("video-reconstruction-text");
-  const assignedTagNames = new Set([...groupEntryAssignments(entry, facetCatalog, "confirmed").values()].flat().map(item => item.name));
+  const assignedTagNames = new Set([...readEntryAssignments(entry, "confirmed").values()].flat().map(item => item.name));
   const unassignedTags = (record.tags || []).filter(tag => !assignedTagNames.has(tag.t || tag.g));
   if (unassignedTags.length) {
     const tags = el("div", "detail-tags video-analysis-tags");
@@ -9844,7 +9880,7 @@ function documentTypeLabel(mimeType, sourceFormat = "") {
 
 
 function createDetailAttributes(entry) {
-  const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
+  const grouped = readEntryAssignments(entry, "confirmed");
   const tags = [];
   let stableOrder = 0;
   for (const facet of facetCatalog.facets.filter((item) => item.status === "active").sort((a, b) => a.order - b.order)) {
@@ -10573,7 +10609,7 @@ function createEntryEditor(entry, options = {}) {
     }
   };
   const renderSelectedTags = () => {
-    const grouped = groupEntryAssignments(entry, facetCatalog, "confirmed");
+    const grouped = readEntryAssignments(entry, "confirmed");
     const existing = new Map([...selected.children].map(button => [button.dataset.nodeId, button]));
     const buttons = [];
     for (const facet of facetCatalog.facets.filter(item => item.status === "active").sort((a, b) => a.order - b.order)) {
@@ -12063,7 +12099,10 @@ async function applyStagedAnalysisRebuild() {
     });
     if (!response?.ok) throw new Error(response?.message || "无法应用重建缓存");
     analysisBatchPreview = null;
-    if (response.facetCatalog) facetCatalog = normalizeFacetCatalog(response.facetCatalog);
+    if (response.facetCatalog) {
+      facetCatalog = normalizeFacetCatalog(response.facetCatalog);
+      readEntryAssignments = createEntryAssignmentReader(facetCatalog);
+    }
     if (response.analysisBatchJob) analysisBatchJob = response.analysisBatchJob;
     showTextBatchFeedback(response.message);
     await refreshLibrary();

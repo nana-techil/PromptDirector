@@ -44,12 +44,12 @@ export function createVirtualGallery(container, options) {
     geometry = readGeometry();
     columns = Array.from({ length: geometry.count }, () => []);
     const heights = Array(geometry.count).fill(0);
+    // A detail overlay can change the gallery width. Batch width writes before
+    // measuring; alternating writes and reads forces one layout per card.
+    for (const record of mounted.values()) record.card.style.width = `${geometry.cardWidth}px`;
     for (const record of records) {
       if (previous && previous.cardWidth !== geometry.cardWidth && options.mode() !== 'list') record.height *= geometry.cardWidth / previous.cardWidth;
-      if (record.card) {
-        record.card.style.width = `${geometry.cardWidth}px`;
-        record.height = record.card.getBoundingClientRect().height;
-      }
+      if (record.card) record.height = record.card.getBoundingClientRect().height;
       if (geometry.list && Number.isFinite(geometry.rowHeight)) record.height = geometry.rowHeight;
       // Image readiness changes heights, not the user's existing columns.
       // Reassign only when a viewport/zoom change actually changes the grid.
@@ -59,8 +59,8 @@ export function createVirtualGallery(container, options) {
       record.top = heights[record.column];
       heights[record.column] += record.height + geometry.gap;
       columns[record.column].push(record);
-      if (record.card) position(record, record.card);
     }
+    for (const record of mounted.values()) position(record, record.card);
     container.style.height = `${Math.max(0, ...heights) - (records.length ? geometry.gap : 0)}px`;
     container.dataset.loadedCount = String(records.length);
     options.onLayout?.();
