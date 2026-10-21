@@ -1,0 +1,26 @@
+.skill-detail-description { margin: 0 0 18px; color: var(--muted); line-height: 1.7; }
+.skill-file-browser { display: grid; grid-template-columns: minmax(200px, 250px) minmax(0, 1fr); gap: 12px; align-items: stretch; }
+.skill-file-browser.is-collapsed { grid-template-columns: 1fr; }
+.skill-file-browser.is-collapsed .skill-file-sidebar { display: none; }
+.skill-file-sidebar, .skill-file-reader { min-width: 0; border: 1px solid var(--line); border-radius: var(--ui-container-radius); background: var(--card); }
+.skill-file-sidebar > header, .skill-file-toolbar { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.skill-file-sidebar > header { justify-content: space-between; }
+.skill-file-sidebar nav { padding: 8px; max-height: 65vh; overflow: auto; }
+.skill-file-sidebar summary { padding: 7px 6px; cursor: pointer; font-size: 12px; overflow-wrap: anywhere; }
+.skill-file-children { padding-left: 12px; }
+.skill-file-row { display: flex; justify-content: flex-start; gap: 8px; width: 100%; min-height: 34px; padding: 7px 8px; border: 1px solid transparent; background: transparent; color: var(--ink); text-align: left; font-size: 12px; font-weight: 400; white-space: normal; overflow-wrap: anywhere; }
+.skill-file-row[aria-current=true] { background: var(--selection); border-color: var(--selection-edge); box-shadow: inset 2px 0 var(--accent-emphasis); }
+.skill-file-row .ui-icon { flex-shrink: 0; width: 15px; height: 15px; color: var(--muted); }
+.skill-file-toolbar strong { min-width: 0; overflow-wrap: anywhere; }
+.skill-file-toolbar span { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.skill-file-reader .skill-detail-markdown { padding: clamp(18px, 3vw, 32px); border: 0; border-radius: 0; min-height: 440px; max-height: 68vh; overflow: auto; }
+.skill-file-reader .skill-markdown-editor { min-height: 400px; width: 100%; resize: vertical; }
+.skill-file-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.7 ui-monospace, monospace; }
+.skill-file-media { display: block; max-width: 100%; max-height: 58vh; margin: auto; }
+.skill-file-browser [hidden] { display: none !important; }
+@media (max-width: 760px) {
+  .skill-file-browser { grid-template-columns: 1fr; }
+  .skill-file-sidebar nav { max-height: 240px; }
+  .skill-file-reader .skill-detail-markdown { padding: 16px; min-height: 330px; max-height: none; }
+  .skill-file-toolbar span { display: none; }
+}

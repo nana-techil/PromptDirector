@@ -44,8 +44,13 @@ def main():
         assert second['assetId'] != first['assetId']
         assert page.evaluate("async id => !!await (await import(chrome.runtime.getURL('media-store.js'))).getMediaBlob(id)", first['assetId']) is False
         page.goto(f'chrome-extension://{session.extension_id}/skills.html?view=detail&skill={skill_id}')
-        expect(page.locator('#skill-detail-cover img')).to_be_visible()
-        page.locator('#skill-detail-more > summary').click()
+        files = page.locator('#skill-detail-files')
+        files.locator('summary', has_text='assets').click()
+        files.get_by_role('button', name='cover.avif', exact=True).click()
+        expect(files.locator('img.skill-file-media')).to_be_visible()
+        page.wait_for_function("() => document.querySelector('#skill-detail-files img')?.naturalWidth === 64")
+        files.get_by_role('button', name='SKILL.md', exact=True).click()
+        page.locator('#skill-detail-download > summary').click()
         page.locator('#skill-export').click()
         exported, _ = wait_for_download(page)
         with zipfile.ZipFile(exported) as archive:
@@ -88,7 +93,12 @@ def main():
         assert restored['skills'][0]['versions'] == before['skills'][0]['versions']
         assert restored['entries'][0]['text'] == keep['text']
         page.goto(f'chrome-extension://{session.extension_id}/skills.html?view=detail&skill={restored["skills"][0]["id"]}')
-        expect(page.locator('#skill-detail-cover img')).to_be_visible()
+        files = page.locator('#skill-detail-files')
+        files.locator('summary', has_text='assets').click()
+        files.get_by_role('button', name='cover.avif', exact=True).click()
+        expect(files.locator('img.skill-file-media')).to_be_visible()
+        page.wait_for_function("() => document.querySelector('#skill-detail-files img')?.naturalWidth === 64")
+        files.get_by_role('button', name='SKILL.md', exact=True).click()
         page.set_viewport_size({'width': 390, 'height': 844})
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         page.screenshot(path='/tmp/promptdirector-skill-cover-restored-narrow.png', full_page=True)

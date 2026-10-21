@@ -1,6 +1,24 @@
 import { normalizeUiPreferences, resolveLocale } from "./preferences.js";
 
 const EN = Object.freeze({
+  "收起文件栏": "Collapse files",
+  "展开文件栏": "Expand files",
+  "文件": "Files",
+  "Skill 包文件": "Skill package files",
+  "正在读取文件…": "Reading file\u2026",
+  "文件读取失败": "Could not read the file",
+  "无法预览此文件，可从顶部下载": "Preview unavailable. Download this file from the top menu.",
+  "编辑文件：{path}": "Edit file: {path}",
+  "文件已切换": "The selected file changed",
+  "空文件 · 0 B": "Empty file \u00b7 0 B",
+  "替换同名文件？": "Replace files with the same names?",
+  "替换": "Replace",
+  "请在正文编辑区修改 SKILL.md；完整包请使用导入": "Edit SKILL.md in the main editor. Use Import for a complete package.",
+  "下载完整 Skill": "Download complete Skill",
+  "下载当前文件": "Download current file",
+  "添加文件": "Add files",
+  "添加文件夹": "Add folder",
+
   "所选案例仍有关联引用或变化，本次未清理": "The selected cases still have references or have changed. Nothing was cleaned up.",
   "案例引用或内容已变化，本次未清理": "Case references or content changed. Nothing was cleaned up.",
   "创作会话": "Creative conversation",

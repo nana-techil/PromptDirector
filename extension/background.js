@@ -1,3 +1,4 @@
+import { skillRevision } from "./skill-operations.js";
 import { sameUndoState } from './undo-state.js';
 import { normalizeAnalysisScope, selectAnalysisScope, sameAnalysisTargets } from "./analysis-scope.js";
 import { createDedupeMediaVerifier } from './dedupe-media-verifier.js';
@@ -4081,6 +4082,8 @@ async function createCreativeSkillAction(message) {
 
 async function saveCreativeSkillVersionAction(message) {
   const stored = await libraryStorage.get(['creativeSkills', 'composerSessions', 'creativeRuns', 'creativeJobs']);
+  const current = normalizeCreativeSkillsState(stored.creativeSkills).items.find(skill => skill.id === message.skillId);
+  if (message.expectedRevision && await skillRevision(current) !== message.expectedRevision) throw new Error("Skill 已变化，请重新打开后再编辑");
   const result = saveCreativeSkillVersion(stored[STORAGE_KEYS.creativeSkills], message.skillId, message.version, { protectedVersionIds: protectedSkillVersionIds(stored) });
   await commitSkillCoverResult(result, message.cover);
   await deleteUnreferencedMedia(normalizeCreativeSkillsState(stored[STORAGE_KEYS.creativeSkills]).items.flatMap(skillPackageAssetIds)).catch(error => console.warn("Skill资源清理未完成", error));

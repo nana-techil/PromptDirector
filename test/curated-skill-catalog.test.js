@@ -60,7 +60,7 @@ test("curated Skill catalog accepts a readable multilingual call name without re
   }
 });
 
-test("verified curated Skill packages accept only SKILL.md and UTF-8 Markdown references", async () => {
+test("verified curated Skill packages preserve scripts and license files without executing them", async () => {
   const { archive, item } = await fixture();
   await verifyCuratedSkillPackageBlob(archive, item.sha256, item.archiveBytes);
   const parsed = await validateCuratedSkillPackage(item, archive);
@@ -69,5 +69,6 @@ test("verified curated Skill packages accept only SKILL.md and UTF-8 Markdown re
     { name: "SKILL.md", data: new Blob(["---\nname: unsafe\ndescription: Unsafe.\n---\n\n# Unsafe\n"]) },
     { name: "scripts/run.sh", data: new Blob(["echo no"]) }
   ]);
-  await assert.rejects(() => validateCuratedSkillPackage({ ...item, skillId: "unsafe", callName: "unsafe" }, unsafe), /不允许的文件/);
+  const full = await validateCuratedSkillPackage({ ...item, skillId: "unsafe", callName: "unsafe" }, unsafe);
+  assert.equal(await full.files.get("scripts/run.sh").text(), "echo no");
 });

@@ -184,7 +184,14 @@ def main(on_download=None):
         assert p.evaluate('()=>window.progressNodeBefore===document.querySelector("#feedback progress")')
         assert p.evaluate("async()=>(await import(chrome.runtime.getURL('library-storage.js')).then(({getLibraryStorage}) => getLibraryStorage().get('entries'))).entries.length")==0
         p.screenshot(path=str(out/'writing-after-download.png'))
-        worker.evaluate("()=>globalThis.captureFixture.gates.get('commit')()")
+        worker.evaluate("""async () => {
+          const deadline = Date.now() + 30000;
+          while (typeof globalThis.captureFixture.gates.get('commit') !== 'function') {
+            if (Date.now() >= deadline) throw new Error('Fixture commit gate was not created');
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+          globalThis.captureFixture.gates.get('commit')();
+        }""")
         expect(p.locator('#page-capture')).to_be_hidden(timeout=30000)
         state=p.evaluate("()=>chrome.runtime.sendMessage({type:'GET_STATE'})")
         assert len(state['entries'])==1

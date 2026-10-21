@@ -39,8 +39,8 @@ export async function installCuratedSkillTransaction(options = {}) {
       source: "imported",
       reason: "imported",
       packageFiles,
-      runtimeDependencies: [],
-      textModeConfirmed: false,
+      runtimeDependencies: options.parsed.dependencies,
+      textModeConfirmed: options.parsed.requiresTextModeConfirmation,
       curatedOrigin: {
         catalogId: clean(options.item?.id),
         skillId: clean(options.item?.skillId),

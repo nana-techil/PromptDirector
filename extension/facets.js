@@ -58,8 +58,7 @@ export function facetNodes(catalog, facetId) {
   );
 }
 
-export function facetNodePath(catalog, nodeId) {
-  const byId = new Map(normalizeFacetCatalog(catalog).nodes.map((item) => [item.id, item]));
+export function facetNodePath(catalog, nodeId, byId = new Map(normalizeFacetCatalog(catalog).nodes.map((item) => [item.id, item]))) {
   const result = [];
   const seen = new Set();
   let current = byId.get(nodeId);
@@ -71,8 +70,8 @@ export function facetNodePath(catalog, nodeId) {
   return result;
 }
 
-export function formatFacetNodePath(catalog, nodeId) {
-  return facetNodePath(catalog, nodeId).map((item) => item.name).join(" / ");
+export function formatFacetNodePath(catalog, nodeId, byId) {
+  return facetNodePath(catalog, nodeId, byId).map((item) => item.name).join(" / ");
 }
 
 export function facetDescendants(catalog, nodeId) {

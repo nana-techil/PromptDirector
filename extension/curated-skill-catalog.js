@@ -1,7 +1,7 @@
 import { parseSkillArchive } from "./creative-skill-package.js";
 import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { sha256Hex } from "./sync-crypto.js";
-import { isSkillCoverPath, normalizeSkillCoverMetadata, validateSkillCover } from "./skill-cover.js";
+import { normalizeSkillCoverMetadata, validateSkillCover } from "./skill-cover.js";
 import { CURATED_SKILL_CATALOG_URL } from "./curated-config.js";
 
 export const CURATED_SKILL_CATALOG_FORMAT = "prompt-director-curated-skills";
@@ -46,13 +46,6 @@ export async function validateCuratedSkillPackage(itemValue, archive) {
   const item = normalizeItem(itemValue);
   const parsed = await parseSkillArchive(archive);
   if (parsed.name !== item.skillId) throw new Error("精选 Skill 包身份与目录不一致");
-  for (const path of parsed.files.keys()) {
-    const relative = parsed.root && path.startsWith(`${parsed.root}/`) ? path.slice(parsed.root.length + 1) : path;
-    if (relative !== "SKILL.md" && !isSkillCoverPath(relative) && !/^references\/[A-Za-z0-9._/-]+\.md$/i.test(relative)) {
-      throw new Error(`精选 Skill 包包含不允许的文件：${relative}`);
-    }
-  }
-  if (parsed.dependencies.length) throw new Error("精选 Skill 包不能依赖脚本、程序或外部工具");
   return parsed;
 }
 

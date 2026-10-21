@@ -54,19 +54,26 @@ function prepareFacetSelections(catalog, facetSelections) {
   });
 }
 
-export function groupEntryAssignments(entry = {}, catalogValue, status = "confirmed") {
+// Rebuild this reader when the catalog changes; assignments are read fresh on every call.
+export function createEntryAssignmentReader(catalogValue) {
   const catalog = normalizeFacetCatalog(catalogValue);
   const nodeById = new Map(catalog.nodes.map((item) => [item.id, item]));
-  const grouped = new Map();
-  for (const assignment of entry.facetAssignments ?? []) {
-    if (assignment.status !== status) continue;
-    const node = nodeById.get(assignment.nodeId);
-    if (!node || node.status !== "active") continue;
-    const values = grouped.get(node.facetId) ?? [];
-    values.push({ ...assignment, name: node.name, path: formatFacetNodePath(catalog, node.id) });
-    grouped.set(node.facetId, values);
-  }
-  return grouped;
+  return (entry = {}, status = "confirmed") => {
+    const grouped = new Map();
+    for (const assignment of entry.facetAssignments ?? []) {
+      if (assignment.status !== status) continue;
+      const node = nodeById.get(assignment.nodeId);
+      if (!node || node.status !== "active") continue;
+      const values = grouped.get(node.facetId) ?? [];
+      values.push({ ...assignment, name: node.name, path: formatFacetNodePath(catalog, node.id, nodeById) });
+      grouped.set(node.facetId, values);
+    }
+    return grouped;
+  };
+}
+
+export function groupEntryAssignments(entry = {}, catalogValue, status = "confirmed") {
+  return createEntryAssignmentReader(catalogValue)(entry, status);
 }
 
 export function entryAttributeSummary(entry, catalogValue, limit = 4) {

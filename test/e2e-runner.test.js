@@ -27,7 +27,8 @@ test("E2E runner executes independent business scripts and reports after all com
   ];
   assert.equal(JSON.parse(packageJson).scripts["test:e2e"], "python3 test/run_e2e.py");
   scripts.forEach((script) => assert.match(runner, new RegExp(`"${script.replaceAll(".", "\\.")}"`)));
-  assert.match(runner, /check=False/);
+  assert.match(runner, /returncode = process\.wait\(\)/);
+  assert.match(runner, /for line in process\.stdout:/);
   assert.match(runner, /results\.append\(result\)/);
   assert.match(runner, /if failed:/);
   await assert.rejects(access(new URL("./extension_e2e.py", import.meta.url)));

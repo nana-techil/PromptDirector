@@ -161,7 +161,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-draft-step")).to_be_visible()
         expect(skills.locator("#skill-markdown")).to_have_value(re.compile("视觉组织方法"))
         expect(skills.locator("#skill-target-step")).to_be_hidden()
-        expect(skills.locator("#skill-draft-preview")).to_contain_text("视觉组织方法")
+        expect(skills.locator("#skill-draft-preview #skill-markdown")).to_have_value(re.compile("视觉组织方法"))
         expect(skills.locator("#skill-save")).to_be_in_viewport()
         skills.screenshot(path=str(Path(tempfile.gettempdir()) / "pd-skill-result.png"))
         skills.locator("#skill-back-sources").click()
@@ -185,13 +185,13 @@ Run `scripts/helper.py` before applying the composition guidance.
         skills.locator("#skill-save").click()
         expect(skills.locator("#skill-detail")).to_be_visible()
         expect(skills.locator("#skill-detail-feedback")).to_contain_text("Skill 已保存")
-        expect(skills.locator("#skill-detail-version")).to_have_text("v1")
-        expect(skills.locator("#skill-detail-markdown")).to_contain_text("视觉组织方法")
+        expect(skills.locator("#skill-detail-version")).to_have_count(0)
+        expect(skills.locator("#skill-detail-files .skill-detail-markdown")).to_contain_text("视觉组织方法")
         expect(skills.locator("#skill-export")).to_have_count(1)
         expect(skills.locator("#skill-search")).to_be_hidden()
         expect(skills.locator("#skill-import")).to_be_hidden()
         expect(skills.locator("#skill-create")).to_be_hidden()
-        skills.locator("#skill-detail-more > summary").click()
+        skills.locator("#skill-detail-download > summary").click()
         skills.locator("#skill-export").click()
         exported_skill, _ = wait_for_download(skills)
         assert zipfile.is_zipfile(exported_skill)
@@ -239,7 +239,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         skills = composer
         expect(skills.locator("#skill-detail")).to_be_visible()
         expect(skills.locator("#skill-workspace")).to_be_hidden()
-        expect(skills.locator("#skill-detail-markdown")).to_contain_text("视觉组织方法")
+        expect(skills.locator("#skill-detail-files .skill-detail-markdown")).to_contain_text("视觉组织方法")
         assert "view=detail" in skills.url
         skills.go_back()
         expect(skills.locator("#skill-library")).to_be_visible()
@@ -284,7 +284,7 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-source-sidebar")).to_be_visible()
         expect(skills.locator("#skill-draft-step")).to_be_hidden()
         skills.locator("#skill-show-draft").click()
-        expect(skills.locator("#skill-draft-preview")).to_contain_text("视觉组织方法")
+        expect(skills.locator("#skill-draft-preview #skill-markdown")).to_have_value(re.compile("视觉组织方法"))
         skills.locator("#skill-back-sources").click()
         expect(skills.locator("#skill-run-evidence-step")).to_be_visible()
         expect(skills.locator("#skill-run-evidence-list")).to_contain_text("保留主体层级")
@@ -300,12 +300,16 @@ Run `scripts/helper.py` before applying the composition guidance.
         expect(skills.locator("#skill-library")).to_be_visible()
         skills.locator("#skill-import").click()
         skills.locator("#skill-zip-file").set_input_files(str(external_zip))
-        dependency_dialog = skills.locator("#promptdirector-app-dialog")
-        expect(dependency_dialog).to_be_visible()
-        dependency_warning = dependency_dialog.text_content()
-        dependency_dialog.get_by_role("button", name="仍要导入", exact=True).click()
         expect(skills.locator("#skill-feedback")).to_contain_text("已导入 /external-method")
-        assert "scripts" in dependency_warning
+        expect(skills.locator("#promptdirector-app-dialog")).not_to_be_visible()
+        imported_script = skills.evaluate("""async () => {
+          const {creativeSkills} = await chrome.storage.local.get('creativeSkills');
+          const skill = creativeSkills.items.find(item => item.callName === 'external-method');
+          const file = skill.packageFiles.find(item => item.path.endsWith('scripts/helper.py'));
+          const {getMediaBlob} = await import(chrome.runtime.getURL('media-store.js'));
+          return (await getMediaBlob(file.assetId)).text();
+        }""")
+        assert imported_script == "print('helper')\n"
         expect(skills.locator(".skill-card")).to_have_count(2)
         card_layout = skills.evaluate("""() => {
           const cards = [...document.querySelectorAll('.skill-card')];

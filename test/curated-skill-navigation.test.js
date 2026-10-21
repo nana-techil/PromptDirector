@@ -28,7 +28,7 @@ test("curated cases and curated Skills are independent sibling pages", async () 
 
 test("ordinary lossless export and curated submission are separate Skill detail actions", async () => {
   const { skillsCenter, skillsPage } = await sources();
-  assert.match(skillsCenter, /id="skill-export"[^>]*data-i18n="导出 Skill"/);
+  assert.match(skillsCenter, /id="skill-export"[^>]*data-i18n="下载完整 Skill"/);
   assert.match(skillsCenter, /id="skill-submit-curated"[^>]*data-i18n="投稿到精选 Skill"/);
   assert.match(skillsCenter, /id="skill-submission-dialog"/);
   assert.match(skillsCenter, /id="skill-submission-preview"/);
@@ -75,7 +75,7 @@ test("curated Skill page distinguishes load failure, an empty catalog, and no se
   assert.doesNotMatch(curatedSkillPage, /showStatus\(error\.message/);
 });
 
-test("Skill discovery surfaces share one compact visual contract and keep maintenance facts secondary", async () => {
+test("Skill discovery surfaces share one compact visual contract and keep metadata out of the reading actions", async () => {
   const { casesHtml, skillsHtml, curatedSkillPage, foundation, composerPage, composerStyle } = await sources();
   assert.match(foundation, /\.ui-segmented\s*\{/);
   assert.match(foundation, /\.ui-segmented-item\s*\{/);
@@ -86,9 +86,8 @@ test("Skill discovery surfaces share one compact visual contract and keep mainte
   assert.match(curatedSkillPage, /ui-skill-card curated-skill-card/);
   assert.match(curatedSkillPage, /查看说明/);
   assert.match(curatedSkillPage, /保存到本地/);
-  assert.match(curatedSkillPage, /版本与许可/);
-  assert.match(curatedSkillPage, /curated-skill-maintenance/);
-  assert.match(curatedSkillPage, /removeDuplicateTitleHeading/);
+  assert.doesNotMatch(curatedSkillPage, /版本与许可|curated-skill-maintenance/);
+  assert.match(curatedSkillPage, /createSkillFileBrowser/);
   assert.match(composerPage, /ui-skill-card composer-skill-card/);
   assert.match(composerStyle, /\.composer-skill-card/);
 });

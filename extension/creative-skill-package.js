@@ -97,18 +97,20 @@ export async function exportStoredSkillPackage(skillValue = {}, options = {}) {
 }
 
 export async function storedSkillFiles(skillValue = {}, options = {}) {
+  const selected = options.paths ? new Set(options.paths) : null;
   const packageFiles = Array.isArray(skillValue.packageFiles) ? skillValue.packageFiles : [];
   const hasStoredDocument = packageFiles.some(file => file.path === "SKILL.md" || file.path.endsWith("/SKILL.md"));
   if (!packageFiles.length) {
     const versions = Array.isArray(skillValue.versions) ? skillValue.versions : [];
     const version = versions.find((item) => item.id === skillValue.currentVersionId) ?? versions.at(-1) ?? {};
-    return generatedSkillFiles({
+    const generated = generatedSkillFiles({
       portableId: skillValue.portableId,
       description: skillValue.description,
       skillMarkdown: version.skillMarkdown,
       references: version.references,
       provenanceMarkdown: version.provenanceMarkdown
     });
+    return selected ? new Map([...generated].filter(([path]) => selected.has(path))) : generated;
   }
   if (typeof options.readFile !== "function") throw new Error("Skill 导出缺少文件读取器");
   const version = (skillValue.versions ?? []).find(item => item.id === skillValue.currentVersionId) ?? skillValue.versions?.at(-1);
@@ -117,6 +119,7 @@ export async function storedSkillFiles(skillValue = {}, options = {}) {
     ...version
   })].map(([name, data]) => ({ name, data }));
   for (const file of packageFiles) {
+    if (selected && !selected.has(file.path)) continue;
     const path = normalizePackagePath(file?.path);
     if (!path || path !== file?.path) throw new Error("Skill 包含不安全的文件路径");
     const blob = await options.readFile(file.assetId);
@@ -127,25 +130,35 @@ export async function storedSkillFiles(skillValue = {}, options = {}) {
     files.push({ name: path, data: blob });
   }
   const result = new Map(files.map(({ name, data }) => [name, data]));
-  if (hasStoredDocument && version) await applyCurrentVersionFiles(result, skillValue, version);
-  return result;
+  if (hasStoredDocument && version) await applyCurrentVersionFiles(result, skillValue, version, selected);
+  return selected ? new Map([...result].filter(([path]) => selected.has(path))) : result;
+}
+
+export function storedSkillPaths(skillValue = {}) {
+  const version = (skillValue.versions ?? []).find(item => item.id === skillValue.currentVersionId) ?? skillValue.versions?.at(-1) ?? {};
+  const paths = (skillValue.packageFiles ?? []).map(file => file.path);
+  const main = paths.find(path => path === "SKILL.md" || path.endsWith("/SKILL.md")) ?? "SKILL.md";
+  const prefix = main.slice(0, -"SKILL.md".length);
+  return [...new Set([...paths, main, ...(version.references ?? []).map(ref => prefix + ref.path), ...(version.provenanceMarkdown ? [prefix + "references/provenance.md"] : [])])];
 }
 
 // Stored package blobs are the import-time snapshot; the current version's edited
 // SKILL.md, references, and provenance replace their copies at the same package paths.
-async function applyCurrentVersionFiles(files, skillValue, version) {
-  const skillPath = [...files.keys()].find(path => path === "SKILL.md" || path.endsWith("/SKILL.md"));
+async function applyCurrentVersionFiles(files, skillValue, version, selected) {
+  const skillPath = storedSkillPaths(skillValue).find(path => path === "SKILL.md" || path.endsWith("/SKILL.md"));
   const prefix = skillPath.slice(0, -"SKILL.md".length);
-  const storedMarkdown = await readMarkdown(files.get(skillPath), skillPath);
-  const storedFields = parseFrontmatter(storedMarkdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1]);
-  const storedDescription = cleanInline(storedFields.description);
-  const description = cleanInline(skillValue.description) || storedDescription;
-  const body = stripFrontmatter(version.skillMarkdown);
-  if (body && (body !== stripFrontmatter(storedMarkdown) || description !== storedDescription)) {
-    const markdown = buildSkillMarkdown({ name: normalizePortableId(storedFields.name) || skillValue.portableId, description, body });
-    const extra = extraFrontmatter(storedMarkdown);
-    const merged = extra ? markdown.replace(/\n---\n/, `\n${extra}\n---\n`) : markdown;
-    files.set(skillPath, new Blob([merged], { type: markdownType }));
+  if (!selected || selected.has(skillPath)) {
+    const storedMarkdown = await readMarkdown(files.get(skillPath), skillPath);
+    const storedFields = parseFrontmatter(storedMarkdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)?.[1]);
+    const storedDescription = cleanInline(storedFields.description);
+    const description = cleanInline(skillValue.description) || storedDescription;
+    const body = stripFrontmatter(version.skillMarkdown);
+    if (body && (body !== stripFrontmatter(storedMarkdown) || description !== storedDescription)) {
+      const markdown = buildSkillMarkdown({ name: normalizePortableId(storedFields.name) || skillValue.portableId, description, body });
+      const extra = extraFrontmatter(storedMarkdown);
+      const merged = extra ? markdown.replace(/\n---\n/, `\n${extra}\n---\n`) : markdown;
+      files.set(skillPath, new Blob([merged], { type: markdownType }));
+    }
   }
   const references = new Map((Array.isArray(version.references) ? version.references : [])
     .map(reference => [normalizeReferencePath(reference?.path), normalizeMarkdown(reference?.markdown)]));
@@ -154,6 +167,7 @@ async function applyCurrentVersionFiles(files, skillValue, version) {
   for (const [path, markdown] of references) {
     if (!path || !markdown) continue;
     const packagePath = `${prefix}${path}`;
+    if (selected && !selected.has(packagePath)) continue;
     const current = files.get(packagePath);
     if (current && normalizeMarkdown(await current.text()) === markdown) continue;
     files.set(packagePath, new Blob([`${markdown}\n`], { type: markdownType }));

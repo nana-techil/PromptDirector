@@ -64,9 +64,13 @@ const libraryStorage = {...pdScopeStorage, get: async keys => {
             }""")
             before = setup.evaluate("async () => chrome.storage.local.get(null)")
             before_entries = setup.evaluate("async () => (await (await import('./library-storage.js')).getLibraryStorage().get('entries')).entries")
+            # The fixture collector refreshes GET_CAPTURE_WORKSPACE on storage changes.
+            # Close it so the audit measures gallery reads rather than another workspace.
+            setup.close()
             worker = run.context.service_workers[0]
             worker.evaluate('globalThis.pdScopeReads=[]')
             page = run.open_page('library.html')
+            setup = page
             page.wait_for_selector('body[data-library-state="ready"]')
             page.locator('.case-card[data-entry-id="public"]').wait_for()
             assert page.locator('.case-card[data-entry-id="hidden"]').count() == 0

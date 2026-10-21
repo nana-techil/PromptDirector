@@ -160,6 +160,8 @@ SCRIPTS = [
     "dialog_input_safety_e2e.py",
     "library_detail_actions_e2e.py",
     "library_detail_rendering_e2e.py",
+    "detail_open_performance_e2e.py",
+    "virtual_gallery_layout_e2e.py",
     "library_detail_sidebar_responsive_e2e.py",
     "library_responsive_layout_e2e.py",
     "library_discovery_e2e.py",
@@ -295,6 +297,8 @@ CASE_MANAGEMENT_SCRIPTS = [
     "video_detail_layout_e2e.py",
     "library_detail_actions_e2e.py",
     "library_detail_rendering_e2e.py",
+    "detail_open_performance_e2e.py",
+    "virtual_gallery_layout_e2e.py",
     "library_detail_sidebar_responsive_e2e.py",
     "library_responsive_layout_e2e.py",
     "library_discovery_e2e.py",
@@ -331,19 +335,21 @@ def main() -> None:
     results: list[Result] = []
     for script in scripts:
         started = time.monotonic()
-        completed = subprocess.run(
-            [sys.executable, str(TEST_DIR / script)],
-            cwd=TEST_DIR.parent,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        result = Result(script, completed.returncode, time.monotonic() - started, completed.stdout + completed.stderr)
+        print(f"[RUN] {script}", flush=True)
+        output = []
+        with subprocess.Popen(
+            [sys.executable, "-u", str(TEST_DIR / script)],
+            cwd=TEST_DIR.parent, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1,
+        ) as process:
+            for line in process.stdout:
+                output.append(line)
+                print(line, end="", flush=True)
+            returncode = process.wait()
+        result = Result(script, returncode, time.monotonic() - started, "".join(output))
         results.append(result)
         state = "PASS" if result.returncode == 0 else "FAIL"
         print(f"[{state}] {script} ({result.duration:.1f}s)", flush=True)
-        if result.returncode:
-            print(result.output.rstrip(), flush=True)
 
     print(f"\nE2E summary: {len(results) - sum(result.returncode != 0 for result in results)}/{len(results)} passed")
     for result in results:
