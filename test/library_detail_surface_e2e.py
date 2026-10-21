@@ -1,4 +1,5 @@
 """Code and media share an in-flow detail surface; card previews never show browser scrollbars."""
+import faulthandler
 import os
 import re
 import tempfile
@@ -8,6 +9,7 @@ from e2e_support import base_entry, extension_session
 
 
 def main():
+    faulthandler.dump_traceback_later(120, repeat=True)
     out = Path(os.environ.get('PD_E2E_ARTIFACT_DIR') or tempfile.mkdtemp(prefix='pd-detail-surface-'))
     out.mkdir(parents=True, exist_ok=True)
     html = '''<style>body{margin:0;background:#0d0d0d;color:white;min-height:100vh;display:grid;place-items:center}
@@ -37,6 +39,7 @@ def main():
         for locale, theme in [('en', 'dark'), ('zh-CN', 'light')]:
             page.evaluate("async prefs=>(await import('./i18n.js')).initializeUi(prefs)", {'locale': locale, 'theme': theme, 'motion': 'reduced'})
             for width in [1280, 390]:
+                print(f"detail surface: {theme}/{width}", flush=True)
                 page.set_viewport_size({'width': width, 'height': 900})
                 card = page.locator('.case-card[data-entry-id=code]')
                 card.scroll_into_view_if_needed()
@@ -92,6 +95,7 @@ def main():
                     expect(page.locator('.code-case-source')).to_contain_text('button { background: orange; }')
                 page.locator('#detail-close').click()
                 assert preview_handle.evaluate('el=>el.getAttribute("src")') is None
+        print("detail surface: system theme and source updates", flush=True)
         # System preference must use the same theme surface without a separate viewer palette.
         for theme in ['dark', 'light']:
             page.emulate_media(color_scheme=theme)
