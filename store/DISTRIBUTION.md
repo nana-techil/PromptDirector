@@ -13,9 +13,9 @@ Public distribution formats and the permissions used by PromptDirector.
 
 - Chinese copy: `store/LISTING_ZH_CN.md`
 - English copy: `store/LISTING_EN.md`
-- Public privacy policy URL: `https://wchao6891.github.io/PromptDirector-Curated/privacy.html`
-- Homepage URL: `https://wchao6891.github.io/PromptDirector-Curated/`
-- Support URL: `https://wchao6891.github.io/PromptDirector-Curated/support.html`
+- Public privacy policy URL: `https://promptdirector.cn/privacy.html`
+- Homepage URL: `https://promptdirector.cn/`
+- Support URL: `https://promptdirector.cn/support.html`
 - 128x128 icon: `assets/icons/icon-128.png`
 - 440x280 small promo tile: `store/small-promo-440x280.png`
 - Screenshots, in order:

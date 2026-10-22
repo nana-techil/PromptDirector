@@ -29,7 +29,7 @@
 - **Agent 随时调用。** Codex、Claude Code、WorkBuddy 可以通过本机 MCP 搜索、读取案例库，并把成果回存进来。
 - **直接开口要。** 内置助手就在采集栏旁边：让它采集当前页面或视频、在库里找参考、打开案例，不用来回切换。
 
-<p align="center"><strong>1000+ 精选案例，一键导入：</strong><a href="https://wchao6891.github.io/PromptDirector-Curated/">浏览精选案例</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/en/">English</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/guide.html">快速上手</a></p>
+<p align="center"><strong>2000+ 精选案例，在线浏览、一键导入：</strong><a href="https://promptdirector.cn/">官网与精选案例</a> · <a href="https://promptdirector.cn/en/">English</a> · <a href="https://promptdirector.cn/guide.html">快速上手</a></p>
 
 <p align="center"><sub>免费开源 · 本地优先 · 无需账号 · Chrome / Edge（Windows、macOS、Linux）</sub></p>
 
@@ -59,7 +59,7 @@
 <td width="50%"><img src="docs/assets/screens/case-detail.jpg" alt="案例详情：媒体、原始提示词与项目"></td>
 <td width="50%"><img src="docs/assets/screens/curated-packs.jpg" alt="精选案例包，一键入库"></td>
 </tr>
-<tr><td align="center"><sub><b>案例详情。</b>媒体、原始提示词和来源放在一起。</sub></td><td align="center"><sub><b>精选案例。</b>1000+ 案例一键入库。</sub></td></tr>
+<tr><td align="center"><sub><b>案例详情。</b>媒体、原始提示词和来源放在一起。</sub></td><td align="center"><sub><b>精选案例。</b>2000+ 案例一键入库。</sub></td></tr>
 <tr>
 <td width="50%"><img src="docs/assets/screens/skill-center.jpg" alt="创作 Skill 中心"></td>
 <td width="50%"><img src="docs/assets/screens/composer.jpg" alt="创作台混合参考案例与 Skill 生成视频提示词"></td>
@@ -69,21 +69,23 @@
 
 ## 这次更新，库更好用了
 
+**完整 Skill，直接复用。** 1.28 新增完整文件与参考资料的保留和浏览：在 Skill 中查看文件、阅读全文、编辑文字、添加资料，并导出完整包。
+
 **助手就在页面旁边。** 1.27 新增的内置助手就在采集侧栏里：让它采集当前页面或视频、在案例库里找参考、打开案例；原件、提示词和你手动改过的内容都会原样保留。
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/guide-assets/v127-assistant-prompts.jpg" alt="内置助手的示例问题与底部输入框" width="620"></p>
+<p align="center"><img src="https://promptdirector.cn/guide-assets/v127-assistant-prompts.jpg" alt="内置助手的示例问题与底部输入框" width="620"></p>
 
 **相似资料就在案例下方。** 案例详情底部会列出库里的相近参考，一条好参考能带出一串；视频还能按时间点记创作笔记，之后点回那一帧接着看。
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/guide-assets/v127-similar-cases.jpg" alt="视频案例下方的相似资料墙" width="1000"></p>
+<p align="center"><img src="https://promptdirector.cn/guide-assets/v127-similar-cases.jpg" alt="视频案例下方的相似资料墙" width="1000"></p>
 
 **库会自己保持整齐。** 可以查看图片或视频原件完全相同的重复案例，补全缺失的文字标签，自动补全资料索引，删掉的资料也能从回收站找回。
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/guide-assets/v127-maintenance.jpg" alt="设置 → 任务与维护：文字标签补全、资料索引自动补全、案例排重" width="860"></p>
+<p align="center"><img src="https://promptdirector.cn/guide-assets/v127-maintenance.jpg" alt="设置 → 任务与维护：文字标签补全、资料索引自动补全、案例排重" width="860"></p>
 
 **备份、同步和 Agent，都在设置里。** 在「设置 → 通用」这一页可以整库备份与恢复、跨设备同步，也能复制 Agent 连接指令交给 Codex、Claude Code 或 WorkBuddy；资料库名称和视频采集也在这里。
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/guide-assets/v127-settings-video.jpg" alt="设置 → 界面与资料库页：资料库名称、分享保存位置、采集权限与视频采集；Agent 连接、备份与同步在本页下方" width="760"></p>
+<p align="center"><img src="https://promptdirector.cn/guide-assets/v127-settings-video.jpg" alt="设置 → 界面与资料库页：资料库名称、分享保存位置、采集权限与视频采集；Agent 连接、备份与同步在本页下方" width="760"></p>
 
 ## 能从哪里采集
 

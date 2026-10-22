@@ -29,7 +29,7 @@
 - **Your Agent can use it.** Codex, Claude Code and WorkBuddy can search, read and save back to your library through local MCP.
 - **Ask the Assistant.** The built-in Assistant captures the page or video you are on, finds references in your library and opens cases for you — from the same sidebar.
 
-<p align="center"><strong>1,000+ curated cases, ready to import:</strong> <a href="https://wchao6891.github.io/PromptDirector-Curated/en/">Browse (English)</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/?lang=zh-CN">浏览（中文）</a> · <a href="https://wchao6891.github.io/PromptDirector-Curated/en/guide.html">Quick start</a></p>
+<p align="center"><strong>2,000+ curated cases, ready to explore and import:</strong> <a href="https://promptdirector.cn/en/">Website &amp; cases (English)</a> · <a href="https://promptdirector.cn/">浏览（中文）</a> · <a href="https://promptdirector.cn/en/guide.html">Quick start</a></p>
 
 <p align="center"><sub>Free & open source · Local first · No account · Chrome / Edge on Windows, macOS, Linux</sub></p>
 
@@ -59,7 +59,7 @@
 <td width="50%"><img src="docs/assets/screens/case-detail.jpg" alt="Case detail with media, original prompt and project"></td>
 <td width="50%"><img src="docs/assets/screens/curated-packs.jpg" alt="Curated case packs ready to import"></td>
 </tr>
-<tr><td align="center"><sub><b>Case detail.</b> Media, original prompt and source in one place.</sub></td><td align="center"><sub><b>Curated packs.</b> Import 1,000+ cases in one click.</sub></td></tr>
+<tr><td align="center"><sub><b>Case detail.</b> Media, original prompt and source in one place.</sub></td><td align="center"><sub><b>Curated packs.</b> Import 2,000+ cases in one click.</sub></td></tr>
 <tr>
 <td width="50%"><img src="docs/assets/screens/skill-center.jpg" alt="Creative Skill center"></td>
 <td width="50%"><img src="docs/assets/screens/composer.jpg" alt="Composer mixing reference cases and a Skill to write a video prompt"></td>
@@ -69,23 +69,25 @@
 
 ## What's new
 
+**Complete Skills, ready to reuse.** New in 1.28, Skills keep their full files and supporting references together. Browse files, read and edit text, add materials, and export the complete package from the Skill center.
+
 **An Assistant beside the page.** New in 1.27, the built-in Assistant sits in the capture sidebar. Ask it to capture the current page or video, find references in your library or open a case — originals, prompts and your own edits all stay where they are.
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-assistant-bar.jpg" alt="The Assistant entry in PromptDirector's capture panel" width="620"></p>
+<p align="center"><img src="https://promptdirector.cn/en/guide-assets/v127-assistant-bar.jpg" alt="The Assistant entry in PromptDirector's capture panel" width="620"></p>
 
 **Similar cases, and notes on the exact frame.** Cases list similar references from your library underneath, so one good find leads to more. On video, add a creative note at any timestamp and jump back to that moment later.
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-similar-cases.jpg" alt="A case detail with its original prompt and a wall of similar cases underneath" width="1000"></p>
+<p align="center"><img src="https://promptdirector.cn/en/guide-assets/v127-similar-cases.jpg" alt="A case detail with its original prompt and a wall of similar cases underneath" width="1000"></p>
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-detail-notes.jpg" alt="A creative note saved at 18.19s on a video case, with similar cases below" width="1000"></p>
+<p align="center"><img src="https://promptdirector.cn/en/guide-assets/v127-detail-notes.jpg" alt="A creative note saved at 18.19s on a video case, with similar cases below" width="1000"></p>
 
 **A library that stays tidy.** Review duplicate cases that share the same image or video original, fill in missing text tags, complete the library index automatically, and restore anything you delete from the recycle bin.
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-maintenance.jpg" alt="Settings → Tasks and maintenance: complete text tags, automatic library index completion and duplicate cases" width="860"></p>
+<p align="center"><img src="https://promptdirector.cn/en/guide-assets/v127-maintenance.jpg" alt="Settings → Tasks and maintenance: complete text tags, automatic library index completion and duplicate cases" width="860"></p>
 
 **Backup, sync, and your Agent.** Back up and restore the whole library, sync it across devices, and copy the Agent connection request for Codex, Claude Code or WorkBuddy.
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-settings-sync.jpg" alt="Settings: Agent connection, backup and restore, cross-device sync and version 1.27.0" width="760"></p>
+<p align="center"><img src="https://promptdirector.cn/en/guide-assets/v127-settings-sync.jpg" alt="Settings: Agent connection, backup and restore, cross-device sync and version 1.27.0" width="760"></p>
 
 ## Where you can capture
 
@@ -108,7 +110,7 @@
 
 **Videos capture like any other page.** Preview the video, keep its caption and public prompt, and save the case. With the optional free [local video component](docs/VIDEO_COMPONENT.md), the original file comes along too.
 
-<p align="center"><img src="https://wchao6891.github.io/PromptDirector-Curated/en/guide-assets/v127-video-capture.jpg" alt="Capturing a YouTube video: the page and the PromptDirector preview with Save case" width="1000"></p>
+<p align="center"><img src="https://promptdirector.cn/en/guide-assets/v127-video-capture.jpg" alt="Capturing a YouTube video: the page and the PromptDirector preview with Save case" width="1000"></p>
 
 Capture, browsing and organization require no AI service. Pages must be accessible and original prompts must be public. Login state, lazy loading and site changes can affect results, so preview before saving. See the [capture guide](docs/CAPTURE_SUPPORT.md).
 
@@ -146,7 +148,7 @@ AI analysis is optional and uses your own service. Only selected or explicitly r
 
 ## Your library stays yours
 
-Cases, media, tags and settings are stored in your browser by default. No account, ads or usage analytics. AI features are opt-in and use your own keys. Read the [privacy policy](https://wchao6891.github.io/PromptDirector-Curated/en/privacy.html).
+Cases, media, tags and settings are stored in your browser by default. No account, ads or usage analytics. AI features are opt-in and use your own keys. Read the [privacy policy](https://promptdirector.cn/en/privacy.html).
 
 ## Install
 
