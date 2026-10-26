@@ -146,7 +146,7 @@ export async function analyzeVideoWithChatCompletions(input = {}, dependencies =
   const apiKey = clean(input.apiKey);
   const model = clean(input.model);
   const providerLabel = clean(input.providerLabel) || "兼容视频服务";
-  if (!apiKey || !model) throw new Error(`${providerLabel} 视频分析尚未完成配置`);
+  if ((!apiKey && !loopbackServiceUrl(input.endpoint)) || !model) throw new Error(`${providerLabel} 视频分析尚未完成配置`);
   const mode = clean(input.mode) || "creative-breakdown";
   const structuredReconstruction = mode === "visual-reconstruction";
   const includeTags = input.includeTags !== false;
@@ -192,7 +192,7 @@ export async function analyzeVideoWithChatCompletions(input = {}, dependencies =
   throwIfAborted(input.signal);
   const payload = await fetchWithVideoAnalysisTimeout(fetchImpl, endpoint, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+    headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
     credentials: "omit",
     redirect: "error",
     signal: input.signal,
@@ -419,6 +419,15 @@ function chatCompletionsEndpoint(value, providerLabel) {
   url.pathname = `${url.pathname.replace(/\/$/, "").replace(/\/chat\/completions$/, "")}/chat/completions`;
   url.search = "";
   return url.href;
+}
+
+function loopbackServiceUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname.toLocaleLowerCase("en-US"));
+  } catch {
+    return false;
+  }
 }
 
 function safeServiceUrl(value) {

@@ -11684,9 +11684,15 @@ function attachLocalModelTools(dialog, controls, status, profile, prefix) {
   const renderModelLists = () => {
     const ids = (profile.discoveredModels ?? []).filter((model) => model.status !== "unavailable").map((model) => model.id);
     const usable = ids.filter((id) => !/embed/iu.test(id));
-    for (const { input, select } of modelInputs) {
-      select.replaceChildren(option("", t(usable.length ? "选择模型" : "读取本地模型"), true), ...usable.map((id) => option(id, id, id === input.value)));
-      select.disabled = !usable.length;
+    for (const { group, input, select } of modelInputs) {
+      const declared = usable.filter((id) => profile.discoveredModels.find((model) => model.id === id)?.tasks?.some((taskId) => group.taskIds.includes(taskId)));
+      const choices = declared.length ? declared : usable;
+      select.replaceChildren(option("", t(choices.length ? "选择模型" : "读取本地模型"), true), ...choices.map((id) => option(id, id, id === input.value)));
+      select.disabled = !choices.length;
+      if (!input.value && declared.length) {
+        input.value = declared[0];
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     }
     for (const { taskId, input } of generationInputs) {
       const taskModels = (profile.discoveredModels ?? [])

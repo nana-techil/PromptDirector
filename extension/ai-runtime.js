@@ -247,7 +247,8 @@ export function resolveVideoAnalysisTask(configurationValue = {}) {
   return {
     ...resolved,
     providerLabel: resolved.provider,
-    protocol: profile.protocol,
+    // The AI Studio adapter analyses video through its OpenAI-style chat route.
+    protocol: profile.protocol === "openai_videos" ? "chat_completions" : profile.protocol,
     apiKey: profile.apiKey,
     endpoint: profile.endpoint,
     ...(modelRuntime.structuredOutputTokenBudget ? { maxOutputTokens: modelRuntime.structuredOutputTokenBudget } : {}),

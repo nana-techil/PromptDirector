@@ -118,7 +118,7 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
     endpoint: "http://127.0.0.1:8790/v1",
     protocol: "openai_videos",
     discovery: { adapter: "identity" },
-    capabilities: ["imageGeneration", "videoGeneration"]
+    capabilities: ["videoAnalysis", "imageGeneration", "videoGeneration"]
   }),
   preset({
     id: "custom-text",

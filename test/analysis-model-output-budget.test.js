@@ -44,3 +44,28 @@ for (const [kind, run] of Object.entries(routes)) {
     if (kind === "video") assert.equal(request.messages[0].content.find(part => part.type === "video_url").video_url.url, "AQID");
   });
 }
+
+test("AI Studio local video analysis routes to the loopback chat adapter without a key", async () => {
+  const studioModel = "google/gemma-4-26b-a4b-qat";
+  const local = aiConfigurationFromStorage({
+    aiProviderRegistry: { providers: { "ai-studio": {
+      consent: true, models: { videoAnalysis: studioModel },
+      discoveredModels: [{ id: studioModel, status: "available", confidence: "declared", tasks: ["videoAnalysis"] }]
+    } } },
+    aiTaskAssignments: { videoAnalysis: { providerId: "ai-studio", model: studioModel } }
+  });
+  const route = resolveVideoAnalysisTask(local);
+  assert.equal(route.protocol, "chat_completions");
+  const requests = [];
+  await analyzeVideoWithChatCompletions({ ...route, catalog, videoBlob: new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" }) }, {
+    fetchImpl: async (url, options) => {
+      requests.push({ url, headers: options.headers, body: JSON.parse(options.body) });
+      return new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "本机视频分析夹具" } }] }), { status: 200 });
+    }
+  });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "http://127.0.0.1:8790/v1/chat/completions");
+  assert.equal(requests[0].headers.authorization, undefined);
+  assert.equal(requests[0].body.model, studioModel);
+  assert.match(requests[0].body.messages[0].content.find(part => part.type === "video_url").video_url.url, /^data:video\/mp4;base64,/);
+});
