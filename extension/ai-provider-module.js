@@ -57,7 +57,7 @@ export function createAiProviderModule(options = {}) {
         const discovered = discovery.models.find((item) => item.id === model.id);
         return {
           ...model,
-          status: discovered?.status ?? (Array.isArray(discovery.models) && !profile.id.startsWith("custom")
+          status: discovered?.status ?? (Array.isArray(discovery.models) && !userManagedCatalog(profile)
             ? "unavailable"
             : model.status)
         };
@@ -93,6 +93,10 @@ export function createAiProviderModule(options = {}) {
     if (!model) throw new Error("尚未发现该模型的能力信息");
     return structuredClone(model);
   }
+}
+
+function userManagedCatalog(profile) {
+  return profile.id.startsWith("custom") || ["custom", "local"].includes(getAiProviderPreset(profile.id)?.category);
 }
 
 async function discoverProviderModels(fetchImpl, profile, cache) {

@@ -411,6 +411,7 @@ import {
   applyConnectionModelAssignments,
   availableAiModelsForTask,
   availableAiProvidersForTask,
+  isLoopbackAiEndpoint,
   mergeAiProviderRegistry,
   modelConcurrencyLimit,
   normalizeAiTaskAssignments,
@@ -5713,7 +5714,8 @@ async function updateCreativeExperimentSettings(value) {
   const settings = normalizeCreativeExperimentSettings(value);
   if (settings.autoAnalyze) {
     const vision = resolveVisionTaskSettings("imageAnalysis", await loadAiConfiguration());
-    if (!vision.consent || !vision[vision.activeProvider].apiKey) {
+    const visionProvider = vision[vision.activeProvider];
+    if (!vision.consent || !(visionProvider.apiKey || (vision.activeProvider === "compatible" && isLoopbackAiEndpoint(visionProvider.endpoint)))) {
       throw new Error("自动视觉对照需要先完成图片视觉设置并确认截图发送范围");
     }
   }
@@ -6199,7 +6201,9 @@ async function discoverAiProviderModels(providerIdValue, force = false) {
   const configuration = await loadAiConfiguration();
   const profile = configuration.registry.providers[providerId];
   if (!profile) throw new Error("没有找到要刷新的 AI 厂商");
-  if (!profile.endpoint || !profile.apiKey) throw new Error(`${profile.label} 需要先保存接口地址和 API Key`);
+  if (!profile.endpoint || (!profile.apiKey && !isLoopbackAiEndpoint(profile.endpoint))) {
+    throw new Error(`${profile.label} 需要先保存接口地址和 API Key`);
+  }
   let result;
   try {
     result = await aiProviderModule.discoverModels({

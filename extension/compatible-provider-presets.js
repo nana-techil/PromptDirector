@@ -46,6 +46,23 @@ export const MICU_COMPATIBLE_PROVIDER_PRESET = Object.freeze({
   })
 });
 
+// OpenAI-compatible image server on this machine (e.g. an AI Studio adapter).
+export const LOCAL_IMAGE_SERVER_PRESET = Object.freeze({
+  id: "local-image-server",
+  imageGeneration: Object.freeze({
+    protocol: "images_generations",
+    endpoint: "http://127.0.0.1:8790/v1/images/generations",
+    editsEndpoint: "http://127.0.0.1:8790/v1/images/edits",
+    defaultModel: "z-image",
+    models: Object.freeze({
+      "z-image": Object.freeze({ sizes: Object.freeze(["1024x1024", "1280x720", "720x1280", "1024x1536", "1536x1024"]) }),
+      "qwen-turbo": Object.freeze({ sizes: Object.freeze(["1024x1024", "1280x720", "720x1280"]) }),
+      "qwen-unc": Object.freeze({ sizes: Object.freeze(["1024x1024", "1280x720", "720x1280"]) }),
+      "qwen-image-2.1": Object.freeze({ sizes: Object.freeze(["1024x1024", "768x768", "512x512"]) })
+    })
+  })
+});
+
 export function compatibleProviderPresetForEndpoint(value) {
   try {
     const hostname = new URL(value).hostname.toLocaleLowerCase("en-US");

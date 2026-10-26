@@ -103,6 +103,15 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
     capabilities: [...TEXT_CAPABILITIES, "imageAnalysis", "videoAnalysis", "imageGeneration", "videoGeneration"]
   }),
   preset({
+    id: "local",
+    label: "LM Studio / Ollama",
+    category: "local",
+    endpoint: "http://127.0.0.1:1234/v1/chat/completions",
+    protocol: "chat_completions",
+    discovery: { adapter: "identity" },
+    capabilities: [...TEXT_CAPABILITIES, "imageAnalysis"]
+  }),
+  preset({
     id: "custom-text",
     label: "自定义兼容服务（对话与识别）",
     category: "custom",
@@ -120,6 +129,11 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
     discovery: { adapter: "identity" },
     capabilities: [...TEXT_CAPABILITIES, "imageAnalysis", "imageGeneration"]
   })
+]);
+
+export const LOCAL_MODEL_SERVER_PRESETS = Object.freeze([
+  Object.freeze({ id: "lmstudio", label: "LM Studio", endpoint: "http://127.0.0.1:1234/v1/chat/completions" }),
+  Object.freeze({ id: "ollama", label: "Ollama", endpoint: "http://127.0.0.1:11434/v1/chat/completions" })
 ]);
 
 export function getAiProviderPreset(idValue) {

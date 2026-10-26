@@ -26,7 +26,7 @@ import { LIBRARY_TRANSFER_LIMITS } from "./resource-limits.js";
 import { boundedMediaBlobFromResponse, fetchBoundedMedia } from "./bounded-media.js";
 import { createAiProviderModule } from "./ai-provider-module.js";
 import { getAiModelCapability } from "./ai-model-capabilities.js";
-import { availableAiModelChoicesForTask } from "./ai-provider-registry.js";
+import { availableAiModelChoicesForTask, isLoopbackAiEndpoint } from "./ai-provider-registry.js";
 import {
   compatibleImageSizesFor,
   compatibleProviderPresetForEndpoint
@@ -34,6 +34,8 @@ import {
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const IMAGE_REQUEST_TIMEOUT_MS = 240_000;
+// Local generators on this machine can take many minutes per image.
+const LOCAL_IMAGE_REQUEST_TIMEOUT_MS = 1_500_000;
 const OPENAI_FILES_ENDPOINT = "https://api.openai.com/v1/files";
 const XAI_CHAT_ENDPOINT = "https://api.x.ai/v1/chat/completions";
 const XAI_IMAGE_GENERATIONS_ENDPOINT = "https://api.x.ai/v1/images/generations";
@@ -158,12 +160,12 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
         model,
         label: `${profile.label || providerId} · ${model || "未选择模型"}`,
         shortLabel: profile.label || providerId,
-        configured: Boolean(profile.consent && profile.apiKey && model),
+        configured: Boolean(profile.consent && providerCredentialReady(profile) && model),
         vision: providerModelSupports(profile, model, "imageAnalysis"),
         planning: model === profile.models?.creativePlanning || providerModelSupports(profile, model, "creativePlanning"),
         reasoning: false,
-        imageGeneration: Boolean(profile.consent && profile.apiKey && providerModelSupports(profile, model, "imageGeneration")),
-        videoGeneration: Boolean(profile.consent && profile.apiKey && providerModelSupports(profile, model, "videoGeneration"))
+        imageGeneration: Boolean(profile.consent && providerCredentialReady(profile) && providerModelSupports(profile, model, "imageGeneration")),
+        videoGeneration: Boolean(profile.consent && providerCredentialReady(profile) && providerModelSupports(profile, model, "videoGeneration"))
       });
     }
   }
@@ -199,7 +201,7 @@ export function composerServiceCatalog(aiSettingsValue = {}, visionSettingsValue
     const visionInput = modalities.length ? modalities.includes("image")
       : capability?.tasks?.includes("imageAnalysis") || item.vision;
     return { ...item, vision: Boolean(visionInput), videoInput: modalities.includes("video"),
-      nativeTools: capability?.supportedParameters?.includes("tools") || ["deepseek", "openai", "zhipu"].includes(providerId) };
+      nativeTools: capability?.supportedParameters?.includes("tools") || ["deepseek", "openai", "zhipu", "local"].includes(providerId) };
   });
 }
 
@@ -1443,6 +1445,10 @@ async function requestOpenAiMaskedImage(service, instructions, content, imageEdi
   }
 }
 
+function imageRequestTimeoutMs(endpoint) {
+  return isLoopbackAiEndpoint(endpoint) ? LOCAL_IMAGE_REQUEST_TIMEOUT_MS : IMAGE_REQUEST_TIMEOUT_MS;
+}
+
 async function requestImagesEndpoint(service, prompt, referenceImages, requestParameters, options, imageEdit = null) {
   const image = service.imageGeneration;
   if (referenceImages.length) return requestImageEdits(service, prompt, referenceImages, requestParameters, options, imageEdit);
@@ -1453,7 +1459,7 @@ async function requestImagesEndpoint(service, prompt, referenceImages, requestPa
     ...requestParameters,
     ...(service.serviceId === "xai" ? {} : { response_format: "b64_json" })
   };
-  const response = await requestRaw(image.endpoint, image.apiKey, body, options, IMAGE_REQUEST_TIMEOUT_MS, service.label);
+  const response = await requestRaw(image.endpoint, image.apiKey, body, options, imageRequestTimeoutMs(image.endpoint), service.label);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw responseError(service.label, response.status, payload, {
     credentialHint: credentialHint(image.apiKey),
@@ -1497,7 +1503,7 @@ async function requestImageEdits(service, prompt, referenceImages, requestParame
     const maskBlob = imageBlobFromDataUrl(imageEdit.mask.dataUrl);
     body.append("mask", maskBlob, "edit-mask.png");
   }
-  const response = await requestRaw(image.editsEndpoint, image.apiKey, body, options, IMAGE_REQUEST_TIMEOUT_MS, service.label);
+  const response = await requestRaw(image.editsEndpoint, image.apiKey, body, options, imageRequestTimeoutMs(image.editsEndpoint), service.label);
   return parseImagesEndpointResponse(service, response, options);
 }
 
@@ -1660,7 +1666,7 @@ function requireVisualService(profileValue, visionSettingsValue, action) {
       && provider.imageGeneration.protocol !== "none"
       && provider.imageGeneration?.endpoint
       && (provider.imageGeneration?.apiKey || isLoopback(provider.imageGeneration.endpoint));
-    if ((!provider?.apiKey && !imageGenerationReady) || !model) {
+    if ((!providerCredentialReady(provider) && !imageGenerationReady) || !model) {
       throw new ComposerServiceError(`请先完成 ${provider?.label || profile.serviceId} 的 API Key 和所选模型配置`, 422, { retryable: false });
     }
     if (!provider.consent) throw new ComposerServiceError(`请先确认：主动${action}时会把本轮文字与所选图片发送到 ${provider.label || profile.serviceId}`, 422, { retryable: false });
@@ -2075,6 +2081,10 @@ async function requestOpenAiFile(service, url, method, body, options) {
 
 function serviceLabelForEndpoint(value) {
   return compatibleProviderPresetForEndpoint(value)?.label || "兼容服务";
+}
+
+function providerCredentialReady(profile) {
+  return Boolean(profile?.apiKey || isLoopback(profile?.endpoint));
 }
 
 function isLoopback(value) {

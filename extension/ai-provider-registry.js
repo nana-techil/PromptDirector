@@ -283,8 +283,8 @@ function provider(id, value = {}) {
     mediaInput: normalizeMediaInput(preset?.mediaInput ?? value?.mediaInput),
     apiKey: clean(value?.apiKey),
     credentialConfigured: Object.hasOwn(value ?? {}, "apiKey")
-      ? Boolean(clean(value?.apiKey) || isLoopback(value?.endpoint))
-      : value?.credentialConfigured === true || isLoopback(value?.endpoint),
+      ? Boolean(clean(value?.apiKey) || loopbackConnectionSaved(preset, value))
+      : value?.credentialConfigured === true || loopbackConnectionSaved(preset, value),
     consent: value?.consent === true,
     models,
     capabilities,
@@ -403,7 +403,7 @@ function modelAssignmentEvidence(taskId, model = {}, profile = null) {
   if ((model.tasks ?? []).includes(taskId)) {
     return ASSIGNMENT_EVIDENCE.has(model.confidence) ? model.confidence : "declared";
   }
-  if (profile?.category === "custom" && ["imageAnalysis", "videoAnalysis"].includes(taskId)
+  if (userManagedProviderCategory(profile?.category) && ["imageAnalysis", "videoAnalysis"].includes(taskId)
     && ((model.outputModalities ?? []).includes("text") || (model.tasks ?? []).some(task => MANUAL_ASSIGNMENT_TASKS.has(task)))) {
     return "manual_unverified";
   }
@@ -468,10 +468,23 @@ function credentialHint(value) {
   return key.length >= 4 ? key.slice(-4) : "";
 }
 
+export function userManagedProviderCategory(category) {
+  return category === "custom" || category === "local";
+}
+
+function loopbackConnectionSaved(preset, value) {
+  if (isLoopback(value?.endpoint)) return preset?.category !== "local" || value?.consent === true;
+  return value?.consent === true && isLoopback(value?.imageGeneration?.endpoint);
+}
+
+export function isLoopbackAiEndpoint(value) {
+  return isLoopback(value);
+}
+
 function isLoopback(value) {
   try {
-    const hostname = new URL(value).hostname;
-    return ["localhost", "127.0.0.1", "::1"].includes(hostname);
+    const hostname = new URL(value).hostname.toLocaleLowerCase("en-US");
+    return ["localhost", "127.0.0.1", "::1", "[::1]"].includes(hostname);
   } catch {
     return false;
   }

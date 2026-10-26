@@ -57,11 +57,11 @@ function configuredAssignments() {
 test("provider presets are the single model-free source for official and aggregator services", () => {
   assert.deepEqual(AI_PROVIDER_PRESETS.map((preset) => preset.id), [
     "deepseek", "zhipu", "openai", "gemini", "xai", "kimi", "minimax", "volcengine", "openrouter",
-    "custom-text", "custom-media"
+    "local", "custom-text", "custom-media"
   ]);
   assert.equal(AI_PROVIDER_PRESETS.every((preset) =>
     preset.label && (preset.endpoint || preset.category === "custom") && preset.protocol && preset.discovery?.adapter
-      && ["official", "aggregator", "custom"].includes(preset.category)
+      && ["official", "aggregator", "local", "custom"].includes(preset.category)
       && Array.isArray(preset.capabilities)
   ), true);
   assert.equal(Object.hasOwn(getAiProviderPreset("kimi"), "models"), false);
@@ -89,6 +89,35 @@ test("provider presets are the single model-free source for official and aggrega
   assert.deepEqual(getAiProviderPreset("gemini").catalogRequiredTasks, ["imageGeneration"]);
   assert.equal(getAiProviderPreset("openrouter").category, "aggregator");
   assert.equal(getAiProviderPreset("missing"), null);
+});
+
+test("local model servers connect over loopback without an API key", () => {
+  const registry = normalizeAiProviderRegistry({ providers: { local: {
+    endpoint: "http://127.0.0.1:1234/v1/chat/completions",
+    apiKey: "",
+    consent: true,
+    discoveredModels: [{ id: "qwen3-coder-30b" }]
+  } } });
+  const local = registry.providers.local;
+  assert.equal(local.category, "local");
+  assert.equal(local.credentialConfigured, true);
+  const assignments = applyConnectionModelAssignments({}, {
+    providerId: "local", model: "qwen3-coder-30b",
+    taskIds: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"],
+    allowManualUnverifiedTasks: ["textTags", "skillExtraction", "creativePlanning", "imageAnalysis"],
+    replaceExisting: true
+  }, registry);
+  for (const taskId of ["textTags", "creativePlanning", "imageAnalysis"]) {
+    assert.equal(resolveAiProviderAssignment(taskId, registry, assignments).model, "qwen3-coder-30b");
+  }
+  const untouched = normalizeAiProviderRegistry({});
+  assert.equal(untouched.providers.local.credentialConfigured, false);
+  const unsaved = normalizeAiProviderRegistry({ providers: { local: { endpoint: "http://127.0.0.1:1234/v1/chat/completions", apiKey: "" } } });
+  assert.equal(unsaved.providers.local.credentialConfigured, false);
+  const ipv6 = normalizeAiProviderRegistry({ providers: { local: { endpoint: "http://[::1]:11434/v1/chat/completions", apiKey: "", consent: true } } });
+  assert.equal(ipv6.providers.local.credentialConfigured, true);
+  const remote = normalizeAiProviderRegistry({ providers: { local: { endpoint: "https://models.example.com/v1/chat/completions", apiKey: "", consent: true } } });
+  assert.equal(remote.providers.local.credentialConfigured, false);
 });
 
 test("task model candidates separate declared catalog capability from explicit manual assignment", () => {
@@ -697,4 +726,18 @@ test('an image generation connection needs only its own key, including the redac
   assert.equal(safe.providers['custom-media'].imageGeneration.credentialConfigured,true);
   assert.ok(availableAiModelChoicesForTask('imageGeneration',safe).some(choice=>choice.modelId==='account-image'));
   assert.equal(availableAiModelChoicesForTask('creativePlanning',safe).some(choice=>choice.modelId==='account-image'),false);
+});
+
+test("custom image generation on a loopback endpoint connects without an API key", () => {
+  const registry = normalizeAiProviderRegistry({ providers: { "custom-media": {
+    endpoint: "", apiKey: "", consent: true, models: { imageGeneration: "z-image-turbo" },
+    imageGeneration: { protocol: "images_generations", endpoint: "http://127.0.0.1:8788/v1/images/generations", model: "z-image-turbo", sizes: ["1024x1024"] }
+  } } });
+  assert.equal(registry.providers["custom-media"].credentialConfigured, true);
+  assert.ok(availableAiModelsForTask("imageGeneration", registry.providers["custom-media"]).some((model) => model.id === "z-image-turbo"));
+  const withoutConsent = normalizeAiProviderRegistry({ providers: { "custom-media": {
+    endpoint: "", apiKey: "", consent: false,
+    imageGeneration: { protocol: "images_generations", endpoint: "http://127.0.0.1:8788/v1/images/generations", model: "z-image-turbo" }
+  } } });
+  assert.equal(withoutConsent.providers["custom-media"].credentialConfigured, false);
 });

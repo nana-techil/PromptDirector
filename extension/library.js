@@ -167,7 +167,7 @@ import {
   blobToDataUrl,
   visionProtocolDescription
 } from "./vision.js";
-import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
+import { LOCAL_IMAGE_SERVER_PRESET, MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
 import { contactSheetPlan, renderContactSheetBatch, selectedSkillContentImages } from "./skill-contact-sheet.js";
 import {
   entryHasVisual,
@@ -209,8 +209,11 @@ import {
   AI_ASSIGNMENT_TASKS,
   availableAiModelsForTask,
   availableAiProvidersForTask,
-  modelConcurrencyLimit
+  isLoopbackAiEndpoint,
+  modelConcurrencyLimit,
+  userManagedProviderCategory
 } from "./ai-provider-registry.js";
+import { LOCAL_MODEL_SERVER_PRESETS } from "./ai-provider-presets.js";
 import { buildSearchIndex, searchIndexedEntries } from "./search-index.js";
 import { parseSearchQuery } from "./search-query.js";
 import {
@@ -11066,7 +11069,7 @@ function renderAiRoutingSummary() {
   moreProviders.className = "ai-more-providers";
   moreProviders.open = elements.aiProviderList?.querySelector(".ai-more-providers")?.open || false;
   moreProviders.append(textEl("summary", "", "连接其他服务"));
-  const categoryLabels = { official: "官方服务", aggregator: "聚合平台", custom: "自定义兼容服务" };
+  const categoryLabels = { official: "官方服务", aggregator: "聚合平台", local: "本地模型", custom: "自定义兼容服务" };
   const providerGroups = Object.entries(categoryLabels).flatMap(([category, label]) => {
     const members = profiles.filter((profile) => profile.category === category);
     if (!members.length) return [];
@@ -11299,17 +11302,18 @@ async function openAiProviderDialog(initialProviderId = "") {
   }];
   for (const profile of profiles) {
     const key = keyFor(profile.id);
-    const custom = profile.id.startsWith("custom");
+    const local = profile.category === "local";
+    const custom = profile.id.startsWith("custom") || local;
     const micuImageService = providerUsesMicuImageGroup(profile);
     fields.push({
       id: `provider_${key}_apiKey`,
       label: micuImageService
         ? t("图片分析 API Key（米醋 vip_2，只用于看图）")
-        : profile.id === "custom-media" ? t("已有对话 / 识别 API Key（可选）") : "API Key",
-      advanced: profile.id === "custom-media",
+        : local ? t("API Key（可选）") : profile.id === "custom-media" ? t("已有对话 / 识别 API Key（可选）") : "API Key",
+      advanced: profile.id === "custom-media" || local,
       type: "secret",
       autocomplete: "off",
-      placeholder: profile.credentialConfigured ? t("已保存；留空保持不变") : t("粘贴服务商提供的 API Key"),
+      placeholder: profile.credentialConfigured && (profile.apiKey || !local) ? t("已保存；留空保持不变") : t("粘贴服务商提供的 API Key"),
       help: micuImageService ? t("这把 Key 只用于图片分析，不会发送给最终生图接口。") : ""
     });
     if (profile.id === "custom-media") fields.push({
@@ -11325,7 +11329,9 @@ async function openAiProviderDialog(initialProviderId = "") {
       help: t("仅用于生成图片；对话和图片、视频识别在“自定义兼容服务（对话与识别）”配置。已有配置保留。")
     });
     if (custom) fields.push(
-      { id: `provider_${key}_endpoint`, label: t(profile.id === "custom-media" ? "图片分析接口（高级）" : "接口地址（高级）"), type: "url", value: profile.endpoint, advanced: true },
+      local
+        ? { id: `provider_${key}_endpoint`, label: t("本地服务地址"), type: "url", value: profile.endpoint, help: t("在 LM Studio 中启动本地服务器，或运行 Ollama；Ollama 需设置 OLLAMA_ORIGINS=chrome-extension://*") }
+        : { id: `provider_${key}_endpoint`, label: t(profile.id === "custom-media" ? "图片分析接口（高级）" : "接口地址（高级）"), type: "url", value: profile.endpoint, advanced: true },
       { id: `provider_${key}_protocol`, label: t("兼容协议（高级）"), type: "select", value: profile.protocol, advanced: true, options: [
         { value: "native", label: t("服务原生协议") },
         { value: "responses", label: "OpenAI Responses" },
@@ -11341,7 +11347,7 @@ async function openAiProviderDialog(initialProviderId = "") {
         type: custom ? "text" : "select",
         value: currentModel,
         options: [{ value: "", label: t("不更改这些任务") }, ...group.options],
-        placeholder: custom ? t("填写这个兼容接口实际调用的模型") : "",
+        placeholder: local ? t("读取本地模型后选择，或填写模型名称") : custom ? t("填写这个兼容接口实际调用的模型") : "",
         help: t("保存后更新：{tasks}", { tasks: group.taskIds.map(taskDisplayLabel).join("、") }),
         advanced: profile.id === "custom-media"
       });
@@ -11375,7 +11381,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       { id: `provider_${key}_imageSizes`, label: t("此服务支持的图片尺寸（能力声明，不是本轮输出值）"), type: "text", value: (profile.imageGeneration?.sizes ?? []).join(", "), advanced: true },
       { id: `provider_${key}_imageQualities`, label: t("此服务支持的质量选项（能力声明，不是本轮输出值）"), type: "text", value: (profile.imageGeneration?.qualities ?? []).join(", "), advanced: true }
     );
-    fields.push({ id: `provider_${key}_consent`, label: t("我确认：主动使用 {provider} 时发送本次任务所需内容", { provider: providerDisplayLabel(profile) }), type: "checkbox", value: profile.consent === true });
+    if (!local) fields.push({ id: `provider_${key}_consent`, label: t("我确认：主动使用 {provider} 时发送本次任务所需内容", { provider: providerDisplayLabel(profile) }), type: "checkbox", value: profile.consent === true });
   }
   const advancedFieldIds = new Set(fields.flatMap((field) => field.advanced === true ? [field.id] : []));
   const result = await showAppDialog({
@@ -11405,7 +11411,11 @@ async function openAiProviderDialog(initialProviderId = "") {
       micuPreset.type = "button";
       micuPreset.dataset.providerPreset = "micu-personal";
       micuPreset.hidden = true;
-      advancedBody.append(micuPreset);
+      const localImagePreset = textEl("button", "button-secondary", "填入本机图片服务（AI Studio）");
+      localImagePreset.type = "button";
+      localImagePreset.dataset.providerPreset = "local-image-server";
+      localImagePreset.hidden = true;
+      advancedBody.append(micuPreset, localImagePreset);
       for (const fieldId of advancedFieldIds) {
         const wrapper = body.querySelector(`[data-field-id="${fieldId}"]`);
         if (wrapper) advancedBody.append(wrapper);
@@ -11435,8 +11445,35 @@ async function openAiProviderDialog(initialProviderId = "") {
         controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
         controls.get(`${prefix}imageApiKey`).focus();
       });
+      dialog.querySelector('[data-provider-preset="local-image-server"]')?.addEventListener("click", () => {
+        const prefix = "provider_custom_media_";
+        const imagePreset = LOCAL_IMAGE_SERVER_PRESET.imageGeneration;
+        controls.get(`${prefix}imageProtocol`).value = imagePreset.protocol;
+        controls.get(`${prefix}imageEndpoint`).value = imagePreset.endpoint;
+        controls.get(`${prefix}imageEditsEndpoint`).value = imagePreset.editsEndpoint;
+        const model = controls.get(`${prefix}model_imageGeneration`);
+        if (model instanceof HTMLSelectElement) {
+          for (const id of Object.keys(imagePreset.models)) {
+            if (![...model.options].some((item) => item.value === id)) model.append(option(id, id));
+          }
+        } else if (model) {
+          const list = document.createElement("datalist");
+          list.id = "local-image-server-models";
+          list.append(...Object.keys(imagePreset.models).map((id) => option(id, id)));
+          dialog.querySelector(`#${list.id}`)?.remove();
+          model.after(list);
+          model.setAttribute("list", list.id);
+        }
+        if (model) {
+          model.value = imagePreset.defaultModel;
+          model.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
+      });
+      const localProfile = profiles.find((item) => item.category === "local");
+      if (localProfile) attachLocalModelTools(dialog, controls, status, localProfile, `provider_${keyFor(localProfile.id)}_`);
       for (const profile of profiles) {
-        if (profile.category === "custom" || !connectionAnalysisTaskIds(profile).length) continue;
+        if (userManagedProviderCategory(profile.category) || !connectionAnalysisTaskIds(profile).length) continue;
         const key = keyFor(profile.id);
         const modelInputs = CONNECTION_ANALYSIS_MODEL_GROUPS.flatMap((group) => {
           const input = controls.get(`provider_${key}_model_${group.id}`);
@@ -11518,6 +11555,8 @@ async function openAiProviderDialog(initialProviderId = "") {
           }
         }
         if (micuPreset) micuPreset.hidden = editor.value !== "custom-media";
+        const localImagePreset = dialog.querySelector('[data-provider-preset="local-image-server"]');
+        if (localImagePreset) localImagePreset.hidden = editor.value !== "custom-media";
         for (const button of dialog.querySelectorAll("[data-provider-model-preview]")) {
           button.hidden = button.dataset.providerModelPreview !== editor.value;
         }
@@ -11533,13 +11572,16 @@ async function openAiProviderDialog(initialProviderId = "") {
       if (!profile) throw new Error(t("所选 AI 服务不存在"));
       const key = keyFor(profile.id);
       const apiKey = values[`provider_${key}_apiKey`];
-      const endpoint = profile.id.startsWith("custom") ? values[`provider_${key}_endpoint`] : profile.endpoint;
-      const consent = values[`provider_${key}_consent`] === true;
+      const local = profile.category === "local";
+      const compatible = profile.id.startsWith("custom") || local;
+      const endpoint = compatible ? values[`provider_${key}_endpoint`] : profile.endpoint;
+      if (local) requireLocalModelEndpoint(endpoint);
+      const consent = local || values[`provider_${key}_consent`] === true;
       const analysisModelGroups = connectionAnalysisModelGroups(profile);
       const analysisSelections = analysisModelGroups.flatMap((group) => {
         const model = String(values[`provider_${key}_model_${group.id}`] ?? "").trim();
         if (!model) return [];
-        const taskIds = profile.category === "custom"
+        const taskIds = userManagedProviderCategory(profile.category)
           ? group.taskIds
           : connectionModelTaskIds(profile, model, group.taskIds);
         if (taskIds.length !== group.taskIds.length) {
@@ -11547,9 +11589,9 @@ async function openAiProviderDialog(initialProviderId = "") {
         }
         return [{ model, taskIds }];
       });
-      const establishesAnalysisConnection = Boolean(apiKey && !profile.credentialConfigured);
+      const establishesAnalysisConnection = Boolean((apiKey || local) && !profile.credentialConfigured);
       if (analysisModelGroups.length && establishesAnalysisConnection && !analysisSelections.length) {
-        throw new Error(profile.category === "custom" ? t("请填写至少一个任务模型") : t("请先读取模型并至少选择一类任务模型"));
+        throw new Error(userManagedProviderCategory(profile.category) ? t("请填写至少一个任务模型") : t("请先读取模型并至少选择一类任务模型"));
       }
       if (analysisSelections.length && !consent) throw new Error(t("请先确认发送授权"));
       const models = {};
@@ -11575,7 +11617,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       }
       registryUpdate.providers[profile.id] = {
         endpoint,
-        protocol: profile.id.startsWith("custom") ? values[`provider_${key}_protocol`] : profile.protocol,
+        protocol: compatible ? values[`provider_${key}_protocol`] : profile.protocol,
         apiKey,
         models,
         consent,
@@ -11583,11 +11625,11 @@ async function openAiProviderDialog(initialProviderId = "") {
         discovery: profile.discovery,
         ...(imageGeneration ? { imageGeneration } : {})
       };
-      if ((apiKey || profile.credentialConfigured) && endpoint) origins.add(permissionPatternForProvider(endpoint));
-      if (imageGeneration?.endpoint && (imageGeneration.apiKey || profile.imageGeneration?.credentialConfigured || apiKey || profile.credentialConfigured)) {
+      if ((apiKey || profile.credentialConfigured || isLoopbackAiEndpoint(endpoint)) && endpoint) origins.add(permissionPatternForProvider(endpoint));
+      if (imageGeneration?.endpoint && (imageGeneration.apiKey || profile.imageGeneration?.credentialConfigured || apiKey || profile.credentialConfigured || isLoopbackAiEndpoint(imageGeneration.endpoint))) {
         origins.add(permissionPatternForProvider(imageGeneration.endpoint));
       }
-      if (imageGeneration?.editsEndpoint && (imageGeneration.apiKey || profile.imageGeneration?.credentialConfigured || apiKey || profile.credentialConfigured)) {
+      if (imageGeneration?.editsEndpoint && (imageGeneration.apiKey || profile.imageGeneration?.credentialConfigured || apiKey || profile.credentialConfigured || isLoopbackAiEndpoint(imageGeneration.editsEndpoint))) {
         origins.add(permissionPatternForProvider(imageGeneration.editsEndpoint));
       }
       if (origins.size && !await chrome.permissions.request({ origins: [...origins] })) throw new Error(t("没有获得新增 AI 服务的访问权限，设置未保存"));
@@ -11628,8 +11670,110 @@ async function openAiProviderDialog(initialProviderId = "") {
   }
 }
 
+function requireLocalModelEndpoint(value) {
+  let url;
+  try { url = new URL(String(value ?? "").trim()); } catch { throw new Error(t("请填写本地服务地址")); }
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackAiEndpoint(url.href))) {
+    throw new Error(t("填写 HTTPS 地址，或使用 localhost 本机服务。"));
+  }
+}
+
+function attachLocalModelTools(dialog, controls, status, profile, prefix) {
+  const endpointInput = controls.get(`${prefix}endpoint`);
+  const wrapper = endpointInput?.closest(".app-dialog-field");
+  if (!wrapper) return;
+  const modelInputs = CONNECTION_ANALYSIS_MODEL_GROUPS.flatMap((group) => {
+    const input = controls.get(`${prefix}model_${group.id}`);
+    if (!input) return [];
+    const select = document.createElement("select");
+    select.className = "ai-local-model-select";
+    select.dataset.localModelSelect = group.id;
+    select.setAttribute("aria-label", t("选择模型"));
+    select.addEventListener("change", () => {
+      if (!select.value) return;
+      input.value = select.value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    input.addEventListener("input", () => { select.value = [...select.options].some((item) => item.value === input.value) ? input.value : ""; });
+    input.autocomplete = "off";
+    input.before(select);
+    return [{ group, input, select }];
+  });
+  const renderModelLists = () => {
+    const ids = (profile.discoveredModels ?? []).filter((model) => model.status !== "unavailable").map((model) => model.id);
+    const usable = ids.filter((id) => !/embed/iu.test(id));
+    for (const { input, select } of modelInputs) {
+      select.replaceChildren(option("", t(usable.length ? "选择模型" : "读取本地模型"), true), ...usable.map((id) => option(id, id, id === input.value)));
+      select.disabled = !usable.length;
+    }
+    return usable;
+  };
+  renderModelLists();
+  const tools = el("div", "ai-local-model-tools");
+  for (const server of LOCAL_MODEL_SERVER_PRESETS) {
+    const preset = rawTextEl("button", "button-secondary", server.label);
+    preset.type = "button";
+    preset.dataset.localModelServer = server.id;
+    preset.addEventListener("click", () => {
+      endpointInput.value = server.endpoint;
+      endpointInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    tools.append(preset);
+  }
+  const readModels = textEl("button", "button-secondary", "读取本地模型");
+  readModels.type = "button";
+  readModels.dataset.localModelRead = profile.id;
+  readModels.addEventListener("click", async () => {
+    const statusLine = status();
+    const previousText = readModels.textContent;
+    try {
+      statusLine.classList.remove("error");
+      statusLine.textContent = "";
+      const endpoint = endpointInput.value.trim();
+      requireLocalModelEndpoint(endpoint);
+      if (!await chrome.permissions.request({ origins: [permissionPatternForProvider(endpoint)] })) {
+        throw new Error(t("没有获得所选 AI 服务的访问权限，未读取模型"));
+      }
+      readModels.disabled = true;
+      readModels.textContent = t("正在读取…");
+      const response = await chrome.runtime.sendMessage({
+        type: "PREVIEW_AI_PROVIDER_MODELS",
+        providerId: profile.id,
+        registry: { providers: { [profile.id]: {
+          endpoint,
+          protocol: controls.get(`${prefix}protocol`)?.value || profile.protocol,
+          apiKey: controls.get(`${prefix}apiKey`)?.value || "",
+          consent: true
+        } } }
+      });
+      if (!response?.ok || !response.provider) throw new Error(translateUiMessage(response?.message) || t("模型目录读取失败"));
+      Object.assign(profile, response.provider);
+      const ids = renderModelLists();
+      const textInput = modelInputs.find(({ group }) => group.id === "textAnalysis")?.input;
+      if (textInput && !textInput.value && ids.length) {
+        textInput.value = ids[0];
+        textInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      statusLine.textContent = ids.length
+        ? t("已读取 {count} 个本地模型", { count: ids.length })
+        : t("本地服务没有返回模型，请先在 LM Studio 或 Ollama 中下载模型");
+    } catch (error) {
+      statusLine.classList.add("error");
+      const message = translateUiMessage(error?.message) || t("模型目录读取失败");
+      statusLine.textContent = /fetch|network|HTTP 403/iu.test(String(error?.message ?? ""))
+        ? `${message} · ${t("请确认本地模型服务正在运行；Ollama 需设置 OLLAMA_ORIGINS=chrome-extension://*")}`
+        : message;
+    } finally {
+      readModels.disabled = false;
+      readModels.textContent = previousText;
+    }
+  });
+  tools.append(readModels);
+  wrapper.append(tools);
+}
+
 function providerCategoryLabel(category) {
-  return t({ official: "官方服务", aggregator: "聚合平台", custom: "自定义兼容服务" }[category] || "自定义兼容服务");
+  return t({ official: "官方服务", aggregator: "聚合平台", local: "本地模型", custom: "自定义兼容服务" }[category] || "自定义兼容服务");
 }
 
 function localizeAiDialogClose(dialog) {
@@ -11664,7 +11808,7 @@ function connectionAnalysisModelGroups(profile = {}) {
     const taskIds = group.taskIds.filter((taskId) => profile.capabilities?.includes(taskId));
     if (!taskIds.length) return [];
     const options = connectionAnalysisModelOptions(profile, taskIds);
-    if (profile.category !== "custom" && profile.discovery?.discoveredAt && !options.length) return [];
+    if (!userManagedProviderCategory(profile.category) && profile.discovery?.discoveredAt && !options.length) return [];
     return [{ ...group, taskIds, options }];
   });
 }
@@ -11737,7 +11881,7 @@ function discoveredModelOptions(profile, taskId, selectedValue = "") {
     }));
   const selected = String(selectedValue ?? "").trim();
   if (selected && !options.some((option) => option.value === selected)
-    && (!profile?.discovery?.discoveredAt || profile?.category === "custom")) {
+    && (!profile?.discovery?.discoveredAt || userManagedProviderCategory(profile?.category))) {
     options.unshift({ value: selected, label: t("{model}（模型目录尚未读取）", { model: selected }) });
   }
   return options;

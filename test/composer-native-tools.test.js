@@ -17,6 +17,7 @@ function textResponse(protocol, step, model) {
 for (const { serviceId, model, protocol, settings } of [
   { serviceId: 'deepseek', model: 'deepseek-v4-flash', protocol: 'chat_completions', settings: { ai: { consent: true, apiKey: 'fixture', model: 'deepseek-v4-flash' }, vision: {} } },
   { serviceId: 'openai', model: 'gpt-5-mini', protocol: 'responses', settings: { ai: {}, vision: { consent: true, openai: { apiKey: 'fixture', model: 'gpt-5-mini' } } } },
+  { serviceId: 'local', model: 'qwen3-8b', protocol: 'chat_completions', settings: { ai: {}, vision: { providerProfiles: { local: { id: 'local', label: 'LM Studio / Ollama', category: 'local', endpoint: 'http://127.0.0.1:1234/v1/chat/completions', protocol: 'chat_completions', apiKey: '', credentialConfigured: true, consent: true, capabilities: ['textTags', 'skillExtraction', 'creativePlanning', 'imageAnalysis'], models: { creativePlanning: 'qwen3-8b' }, discoveredModels: [{ id: 'qwen3-8b', tasks: ['creativePlanning'] }] } } } } },
   { serviceId: 'compatible', model: 'declared-fixture', protocol: 'chat_completions', settings: { ai: {}, vision: { consent: true, compatible: { protocol: 'chat_completions', endpoint: 'https://fixture.invalid/v1/chat/completions', apiKey: 'fixture', model: 'declared-fixture' }, providerProfiles: { 'custom-media': { discoveredModels: [{ id: 'declared-fixture', supportedParameters: ['tools'], inputModalities: ['text','image'] }] } } } } }
 ]) {
   test(`${serviceId}: execute-turn adapter continues native tool-only replies and returns the final chat`, async () => {
@@ -32,6 +33,12 @@ for (const { serviceId, model, protocol, settings } of [
     assert.ok(JSON.stringify(requests[1]).includes('excerptOnly')); assert.ok(!JSON.stringify(requests[1]).includes('hidden body'.repeat(80)));
   });
 }
+test('local model servers expose native tools to the capture assistant', () => {
+  const catalog = composerServiceCatalog({}, { providerProfiles: { local: { id: 'local', label: 'LM Studio / Ollama', category: 'local', endpoint: 'http://127.0.0.1:1234/v1/chat/completions', protocol: 'chat_completions', apiKey: '', credentialConfigured: true, consent: true, capabilities: ['creativePlanning'], models: { creativePlanning: 'qwen3-8b' }, discoveredModels: [{ id: 'qwen3-8b' }] } } });
+  const local = catalog.find(item => item.serviceId === 'local' && item.model === 'qwen3-8b');
+  assert.equal(local?.configured, true);
+  assert.equal(local?.nativeTools, true);
+});
 test('unknown compatible model keeps ordinary creation without declaring unsupported tools', async () => {
   const catalog = composerServiceCatalog({}, { consent: true, compatible: { endpoint: 'https://fixture.invalid/v1/responses', protocol: 'responses', apiKey: 'fixture', model: 'unknown-fixture' } });
   assert.equal(catalog.find(item => item.serviceId === 'compatible').nativeTools, false);

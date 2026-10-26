@@ -803,6 +803,8 @@ details:not([open]) > .selection-menu-panel { display: none; }
 .ai-advanced-settings > summary span { color: var(--muted); font-size: 11px; font-weight: 500; }
 .visual-analysis-dialog { width: min(940px, calc(100vw - 28px)); }
 .ai-provider-dialog { width: min(760px, calc(100vw - 28px)); }
+.ai-provider-dialog .ai-local-model-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.ai-provider-dialog .ai-local-model-select { width: 100%; margin-bottom: 8px; }
 .visual-analysis-dialog-body { align-content: start; padding: 0; }
 .visual-analysis-dialog-body > .app-dialog-check { padding: 14px 16px 0; }
 .visual-analysis-workspace { display: grid; min-height: 0; gap: 12px; padding: 0 16px 18px; }
