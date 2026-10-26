@@ -1895,3 +1895,33 @@ test('Gemini generation does not silently discard an explicitly selected video r
   });
   assert.equal(calls,1);
 });
+
+test("AI Studio local service exposes image generation, reference edits, and video from one loopback profile", () => {
+  const studio = {
+    id: "ai-studio", label: "AI Studio", category: "local", endpoint: "http://127.0.0.1:8790/v1",
+    protocol: "openai_videos", apiKey: "", consent: true,
+    capabilities: ["imageGeneration", "videoGeneration"],
+    models: { imageGeneration: "z-image", videoGeneration: "ltx-2.3-fast" },
+    discoveredModels: [
+      { id: "z-image", tasks: ["imageGeneration"], inputModalities: ["text", "image"], outputModalities: ["image"], supportedResolutions: ["1024x1024", "1280x720"] },
+      { id: "ltx-2.3-fast", tasks: ["videoGeneration"], inputModalities: ["text", "image"], outputModalities: ["video"], supportedResolutions: ["768x768"] }
+    ],
+    imageGeneration: {
+      protocol: "images_generations",
+      endpoint: "http://127.0.0.1:8790/v1/images/generations",
+      editsEndpoint: "http://127.0.0.1:8790/v1/images/edits",
+      model: "z-image", sizes: ["1024x1024", "1280x720"], qualities: [], parametersOptional: true
+    }
+  };
+  const vision = { providerProfiles: { "ai-studio": studio } };
+  const image = composerServiceCapabilities({ serviceId: "ai-studio", model: "z-image" }, vision).image;
+  assert.equal(image.generate, true);
+  assert.equal(image.references.supported, true);
+  assert.deepEqual(image.parameters[0].options.map((option) => option.value), ["1024x1024", "1280x720"]);
+  const video = composerServiceCapabilities({ serviceId: "ai-studio", model: "ltx-2.3-fast" }, vision).video;
+  assert.equal(video.generate, true);
+  assert.equal(video.inputs.firstFrame, true);
+  const catalog = composerServiceCatalog({}, vision);
+  assert.ok(catalog.some((item) => item.serviceId === "ai-studio" && item.model === "z-image" && item.imageGeneration));
+  assert.ok(catalog.some((item) => item.serviceId === "ai-studio" && item.model === "ltx-2.3-fast" && item.videoGeneration));
+});

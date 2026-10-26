@@ -271,6 +271,16 @@ export function composerServiceCapabilities(profileValue, visionSettingsValue = 
         edit: { whole: imageDescriptor?.inputModalities?.includes("image") === true, local: false },
         parameters: profile.serviceId === "gemini" ? providerImageParameters(imageDescriptor) : []
       };
+    })() : provider?.imageGeneration?.protocol === "images_generations" && provider.imageGeneration.endpoint ? (() => {
+      const imageDescriptor = providerModelDescriptor(provider, model);
+      const edits = Boolean(provider.imageGeneration.editsEndpoint);
+      return {
+        generate: Boolean(provider?.consent && providerCredentialReady(provider) && model && imageDescriptor?.tasks?.includes("imageGeneration")),
+        references: modelReferenceCapability(provider, model, { supported: edits, maxItems: edits ? 1 : null }),
+        edit: { whole: edits, local: false },
+        parameters: [imageParameter("size", "画幅与分辨率", (imageDescriptor?.supportedResolutions ?? []).map(imageSizeOption), imageDescriptor?.supportedResolutions?.[0])]
+          .filter((parameter) => parameter.options.length)
+      };
     })() : null;
     return {
       serviceId: profile.serviceId,

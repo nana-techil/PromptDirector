@@ -167,7 +167,7 @@ import {
   blobToDataUrl,
   visionProtocolDescription
 } from "./vision.js";
-import { LOCAL_IMAGE_SERVER_PRESET, MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
+import { MICU_COMPATIBLE_PROVIDER_PRESET } from "./compatible-provider-presets.js";
 import { contactSheetPlan, renderContactSheetBatch, selectedSkillContentImages } from "./skill-contact-sheet.js";
 import {
   entryHasVisual,
@@ -11411,11 +11411,7 @@ async function openAiProviderDialog(initialProviderId = "") {
       micuPreset.type = "button";
       micuPreset.dataset.providerPreset = "micu-personal";
       micuPreset.hidden = true;
-      const localImagePreset = textEl("button", "button-secondary", "填入本机图片服务（AI Studio）");
-      localImagePreset.type = "button";
-      localImagePreset.dataset.providerPreset = "local-image-server";
-      localImagePreset.hidden = true;
-      advancedBody.append(micuPreset, localImagePreset);
+      advancedBody.append(micuPreset);
       for (const fieldId of advancedFieldIds) {
         const wrapper = body.querySelector(`[data-field-id="${fieldId}"]`);
         if (wrapper) advancedBody.append(wrapper);
@@ -11444,31 +11440,6 @@ async function openAiProviderDialog(initialProviderId = "") {
         if (model) model.value = imagePreset.defaultModel;
         controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
         controls.get(`${prefix}imageApiKey`).focus();
-      });
-      dialog.querySelector('[data-provider-preset="local-image-server"]')?.addEventListener("click", () => {
-        const prefix = "provider_custom_media_";
-        const imagePreset = LOCAL_IMAGE_SERVER_PRESET.imageGeneration;
-        controls.get(`${prefix}imageProtocol`).value = imagePreset.protocol;
-        controls.get(`${prefix}imageEndpoint`).value = imagePreset.endpoint;
-        controls.get(`${prefix}imageEditsEndpoint`).value = imagePreset.editsEndpoint;
-        const model = controls.get(`${prefix}model_imageGeneration`);
-        if (model instanceof HTMLSelectElement) {
-          for (const id of Object.keys(imagePreset.models)) {
-            if (![...model.options].some((item) => item.value === id)) model.append(option(id, id));
-          }
-        } else if (model) {
-          const list = document.createElement("datalist");
-          list.id = "local-image-server-models";
-          list.append(...Object.keys(imagePreset.models).map((id) => option(id, id)));
-          dialog.querySelector(`#${list.id}`)?.remove();
-          model.after(list);
-          model.setAttribute("list", list.id);
-        }
-        if (model) {
-          model.value = imagePreset.defaultModel;
-          model.dispatchEvent(new Event("input", { bubbles: true }));
-        }
-        controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
       });
       for (const localProfile of profiles.filter((item) => item.category === "local")) {
         attachLocalModelTools(dialog, controls, status, localProfile, `provider_${keyFor(localProfile.id)}_`);
@@ -11556,8 +11527,6 @@ async function openAiProviderDialog(initialProviderId = "") {
           }
         }
         if (micuPreset) micuPreset.hidden = editor.value !== "custom-media";
-        const localImagePreset = dialog.querySelector('[data-provider-preset="local-image-server"]');
-        if (localImagePreset) localImagePreset.hidden = editor.value !== "custom-media";
         for (const button of dialog.querySelectorAll("[data-provider-model-preview]")) {
           button.hidden = button.dataset.providerModelPreview !== editor.value;
         }
@@ -11610,6 +11579,14 @@ async function openAiProviderDialog(initialProviderId = "") {
         model: values[`provider_${key}_model_imageGeneration`],
         sizes: commaSeparatedValues(values[`provider_${key}_imageSizes`]),
         qualities: commaSeparatedValues(values[`provider_${key}_imageQualities`])
+      } : local && profile.capabilities.includes("imageGeneration") ? {
+        protocol: "images_generations",
+        endpoint: `${endpoint.replace(/\/+$/u, "")}/images/generations`,
+        editsEndpoint: `${endpoint.replace(/\/+$/u, "")}/images/edits`,
+        model: models.imageGeneration,
+        sizes: profile.discoveredModels?.find((item) => item.id === models.imageGeneration)?.supportedResolutions ?? [],
+        qualities: [],
+        parametersOptional: true
       } : null;
       let imageCredentialVerification = null;
       if (imageGeneration && providerUsesMicuImageGroup({ ...profile, imageGeneration })
