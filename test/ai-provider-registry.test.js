@@ -57,7 +57,7 @@ function configuredAssignments() {
 test("provider presets are the single model-free source for official and aggregator services", () => {
   assert.deepEqual(AI_PROVIDER_PRESETS.map((preset) => preset.id), [
     "deepseek", "zhipu", "openai", "gemini", "xai", "kimi", "minimax", "volcengine", "openrouter",
-    "local", "custom-text", "custom-media"
+    "local", "ai-studio", "custom-text", "custom-media"
   ]);
   assert.equal(AI_PROVIDER_PRESETS.every((preset) =>
     preset.label && (preset.endpoint || preset.category === "custom") && preset.protocol && preset.discovery?.adapter

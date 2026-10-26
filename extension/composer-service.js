@@ -257,7 +257,7 @@ export function composerServiceCapabilities(profileValue, visionSettingsValue = 
     const provider = registryProvider;
     const model = profile.model;
     const descriptor = providerModelDescriptor(provider, model);
-    const configured = Boolean(provider?.consent && provider?.apiKey && model && descriptor?.tasks?.includes("videoGeneration"));
+    const configured = Boolean(provider?.consent && providerCredentialReady(provider) && model && descriptor?.tasks?.includes("videoGeneration"));
     const image = ["gemini", "openrouter"].includes(profile.serviceId) ? (() => {
       const imageModel = profile.model;
       const imageDescriptor = providerModelDescriptor(provider, imageModel);
@@ -619,7 +619,7 @@ export async function executeComposerTurnWithService(input, settingsValue, prepa
 async function generateVideoTurn(input, service, settingsValue, preparedImages, options) {
   const visionSettingsValue = settingsValue.vision;
   const generationProfile = input.session?.generationAiProfile ?? input.session?.aiProfile;
-  if (["gemini", "openrouter", "minimax", "volcengine"].includes(service.serviceId)) {
+  if (["gemini", "openrouter", "minimax", "volcengine", "ai-studio"].includes(service.serviceId)) {
     return generateProviderVideoTurn(input, service, settingsValue, preparedImages, options);
   }
   if (service.serviceId === "xai") {
@@ -730,7 +730,7 @@ async function generateXaiVideoTurn(input, service, visionSettingsValue, prepare
 
 async function generateProviderVideoTurn(input, service, settingsValue, preparedImages, options) {
   const profile = settingsValue.vision?.providerProfiles?.[service.serviceId];
-  if (!profile?.apiKey || !profile?.consent) {
+  if (!providerCredentialReady(profile) || !profile?.consent) {
     throw new ComposerServiceError(`${profile?.label || service.serviceId} 还缺少 API Key 或媒体发送授权`, 422, { retryable: false });
   }
   const generationProfile = input.session?.generationAiProfile ?? input.session?.aiProfile;

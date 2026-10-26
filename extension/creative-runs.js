@@ -348,7 +348,7 @@ function normalizeGenerationMetadata(value) {
   if (!value || typeof value !== "object") return null;
   const parentVisualId = clean(value.parentVisualId);
   const editMode = ["whole", "local"].includes(value.editMode) ? value.editMode : "";
-  const serviceId = ["openai", "compatible", "deepseek", "xai", "gemini", "openrouter", "minimax", "volcengine"].includes(value.serviceId) ? value.serviceId : "";
+  const serviceId = ["openai", "compatible", "deepseek", "xai", "gemini", "openrouter", "minimax", "volcengine", "ai-studio"].includes(value.serviceId) ? value.serviceId : "";
   const requestModel = clean(value.requestModel);
   const responseModel = clean(value.responseModel);
   const requestParameters = normalizeGenerationParameters(value.requestParameters);

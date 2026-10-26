@@ -11330,7 +11330,7 @@ async function openAiProviderDialog(initialProviderId = "") {
     });
     if (custom) fields.push(
       local
-        ? { id: `provider_${key}_endpoint`, label: t("本地服务地址"), type: "url", value: profile.endpoint, help: t("在 LM Studio 中启动本地服务器，或运行 Ollama；Ollama 需设置 OLLAMA_ORIGINS=chrome-extension://*") }
+        ? { id: `provider_${key}_endpoint`, label: t("本地服务地址"), type: "url", value: profile.endpoint, help: profile.id === "local" ? t("在 LM Studio 中启动本地服务器，或运行 Ollama；Ollama 需设置 OLLAMA_ORIGINS=chrome-extension://*") : t("在本机运行 ai-studio serve 启动 AI Studio 接口") }
         : { id: `provider_${key}_endpoint`, label: t(profile.id === "custom-media" ? "图片分析接口（高级）" : "接口地址（高级）"), type: "url", value: profile.endpoint, advanced: true },
       { id: `provider_${key}_protocol`, label: t("兼容协议（高级）"), type: "select", value: profile.protocol, advanced: true, options: [
         { value: "native", label: t("服务原生协议") },
@@ -11363,11 +11363,11 @@ async function openAiProviderDialog(initialProviderId = "") {
       const options = discoveredModelOptions(profile, taskId, catalogRequired ? "" : configuredModel);
       fields.push({
         id: `provider_${key}_model_${taskId}`,
-        label: t("{task}模型（高级）", { task: taskDisplayLabel(taskId) }),
+        label: t(local ? "{task}模型" : "{task}模型（高级）", { task: taskDisplayLabel(taskId) }),
         type: catalogRequired || options.length ? "select" : "text",
         value: options.some((option) => option.value === configuredModel) ? configuredModel : "",
         options,
-        advanced: profile.id !== "custom-media"
+        advanced: profile.id !== "custom-media" && !local
       });
     }
     if (profile.id === "custom-media") fields.push(
@@ -11470,8 +11470,9 @@ async function openAiProviderDialog(initialProviderId = "") {
         }
         controls.get(`${prefix}imageSizes`).value = imagePreset.models[imagePreset.defaultModel].sizes.join(", ");
       });
-      const localProfile = profiles.find((item) => item.category === "local");
-      if (localProfile) attachLocalModelTools(dialog, controls, status, localProfile, `provider_${keyFor(localProfile.id)}_`);
+      for (const localProfile of profiles.filter((item) => item.category === "local")) {
+        attachLocalModelTools(dialog, controls, status, localProfile, `provider_${keyFor(localProfile.id)}_`);
+      }
       for (const profile of profiles) {
         if (userManagedProviderCategory(profile.category) || !connectionAnalysisTaskIds(profile).length) continue;
         const key = keyFor(profile.id);
@@ -11699,6 +11700,10 @@ function attachLocalModelTools(dialog, controls, status, profile, prefix) {
     input.before(select);
     return [{ group, input, select }];
   });
+  const generationInputs = ["imageGeneration", "videoGeneration"].flatMap((taskId) => {
+    const input = controls.get(`${prefix}model_${taskId}`);
+    return input && profile.capabilities?.includes(taskId) ? [{ taskId, input }] : [];
+  });
   const renderModelLists = () => {
     const ids = (profile.discoveredModels ?? []).filter((model) => model.status !== "unavailable").map((model) => model.id);
     const usable = ids.filter((id) => !/embed/iu.test(id));
@@ -11706,11 +11711,30 @@ function attachLocalModelTools(dialog, controls, status, profile, prefix) {
       select.replaceChildren(option("", t(usable.length ? "选择模型" : "读取本地模型"), true), ...usable.map((id) => option(id, id, id === input.value)));
       select.disabled = !usable.length;
     }
+    for (const { taskId, input } of generationInputs) {
+      const taskModels = (profile.discoveredModels ?? [])
+        .filter((model) => model.status !== "unavailable" && model.tasks?.includes(taskId))
+        .map((model) => model.id);
+      if (!taskModels.length) continue;
+      const current = taskModels.includes(input.value) ? input.value : taskModels[0];
+      if (input instanceof HTMLSelectElement) {
+        input.replaceChildren(...taskModels.map((id) => option(id, id, id === current)));
+      } else {
+        const list = document.createElement("datalist");
+        list.id = `${prefix}${taskId}_models`;
+        list.append(...taskModels.map((id) => option(id, id)));
+        dialog.querySelector(`#${CSS.escape(list.id)}`)?.remove();
+        input.after(list);
+        input.setAttribute("list", list.id);
+      }
+      input.value = current;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     return usable;
   };
   renderModelLists();
   const tools = el("div", "ai-local-model-tools");
-  for (const server of LOCAL_MODEL_SERVER_PRESETS) {
+  for (const server of profile.id === "local" ? LOCAL_MODEL_SERVER_PRESETS : []) {
     const preset = rawTextEl("button", "button-secondary", server.label);
     preset.type = "button";
     preset.dataset.localModelServer = server.id;

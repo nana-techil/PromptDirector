@@ -494,6 +494,12 @@ async function submitTask(fetchImpl, providerProfiles, task, request = {}, reque
   } else if (profile.protocol === "ark_videos") {
     endpoint = `${apiBase(profile.endpoint, "/api/v3")}/contents/generations/tasks`;
     body = { model, content: [{ type: "text", text: prompt }, ...referenceContents(request.images)] };
+  } else if (profile.protocol === "openai_videos") {
+    endpoint = `${apiBase(profile.endpoint, "/v1")}/videos`;
+    body = compactObject({
+      model, prompt, seconds: request.parameters?.duration, size: request.parameters?.size,
+      input_reference: frameUrl(request.images, "firstFrame")
+    });
   } else if (["xai", "xai_videos"].includes(profile.protocol)) {
     endpoint = `${apiBase(profile.endpoint, "/v1")}/videos/generations`;
     body = { model, prompt };
@@ -533,7 +539,7 @@ async function pollJob(fetchImpl, providerProfiles, job = {}, requestOptions = {
   let endpoint;
   if (job.protocol === "minimax_videos") endpoint = `${apiBase(profile.endpoint, "/v1")}/query/video_generation?task_id=${encodeURIComponent(remoteId)}`;
   else if (job.protocol === "ark_videos") endpoint = `${apiBase(profile.endpoint, "/api/v3")}/contents/generations/tasks/${encodeURIComponent(remoteId)}`;
-  else if (["xai", "xai_videos"].includes(job.protocol)) endpoint = `${apiBase(profile.endpoint, "/v1")}/videos/${encodeURIComponent(remoteId)}`;
+  else if (["xai", "xai_videos", "openai_videos"].includes(job.protocol)) endpoint = `${apiBase(profile.endpoint, "/v1")}/videos/${encodeURIComponent(remoteId)}`;
   else if (job.protocol === "gemini") endpoint = `${apiBase(profile.endpoint, "")}/v1beta/${remoteId.replace(/^\//, "")}`;
   else if (job.protocol === "openrouter" && job.pollUrl) endpoint = job.pollUrl;
   else if (job.protocol === "openrouter") endpoint = `${apiBase(profile.endpoint, "/api/v1")}/videos/${encodeURIComponent(remoteId)}`;

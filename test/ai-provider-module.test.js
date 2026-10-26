@@ -452,6 +452,45 @@ test("Volcengine adapter uses the declared Ark content task protocol and does no
   assert.equal(completed.downloadUrl, "https://tos.example/out.mp4");
 });
 
+test("Local OpenAI-style video adapter submits without a key, polls, and downloads from the loopback service", async () => {
+  const calls = [];
+  const module = createAiProviderModule({ fetchImpl: async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url === "http://127.0.0.1:8790/v1/models") return jsonResponse({ data: [
+      { id: "z-image", architecture: { input_modalities: ["text"], output_modalities: ["image"] } },
+      { id: "ltx-2.3-fast", architecture: { input_modalities: ["text", "image"], output_modalities: ["video"] }, supported_resolutions: ["768x768", "512x512"] }
+    ] });
+    if (url.endsWith("/v1/videos") && options.method === "POST") return jsonResponse({ id: "1660b12a", status: "queued" });
+    if (url.endsWith("/v1/videos/1660b12a")) return jsonResponse({
+      id: "1660b12a", status: "completed", video: { url: "http://127.0.0.1:8790/v1/videos/1660b12a/content" }
+    });
+    if (url.endsWith("/v1/videos/1660b12a/content")) return videoResponse();
+    throw new Error(`unexpected ${url}`);
+  } });
+  const provider = { id: "ai-studio", endpoint: "http://127.0.0.1:8790/v1", apiKey: "", protocol: "openai_videos", discovery: { adapter: "identity" } };
+  const discovered = await module.discoverModels(provider);
+  const video = discovered.models.find((model) => model.id === "ltx-2.3-fast");
+  assert.ok(video.tasks.includes("videoGeneration"));
+  assert.deepEqual(video.supportedResolutions, ["768x768", "512x512"]);
+  const job = await module.submit("videoGeneration", {
+    provider,
+    model: "ltx-2.3-fast",
+    prompt: "a lantern sways in the rain",
+    parameters: { size: "512x512" },
+    images: [{ role: "firstFrame", url: "data:image/png;base64,AAAA" }]
+  });
+  assert.equal(job.remoteId, "1660b12a");
+  const submit = calls.find((call) => call.options.method === "POST");
+  assert.equal(submit.options.headers.Authorization, undefined);
+  assert.deepEqual(JSON.parse(submit.options.body), {
+    model: "ltx-2.3-fast", prompt: "a lantern sways in the rain", size: "512x512", input_reference: "data:image/png;base64,AAAA"
+  });
+  const completed = await module.poll(job);
+  assert.equal(completed.status, "completed");
+  const downloaded = await module.download(completed);
+  assert.equal(downloaded.blob.type, "video/mp4");
+});
+
 test("OpenRouter video adapter keeps the official polling URL, frame schema, authenticated content download, and usage", async () => {
   const calls = [];
   const module = createAiProviderModule({ fetchImpl: async (url, options = {}) => {

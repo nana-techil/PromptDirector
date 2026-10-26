@@ -252,7 +252,7 @@ function normalizeCreativeJob(value) {
 
 function normalizeRemoteVideo(value) {
   if (!value || typeof value !== "object") return null;
-  const serviceId = ["openai", "xai", "gemini", "openrouter", "minimax", "volcengine"].includes(value.serviceId) ? value.serviceId : "";
+  const serviceId = ["openai", "xai", "gemini", "openrouter", "minimax", "volcengine", "ai-studio"].includes(value.serviceId) ? value.serviceId : "";
   const remoteId = clean(value.remoteId);
   const finalPrompt = clean(value.finalPrompt);
   if (!serviceId || !remoteId || !finalPrompt) return null;

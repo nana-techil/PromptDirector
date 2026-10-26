@@ -112,6 +112,15 @@ export const AI_PROVIDER_PRESETS = Object.freeze([
     capabilities: [...TEXT_CAPABILITIES, "imageAnalysis"]
   }),
   preset({
+    id: "ai-studio",
+    label: "AI Studio 本机视频",
+    category: "local",
+    endpoint: "http://127.0.0.1:8790/v1",
+    protocol: "openai_videos",
+    discovery: { adapter: "identity" },
+    capabilities: ["videoGeneration"]
+  }),
+  preset({
     id: "custom-text",
     label: "自定义兼容服务（对话与识别）",
     category: "custom",
